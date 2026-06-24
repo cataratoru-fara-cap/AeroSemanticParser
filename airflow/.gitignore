@@ -1,0 +1,6 @@
+.venv
+.env*
+logs
+data
+lib64
+__pycache__
