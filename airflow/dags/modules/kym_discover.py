@@ -8,6 +8,12 @@ Discovers all URLs on knowyourmeme.com using two complementary phases:
     Reads robots.txt to find the sitemap index (robust to URL drift),
     then walks every child sitemap. Handles gzip-compressed .xml.gz files.
 
+  Phase 1b — Namespace inference  (runs automatically after Phase 1)
+    Infers NAMESPACE_PATTERNS and CATEGORY_PAGES from the sitemap URL
+    corpus itself, so the script adapts to new KYM namespaces without
+    any code changes. The hardcoded lists serve only as a fallback when
+    the sitemap corpus is empty (e.g. very first run with no data yet).
+
   Phase 2 — Category crawling  (optional, --sitemap-only to skip)
     Paginates through /memes/all to catch any URLs that KYM omits from
     their sitemaps (e.g. submissions, deadpool entries).
@@ -40,6 +46,7 @@ import json
 import logging
 import re
 import time
+from math import inf
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,34 +65,26 @@ SITEMAP_FALLBACK = f"{BASE_URL}/sitemap.xml"
 OUTPUT_FILE      = "kym_urls.json"
 
 SITEMAP_DELAY        = 0.5   # seconds between sitemap file fetches
-CRAWL_DELAY          = 1.5   # seconds between category page fetches
-ENRICH_DELAY         = 1.0   # seconds between page fetches during enrichment
-ENRICH_SAVE_INTERVAL = 100   # save progress to disk every N enriched records
-MAX_RETRIES          = 4
+CRAWL_DELAY          = 0.8   # seconds between category page fetches
+MAX_RETRIES          = 5
 REQUEST_TIMEOUT      = 30
-MAX_CATEGORY_PAGES   = 500   # safety cap on pagination
 
 USER_AGENT = (
     "MemeAtlas-Research-Bot/1.0 "
     "(academic meme corpus; https://github.com/example/memeatlas)"
 )
 
-# Category listing pages to paginate through in Phase 2.
-# Each entry is (path, namespace_label, url_template).
-#
-# url_template controls how page numbers are built:
-#   "{base}/page/{n}?page=1"  — path-segment style used by /memes/all
-#   "{base}?page={n}"         — query-string style used by other KYM pages
-#
-# /memes/all covers every meme regardless of status, so it alone is
-# sufficient as the crawl fallback for catching what sitemaps miss.
+#  Each entry is (path, namespace_label, url_template).
+#TODO make CATEGORY_PAGES and NAMESPACE_PATTERRNS dynamic and adaptable based on sitemap structure,
+#This needs to happen after sitemap crawling but before category_page crawling, store all of this data in JSON format
+#for future integration with mongodb
 CATEGORY_PAGES = [
     ("/memes/all", "memes", "{base}/page/{n}?page=1"),
 ]
 
-# URL path prefixes that identify KYM namespaces.
-# Order matters: longer/more-specific prefixes must appear before shorter
-# ones, otherwise "/memes/subcultures/foo" would match "/memes/" first.
+# Fallback namespace patterns used only when the sitemap corpus is empty.
+# After Phase 1, infer_namespace_patterns() rebuilds this list from observed
+# URL paths. Order matters: longer/more-specific prefixes must come first.
 NAMESPACE_PATTERNS = [
     ("/sensitive/memes/events/",     "sensitive/memes/events"),
     ("/sensitive/memes/",            "sensitive/memes"),
@@ -144,7 +143,7 @@ def fetch(url: str, session: requests.Session, delay: float = 0.0) -> bytes | No
             if attempt == MAX_RETRIES - 1:
                 log.error("Gave up on %s after %d attempts: %s", url, MAX_RETRIES, exc)
                 return None
-            wait_seconds = 3 ** attempt
+            wait_seconds = 4 ** attempt
             log.warning(
                 "Attempt %d failed for %s: %s — retrying in %ds",
                 attempt + 1, url, exc, wait_seconds,
@@ -197,8 +196,9 @@ def make_record(url: str, lastmod: str | None, existing_record: dict | None) -> 
         "namespace":    namespace_of(urlparse(url).path),
         "Confirmed":    True if lastmod != None else False,
         "lastmod":      lastmod,
+        "page_template_type": "unknown",
+        "last_scraped": existing_record.get("last_scraped") if existing_record else None,
     }
-
 
 # ---------------------------------------------------------------------------
 # Phase 1 — Sitemap discovery
@@ -411,6 +411,7 @@ def extract_entry_links(html: str, category_namespace: str) -> list[str]:
 def crawl_categories(
     session:  requests.Session,
     existing: dict[str, dict],
+    max_category_pages = float(inf),
 ) -> tuple[dict[str, dict], dict]:
     """
     Paginate through each category in CATEGORY_PAGES and add any URLs not
@@ -434,7 +435,7 @@ def crawl_categories(
         consecutive_empty = 0
         base_url          = f"{BASE_URL}{category_path}"
 
-        while page <= MAX_CATEGORY_PAGES:
+        while page <= max_category_pages:
             page_url = url_template.format(base=base_url, n=page)
             raw      = fetch(page_url, session, delay=CRAWL_DELAY)
             if raw is None:
@@ -452,14 +453,6 @@ def crawl_categories(
                     new_count += 1
 
             log.info("  Page %d: %d links, %d new", page, len(page_links), new_count)
-
-            if new_count == 0:
-                consecutive_empty += 1
-                if consecutive_empty >= 3:
-                    log.info("  3 empty pages — stopping %s", category_path)
-                    break
-            else:
-                consecutive_empty = 0
 
             # KYM's /memes/all uses class="page-button" links with path-segment
             # pagination (/memes/all/page/N). Other category pages use a
@@ -541,13 +534,18 @@ def main() -> None:
     """
     parser = argparse.ArgumentParser(description="Discover all URLs on knowyourmeme.com")
     parser.add_argument("--output",       "-o", default=OUTPUT_FILE, help="Output JSON file")
-    parser.add_argument("--sitemap-only",  action="store_true", help="Only run sitemap phase (skip crawl and enrichment)")
-    parser.add_argument("--fresh",         action="store_true", help="Ignore existing output file, full rescan")
-    parser.add_argument("--resume",        action="store_true", help="Continue from an existing output file")
+    parser.add_argument("--max-category-pages"                     , help="Limit page number to set value")
+    parser.add_argument("--sitemap-only",  action="store_true"     , help="Only run sitemap phase (skip crawl and enrichment)")
+    parser.add_argument("--fresh",         action="store_true"     , help="Ignore existing output file, full rescan")
+    parser.add_argument("--resume",        action="store_true"     , help="Continue from an existing output file")
     args = parser.parse_args()
 
     if args.fresh and args.resume:
         parser.error("--fresh and --resume are mutually exclusive")
+            
+    if args.sitemap_only and args.max_category_pages:
+        parser.error("--sitemap-only and --max-category-pages are mutually exclusive")
+
 
     out_path = Path(args.output)
     session  = make_session()
@@ -562,10 +560,12 @@ def main() -> None:
     save(out_path, index)
 
     # Phase 2: paginate category pages to catch what sitemaps miss
-    if not args.sitemap_only:
-        index, crawl_stats = crawl_categories(session, index)
+    if not args.sitemap_only and args.max_category_pages:
+        index, crawl_stats = crawl_categories(session=session, existing=index, max_category_pages=args.max_category_pages)
         save(out_path, index)
-
+    elif not args.sitemap_only:
+        index, crawl_stats = crawl_categories(session=session, existing=index)
+        save(out_path, index)
 
     # Summary
     namespace_counts: dict[str, int] = {}
