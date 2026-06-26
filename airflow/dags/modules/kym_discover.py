@@ -51,11 +51,11 @@ ROBOTS_URL      = f"{BASE_URL}/robots.txt"
 SITEMAP_FALLBACK = f"{BASE_URL}/sitemap.xml"
 OUTPUT_FILE     = "kym_urls.json"
 
-SITEMAP_DELAY   = 1   # seconds between sitemap file fetches
+SITEMAP_DELAY   = 0.5   # seconds between sitemap file fetches
 CRAWL_DELAY     = 1.5   # seconds between category page fetches
 MAX_RETRIES     = 4
 REQUEST_TIMEOUT = 30
-MAX_CATEGORY_PAGES = 500  # safety cap
+MAX_CATEGORY_PAGES = 100  # safety cap
 
 USER_AGENT = (
     "MemeAtlas-Research-Bot/1.0 "
@@ -63,15 +63,16 @@ USER_AGENT = (
 )
 
 # Category paths to paginate through in Phase 2.
-# Each entry is (path, namespace_label).
-# Longer/more-specific paths must come before shorter ones
-# so that link filtering works correctly.
+# Each entry is (path, namespace_label, url_template).
+#
+# url_template controls how page numbers are inserted:
+#   "{base}?page={n}"        — standard query-string pagination
+#   "{base}/page/{n}?page=1" — path-segment pagination (/memes/all style)
+#
+# /memes/all uses /memes/all/page/N?page=1 and covers everything,
+# so it alone is sufficient as the crawl fallback.
 CATEGORY_PAGES = [
-    ("/memes/all",      "memes/all"),
-    # ("/memes/deadpool",      "memes/deadpool"),
-    # ("/memes/subcultures", "memes/subcultures"),
-    # ("/memes/sites",       "memes/sites"),
-    # ("/memes",             "memes"),
+    ("/memes/all", "memes", "{base}/page/{n}?page=1"),
 ]
 
 # Same ordering rule: longest prefix first.
@@ -91,7 +92,7 @@ NAMESPACE_PATTERNS = [
     ("/photos/",                     "photos"),
 ]
 
-SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -127,7 +128,7 @@ def fetch(url: str, session: requests.Session, delay: float = 0.0) -> bytes | No
             if attempt == MAX_RETRIES - 1:
                 log.error("Gave up on %s after %d attempts: %s", url, MAX_RETRIES, exc)
                 return None
-            wait = 5** attempt
+            wait = 3 ** attempt
             log.warning("Attempt %d failed for %s: %s — retrying in %ds",
                         attempt + 1, url, exc, wait)
             time.sleep(wait)
@@ -158,11 +159,10 @@ def make_record(url: str, lastmod: str | None, existing: dict | None) -> dict:
     return {
         "url":          url,
         "namespace":    namespace_of(urlparse(url).path),
+        "Confirmed":    True if lastmod != None else False,
         "lastmod":      lastmod,
-        "first_seen":   existing["first_seen"] if existing else datetime.now(timezone.utc).isoformat(),
         "last_scraped": existing.get("last_scraped") if existing else None,
     }
-
 
 # ---------------------------------------------------------------------------
 # Phase 1 — Sitemap discovery
@@ -193,6 +193,11 @@ def parse_sitemap(raw: bytes) -> tuple[list[str], list[tuple[str, str | None]]]:
     """
     Parse a sitemap XML (index or urlset).
     Returns (child_sitemap_urls, [(url, lastmod), ...]).
+
+    Extracts the namespace URI directly from the root tag so it works
+    regardless of whether the document uses http://, https://, or no
+    namespace at all. KYM currently uses https://, the W3C spec says
+    http://, and some sitemaps omit the namespace entirely.
     """
     child_sitemaps: list[str]                  = []
     url_entries:    list[tuple[str, str|None]] = []
@@ -203,24 +208,41 @@ def parse_sitemap(raw: bytes) -> tuple[list[str], list[tuple[str, str | None]]]:
         log.error("XML parse error: %s", exc)
         return child_sitemaps, url_entries
 
-    tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag  # strip namespace
+    # Extract namespace from the root tag itself: "{https://...}urlset" -> "https://..."
+    # If no namespace is declared the tag is just "urlset" and ns_prefix stays "".
+    if root.tag.startswith("{"):
+        ns_uri    = root.tag[1:root.tag.index("}")]
+        ns_prefix = f"{{{ns_uri}}}"
+    else:
+        ns_prefix = ""
+
+    tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
+
+    def find_all(parent, local: str):
+        return parent.findall(f"{ns_prefix}{local}")
+
+    def find_one(parent, local: str):
+        return parent.find(f"{ns_prefix}{local}")
 
     if tag == "sitemapindex":
-        for sm in root.findall(f"{{{SITEMAP_NS}}}sitemap"):
-            loc = sm.find(f"{{{SITEMAP_NS}}}loc")
+        for sm in find_all(root, "sitemap"):
+            loc = find_one(sm, "loc")
             if loc is not None and loc.text:
                 child_sitemaps.append(loc.text.strip())
 
     elif tag == "urlset":
-        for url_el in root.findall(f"{{{SITEMAP_NS}}}url"):
-            loc = url_el.find(f"{{{SITEMAP_NS}}}loc")
+        for url_el in find_all(root, "url"):
+            loc = find_one(url_el, "loc")
             if loc is None or not loc.text:
                 continue
-            lm  = url_el.find(f"{{{SITEMAP_NS}}}lastmod")
+            lm = find_one(url_el, "lastmod")
             url_entries.append((
                 loc.text.strip(),
                 lm.text.strip() if lm is not None and lm.text else None,
             ))
+
+    else:
+        log.warning("Unrecognised sitemap root tag: %s", tag)
 
     return child_sitemaps, url_entries
 
@@ -282,15 +304,30 @@ def fetch_all_sitemaps(
 # Phase 2 — Category page crawling
 # ---------------------------------------------------------------------------
 
+# Link classes that identify actual meme entries on listing pages.
+# Navigation/filter links (e.g. /memes/new, /memes/confirmed) are plain <a>
+# tags with no class — entry cards always carry one of these classes.
+ENTRY_LINK_CLASSES = {"result", "item", "wide-card", "overlayed-card"}
+
+
 def extract_entry_links(html: str, category_namespace: str) -> list[str]:
     """
     Extract meme entry URLs from a category listing page.
-    Only returns links whose namespace exactly matches category_namespace,
-    so crawling /memes/people doesn't pollute the /memes index.
+
+    Filters by both:
+      - link class (must be a known entry card class, not a nav link)
+      - namespace (must match the category being crawled)
     """
     soup  = BeautifulSoup(html, "html.parser")
     found = []
+    seen  = set()
+
     for a in soup.find_all("a", href=True):
+        # Only consider links that are styled as entry cards
+        classes = set(a.get("class") or [])
+        if not classes & ENTRY_LINK_CLASSES:
+            continue
+
         href = a["href"]
         if href.startswith("/"):
             full = f"{BASE_URL}{href}"
@@ -299,8 +336,12 @@ def extract_entry_links(html: str, category_namespace: str) -> list[str]:
         else:
             continue
 
+        if full in seen:
+            continue
+
         if namespace_of(urlparse(full).path) == category_namespace:
             found.append(full)
+            seen.add(full)
 
     return found
 
@@ -315,13 +356,14 @@ def crawl_categories(
     index = dict(existing)
     stats = {"seen": 0, "added": 0}
 
-    for cat_path, cat_ns in CATEGORY_PAGES:
+    for cat_path, cat_ns, url_template in CATEGORY_PAGES:
         log.info("Crawling category: %s", cat_path)
         page = 1
         consecutive_empty = 0
+        base = f"{BASE_URL}{cat_path}"
 
         while page <= MAX_CATEGORY_PAGES:
-            page_url = f"{BASE_URL}{cat_path}?page={page}"
+            page_url = url_template.format(base=base, n=page)
             raw = fetch(page_url, session, delay=CRAWL_DELAY)
             if raw is None:
                 break
@@ -347,11 +389,12 @@ def crawl_categories(
             else:
                 consecutive_empty = 0
 
-            # Detect next page
+            # Detect next page via page-button links (/memes/all style)
+            # or classic next_page link (other category pages)
             soup      = BeautifulSoup(html, "html.parser")
             next_link = (
-                soup.find("a", class_="next_page")
-                or soup.find("a", string=re.compile(r"next", re.I))
+                soup.find("a", class_="page-button", href=lambda h: h and f"/page/{page + 1}" in h)
+                or soup.find("a", class_="next_page")
                 or soup.find("link", rel="next")
             )
             if not next_link:
