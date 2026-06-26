@@ -16,7 +16,7 @@
 # under the License.
 #
 
-# Basic Airflow cluster configuration for CeleryExecutor with Redis and PostgreSQL.
+# Airflow cluster configuration for CeleryExecutor with Redis, PostgreSQL, and MongoDB.
 #
 # WARNING: This configuration is for local development. Do not use it in a production deployment.
 #
@@ -49,21 +49,25 @@ x-airflow-common:
   # In order to add custom dependencies or upgrade provider distributions you can use your extended image.
   # Comment the image line, place your Dockerfile in the directory where you placed the docker-compose.yaml
   # and uncomment the "build" line below, Then run `docker-compose build` to build the images.
-  # image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.1.0}
-  build: .  
+  # image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.2.2}
+  build: .
   environment:
     &airflow-common-env
-    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
     AIRFLOW__CORE__HOSTNAME_CALLABLE: 'airflow.utils.net.get_host_ip_address'
-    AIRFLOW__CORE__PARALLELISM: '1'
-    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: '1'
+    AIRFLOW__CORE__PARALLELISM: '32'
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: '8'
     AIRFLOW__CORE__FERNET_KEY: ''
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_AUTH_JWT_SECRET}
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__WORKER_CONCURRENCY: '4'
+    AIRFLOW__CELERY__WORKER_PREFETCH_MULTIPLIER: '1'
     # yamllint disable rule:line-length
     # Use simple http server on scheduler for health checks
     # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
@@ -85,6 +89,8 @@ x-airflow-common:
   depends_on:
     &airflow-common-depends-on
     postgres:
+      condition: service_healthy
+    redis:
       condition: service_healthy
 
 services:
@@ -112,6 +118,25 @@ services:
     networks:
       - Practice
 
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data-volume:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: always
+    mem_limit: 512m
+    mem_reservation: 256m
+    networks:
+      - Practice
+
   airflow-apiserver:
     <<: *airflow-common
     command: api-server
@@ -127,8 +152,8 @@ services:
       retries: 5
       start_period: 30s
     restart: always
-    mem_limit: 1024m
-    mem_reservation: 512m
+    mem_limit: 1536m
+    mem_reservation: 768m
     networks:
       - Practice
     depends_on:
@@ -146,8 +171,8 @@ services:
       retries: 5
       start_period: 30s
     restart: always
-    mem_limit: 1024m
-    mem_reservation: 256m
+    mem_limit: 1536m
+    mem_reservation: 768m
     networks:
       - Practice
     depends_on:
@@ -166,7 +191,33 @@ services:
       start_period: 120s
     restart: always
     mem_limit: 1024m
-    mem_reservation: 256m
+    mem_reservation: 512m
+    networks:
+      - Practice
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    restart: always
+    mem_limit: 768m
+    mem_reservation: 384m
+    networks:
+      - Practice
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-worker:
+    <<: *airflow-common
+    command: celery worker
+    restart: always
+    mem_limit: 2048m
+    mem_reservation: 1024m
     networks:
       - Practice
     depends_on:
@@ -321,9 +372,33 @@ services:
     networks:
       - Practice
 
+  mongo:
+    image: mongo:7.0
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE}
+    ports:
+      - "${MONGO_PORT}:27017"
+    volumes:
+      - mongo-data-volume:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok", "mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@localhost:27017/admin"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: always
+    mem_limit: 1024m
+    mem_reservation: 512m
+    networks:
+      - Practice
+
 networks:
   Practice:
     name: airflow_network
 
 volumes:
   postgres-db-volume:
+  redis-data-volume:
+  mongo-data-volume:
