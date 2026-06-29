@@ -1,0 +1,3 @@
+[submodule "memes_smart_scrape"]
+	path = memes_smart_scrape
+	url = https://github.com/cataratoru-fara-cap/memes_smart_scrape
