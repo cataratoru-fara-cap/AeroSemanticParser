@@ -55,6 +55,7 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -74,17 +75,18 @@ USER_AGENT = (
     "(academic meme corpus; https://github.com/example/memeatlas)"
 )
 
-#  Each entry is (path, namespace_label, url_template).
-#TODO make CATEGORY_PAGES and NAMESPACE_PATTERRNS dynamic and adaptable based on sitemap structure,
-#This needs to happen after sitemap crawling but before category_page crawling, store all of this data in JSON format
-#for future integration with mongodb
+# Fallback category pages used on the very first run before any sitemap
+# data has been collected. After Phase 1, infer_taxonomy() derives the real
+# values directly from the collected URL corpus.
+# Each entry is (path, namespace_label, url_template).
 CATEGORY_PAGES = [
     ("/memes/all", "memes", "{base}/page/{n}?page=1"),
 ]
 
-# Fallback namespace patterns used only when the sitemap corpus is empty.
-# After Phase 1, infer_namespace_patterns() rebuilds this list from observed
-# URL paths. Order matters: longer/more-specific prefixes must come first.
+# Fallback namespace patterns used on the very first run before any sitemap
+# data has been collected. After Phase 1, infer_taxonomy() rebuilds this
+# list from the observed URL paths.
+# Order matters: longer/more-specific prefixes must come first.
 NAMESPACE_PATTERNS = [
     ("/sensitive/memes/events/",     "sensitive/memes/events"),
     ("/sensitive/memes/",            "sensitive/memes"),
@@ -196,7 +198,7 @@ def make_record(url: str, lastmod: str | None, existing_record: dict | None) -> 
         "namespace":    namespace_of(urlparse(url).path),
         "Confirmed":    True if lastmod != None else False,
         "lastmod":      lastmod,
-        "page_template_type": "unknown",
+        "page_template_type": None,
         "last_scraped": existing_record.get("last_scraped") if existing_record else None,
     }
 
@@ -360,6 +362,124 @@ def fetch_all_sitemaps(
         stats["seen"], stats["added"], stats["updated"], stats["skipped"],
     )
     return index, stats
+
+
+
+# ---------------------------------------------------------------------------
+# Namespace and category inference from sitemap corpus
+# ---------------------------------------------------------------------------
+
+# URL path segments that are KYM status filters or listing roots, not meme
+# slugs. A /memes/X path whose X appears in this set is a category page;
+# one whose X does not appear here is a meme entry.
+KNOWN_CATEGORY_SEGMENTS = frozenset({
+    "all", "new", "confirmed", "submissions", "deadpool",
+    "newsworthy", "people", "events", "subcultures",
+    "sites", "editorials", "videos", "photos", "cultures",
+})
+
+# Minimum number of URLs that must share a prefix for it to be recognised
+# as a namespace. Prevents one-off paths from becoming spurious namespaces.
+MIN_NAMESPACE_URL_COUNT = 2
+
+
+def infer_taxonomy(index: dict[str, dict]) -> tuple[
+    list[tuple[str, str]],
+    list[tuple[str, str, str]],
+]:
+    """
+    Derive NAMESPACE_PATTERNS and CATEGORY_PAGES from the URLs already
+    collected in the index, without making any additional HTTP requests.
+
+    Namespace inference
+    -------------------
+    A namespace is any path prefix of depth >= 2 (e.g. /memes/sites/) that
+    appears as the parent of at least MIN_NAMESPACE_URL_COUNT distinct URLs.
+    The prefix is the path up to and including the second-to-last segment,
+    with a trailing slash appended.
+
+    Example: given 200 URLs starting with /memes/sites/, the prefix
+    "/memes/sites/" is inferred as the namespace "memes/sites".
+
+    The returned list is sorted longest-prefix-first so that more specific
+    patterns take priority when matched top-to-bottom (required by
+    namespace_of()).
+
+    Category page inference
+    -----------------------
+    A category page is any /memes/X or /sensitive/Y path where X or Y is a
+    known status/listing segment (KNOWN_CATEGORY_SEGMENTS) rather than a
+    meme slug. These are the pages the crawler should paginate through in
+    Phase 2.
+
+    Returns:
+        (namespace_patterns, category_pages)
+        namespace_patterns: list of (prefix, label) sorted longest-first
+        category_pages:     list of (path, namespace_label, url_template)
+    """
+    # Count how many URLs fall under each two-segment prefix
+    prefix_counts: dict[str, int] = {}
+    for url in index:
+        path     = urlparse(url).path.rstrip("/")
+        segments = [s for s in path.split("/") if s]
+        # Only consider paths deep enough to have a namespace prefix
+        if len(segments) >= 2:
+            prefix = "/" + "/".join(segments[:-1]) + "/"
+            prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+
+    # Build namespace patterns from prefixes that appear often enough
+    inferred_namespaces: list[tuple[str, str]] = []
+    for prefix, count in prefix_counts.items():
+        if count < MIN_NAMESPACE_URL_COUNT:
+            continue
+        # Convert "/memes/sites/" → "memes/sites"
+        label = prefix.strip("/").replace("/", "/")
+        inferred_namespaces.append((prefix, label))
+
+    # Sort longest prefix first so specific patterns shadow general ones
+    inferred_namespaces.sort(key=lambda pair: len(pair[0]), reverse=True)
+
+    # Ensure the root /memes/ namespace is always present as a catch-all
+    existing_prefixes = {prefix for prefix, _ in inferred_namespaces}
+    if "/memes/" not in existing_prefixes:
+        inferred_namespaces.append(("/memes/", "memes"))
+
+    # Infer category pages from known single-depth paths under /memes/ and
+    # /sensitive/ whose segment matches a known category name
+    inferred_categories: list[tuple[str, str, str]] = []
+    seen_category_paths: set[str] = set()
+
+    for url in index:
+        path     = urlparse(url).path.rstrip("/")
+        segments = [s for s in path.split("/") if s]
+
+        if len(segments) == 2 and segments[1] in KNOWN_CATEGORY_SEGMENTS:
+            cat_path = "/" + "/".join(segments)
+            if cat_path not in seen_category_paths:
+                # Determine URL template from the path:
+                # /memes/all uses path-segment pagination, others use ?page=N
+                if segments[1] == "all":
+                    url_template = "{base}/page/{n}?page=1"
+                else:
+                    url_template = "{base}?page={n}"
+                namespace_label = segments[0]
+                inferred_categories.append((cat_path, namespace_label, url_template))
+                seen_category_paths.add(cat_path)
+
+    # Always ensure /memes/all is present — it is the primary crawl fallback
+    if "/memes/all" not in seen_category_paths:
+        inferred_categories.insert(0, ("/memes/all", "memes", "{base}/page/{n}?page=1"))
+
+    log.info(
+        "Taxonomy inferred from corpus — %d namespace patterns, %d category pages",
+        len(inferred_namespaces), len(inferred_categories),
+    )
+    for prefix, label in inferred_namespaces:
+        log.debug("  namespace: %r → %r", prefix, label)
+    for cat_path, label, template in inferred_categories:
+        log.debug("  category:  %r  ns=%r", cat_path, label)
+
+    return inferred_namespaces, inferred_categories
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +660,7 @@ def main() -> None:
     parser.add_argument("--resume",        action="store_true"     , help="Continue from an existing output file")
     args = parser.parse_args()
 
+
     if args.fresh and args.resume:
         parser.error("--fresh and --resume are mutually exclusive")
             
@@ -555,9 +676,18 @@ def main() -> None:
     crawl_stats   = {"seen": 0, "added": 0}
     index         = dict(existing)
 
-    # Phase 1: crawl all sitemaps listed in robots.txt
+    # Phase 1: walk all sitemaps listed in robots.txt
     index, sitemap_stats = fetch_all_sitemaps(session, existing)
     save(out_path, index)
+
+        # Infer namespace patterns and category pages from the collected corpus.
+        # This updates the module-level lists so Phase 2 and namespace_of() use
+        # values derived from real data rather than hardcoded fallbacks.
+    if index:
+        inferred_namespaces, inferred_categories = infer_taxonomy(index)
+        global NAMESPACE_PATTERNS, CATEGORY_PAGES
+        NAMESPACE_PATTERNS = inferred_namespaces
+        CATEGORY_PAGES     = inferred_categories
 
     # Phase 2: paginate category pages to catch what sitemaps miss
     if not args.sitemap_only and args.max_category_pages:
