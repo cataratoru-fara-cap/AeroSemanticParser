@@ -1,0 +1,8 @@
+#Cats
+SELECT ?item ?itemLabel ?kym
+WHERE
+{
+  ?item wdt:P31 wd:Q2927074 ; # Must be a meme
+   OPTIONAL { ?item wdt:P13484 ?kym }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". } # Helps get the label in your language, if not, then default for all languages, then en language
+}

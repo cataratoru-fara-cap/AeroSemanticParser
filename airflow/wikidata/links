@@ -1,0 +1,5 @@
+https://query.wikidata.org/#%23Cats%0ASELECT%20%3Fitem%20%3FitemLabel%20%3Fkym%0AWHERE%0A%7B%0A%20%20%3Fitem%20wdt%3AP31%20wd%3AQ2927074%20%3B%20%23%20Must%20be%20a%20meme%0A%20%20%20OPTIONAL%20%7B%20%3Fitem%20wdt%3AP13484%20%3Fkym%20%7D%0A%20%20SERVICE%20wikibase%3Alabel%20%7B%20bd%3AserviceParam%20wikibase%3Alanguage%20%22en%22.%20%7D%20%23%20Helps%20get%20the%20label%20in%20your%20language%2C%20if%20not%2C%20then%20default%20for%20all%20languages%2C%20then%20en%20language%0A%7D
+https://www.wikidata.org/wiki/Q107655620
+https://www.wikidata.org/wiki/Q90456516
+https://www.wikidata.org/wiki/Q80724407
+https://www.wikidata.org/wiki/Q2071334
