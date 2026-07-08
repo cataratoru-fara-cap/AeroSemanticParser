@@ -78,7 +78,7 @@ def _iter_mongo_records(store, projection: dict):
 
 def mongo_load_index() -> dict[str, dict]:
     """Load the full {url: record} index from MongoDB."""
-    from src.db.mongo import get_store
+    from modules.mongo_store import get_store
     store = get_store()
     try:
         index = {r["url"]: r for r in _iter_mongo_records(store, {"_id": 0})
@@ -91,7 +91,7 @@ def mongo_load_index() -> dict[str, dict]:
 
 def mongo_known_urls() -> set[str]:
     """Load just the URL set — enough for dedup / taxonomy inference."""
-    from src.db.mongo import get_store
+    from modules.mongo_store import get_store
     store = get_store()
     try:
         urls = {r["url"] for r in
@@ -104,7 +104,7 @@ def mongo_known_urls() -> set[str]:
 
 def mongo_upsert(records: Iterable[dict]) -> dict:
     """Upsert records, preserving last_scraped / monotonic Confirmed."""
-    from src.db.mongo import get_store
+    from modules.mongo_store import get_store
     store = get_store()
     try:
         stats = store.upsert_urls(records)
