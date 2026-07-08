@@ -1,34 +1,26 @@
 #!/usr/bin/env python3
 """
-kym_discover.py  —  Know Your Meme URL Discovery
-================================================
-Discovers (nearly) every entry URL on knowyourmeme.com and emits the master
-index the rest of the pipeline ingests from (JSON file and/or MongoDB).
+kym_discover.py  —  Know Your Meme URL Discovery (library + thin CLI)
+=====================================================================
+Discovers (nearly) every entry URL on knowyourmeme.com.
+
+Design rules (why this looks different from v1)
+-----------------------------------------------
+1. NO mutable module state. Run-scoped knowledge (namespace patterns,
+   listing pages) lives in an explicit, frozen ``Taxonomy`` object that is
+   passed to whoever needs it. Tunables live in ``CrawlConfig``. This makes
+   every function safe to call from a separate process (Airflow task).
+2. Functions RETURN new/changed records; they never mutate a shared index
+   in place. The caller decides where results go (JSON, Mongo, XCom, ...).
+3. NO persistence here. JSON/Mongo sinks live in ``kym_store``; this module
+   only discovers. ``main()`` is a thin CLI shell wiring the two together —
+   the exact same functions an Airflow DAG calls.
 
 Phases
 ------
-  Phase 1  — Sitemaps
-      Reads robots.txt to find the sitemap index, walks every child sitemap
-      (gzip aware). Sitemaps contain the *confirmed* entries with ``lastmod``.
-
-  Phase 1b — Taxonomy inference
-      Derives namespace prefixes and category/listing pages from the sitemap
-      corpus so the crawler adapts to new KYM namespaces automatically.
-
-  Phase 2  — Listing crawl (the part that catches what sitemaps omit)
-      Paginates the status listings — /memes/all, /memes/confirmed,
-      /memes/submissions, /memes/researching, /memes/deadpool — which hold the
-      submissions / deadpool / researching entries that never appear in the
-      sitemap. Entry links are detected by URL shape (robust to CSS changes)
-      and sub-namespace entries (e.g. /memes/events/...) are kept.
-
-Sinks
------
-  * JSON file (default): { "metadata": {...}, "urls": [...] }
-  * MongoDB (--mongo):   upserts into the ``urls`` collection so the annotation
-                         pipeline can ingest directly (annotate_memes.py
-                         --source mongo). Discovery never clobbers a record's
-                         ``last_scraped`` and never downgrades ``Confirmed``.
+  Phase 1  — Sitemaps          fetch_all_sitemaps()
+  Phase 1b — Taxonomy          infer_taxonomy()
+  Phase 2  — Listing crawl     crawl_categories() / crawl_listing()
 
 Usage
 -----
@@ -38,55 +30,30 @@ Usage
     python kym_discover.py --mongo               # also upsert into MongoDB
     python kym_discover.py --fresh               # ignore existing file
 
-Requires:  pip install -r requirements-discovery.txt   (requests, beautifulsoup4, lxml)
-           pip install pymongo                          (only for --mongo)
+Requires:  requests, beautifulsoup4, lxml   (pymongo only for --mongo)
 """
 
 from __future__ import annotations
 
 import argparse
 import gzip
-import json
 import logging
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from dataclasses import dataclass, field, replace
 from math import inf
-from pathlib import Path
+from typing import Iterable
 from urllib.parse import urljoin, urlparse
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Static site knowledge (true constants — never mutated at runtime)
 # ---------------------------------------------------------------------------
 
 BASE_URL = "https://knowyourmeme.com"
 ROBOTS_URL = f"{BASE_URL}/robots.txt"
 SITEMAP_FALLBACK = f"{BASE_URL}/sitemap.xml"
-OUTPUT_FILE = "kym_urls.json"
 
-SITEMAP_DELAY = 0.5            # seconds between sitemap fetches
-CRAWL_DELAY = 0.8             # seconds between listing-page fetches
-MAX_RETRIES = 5
-REQUEST_TIMEOUT = 30
-CONSECUTIVE_EMPTY_LIMIT = 3   # stop a listing after N pages with 0 new entries
-
-USER_AGENT = (
-    "MemeAtlas-Research-Indexer/1.0 "
-)
-
-# Status/listing pages to paginate in Phase 2. Each is (path, confirmed):
-# ``confirmed`` is the default Confirmed flag for entries first seen here.
-# Sitemap entries are already Confirmed=True and are never downgraded
-# (see store.merge_discovery), so /memes/all can safely use confirmed=False.
-# These status listings are exactly what the sitemap omits — crawling them is
-# what recovers the missing submissions / deadpool / researching entries.
-DEFAULT_LISTINGS: list[tuple[str, bool]] = [
-    ("/memes/all", False),
-    ("/memes/confirmed", True),
-    ("/memes/submissions", False),
-    ("/memes/researching", False),
-    ("/memes/deadpool", False),
-]
+USER_AGENT = "MemeAtlas-Research-Indexer/1.0"
 
 # Top-level sections whose deep URLs are real entries (not nav/listing pages).
 ENTRY_ROOTS = frozenset({
@@ -94,8 +61,8 @@ ENTRY_ROOTS = frozenset({
     "editorials", "videos", "photos", "sensitive",
 })
 
-# Single-segment paths under a section that are status filters / listing roots,
-# never entry slugs. Used to tell /memes/<slug> (entry) from /memes/all (listing).
+# Single-segment paths under a section that are status filters / listing
+# roots, never entry slugs (/memes/<slug> is an entry, /memes/all is not).
 KNOWN_CATEGORY_SEGMENTS = frozenset({
     "all", "new", "confirmed", "submissions", "submission", "deadpool",
     "researching", "newsworthy", "popular", "people", "events",
@@ -103,8 +70,9 @@ KNOWN_CATEGORY_SEGMENTS = frozenset({
     "guides", "interviews", "page",
 })
 
-# Fallback namespace patterns (longest prefix first). Rebuilt by infer_taxonomy.
-NAMESPACE_PATTERNS: list[tuple[str, str]] = [
+# Fallback namespace patterns (longest prefix first). A run normally replaces
+# these with infer_taxonomy() output, carried in a Taxonomy instance.
+DEFAULT_NAMESPACE_PATTERNS: tuple[tuple[str, str], ...] = (
     ("/sensitive/memes/events/", "sensitive/memes/events"),
     ("/sensitive/memes/", "sensitive/memes"),
     ("/sensitive/", "sensitive"),
@@ -122,7 +90,20 @@ NAMESPACE_PATTERNS: list[tuple[str, str]] = [
     ("/events/", "events"),
     ("/videos/", "videos"),
     ("/photos/", "photos"),
-]
+)
+
+# Status/listing pages for Phase 2 as (path, confirmed_default). Sitemap
+# entries are Confirmed=True and never downgraded, so /memes/all can safely
+# default to False. These listings are exactly what the sitemap omits.
+DEFAULT_LISTINGS: tuple[tuple[str, bool], ...] = (
+    ("/memes/all", False),
+    ("/memes/confirmed", True),
+    ("/memes/submissions", False),
+    ("/memes/researching", False),
+    ("/memes/deadpool", False),
+)
+
+MIN_NAMESPACE_URL_COUNT = 2
 
 logging.basicConfig(
     level=logging.INFO,
@@ -130,6 +111,63 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("kym_discover")
+
+
+# ---------------------------------------------------------------------------
+# Run-scoped objects: Taxonomy (what the site looks like) and CrawlConfig
+# (how politely/hard to crawl). Both frozen — nothing can mutate them mid-run.
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Taxonomy:
+    """Namespace patterns + listing pages for one discovery run.
+
+    Serialisable via to_dict()/from_dict() so it survives JSON transports
+    (Airflow XCom turns tuples into lists; from_dict coerces them back).
+    """
+    patterns: tuple[tuple[str, str], ...] = DEFAULT_NAMESPACE_PATTERNS
+    listings: tuple[tuple[str, bool], ...] = DEFAULT_LISTINGS
+
+    def namespace_of(self, url_path: str) -> str | None:
+        """Return the KYM namespace label for a URL path, or None."""
+        url_path = url_path.rstrip("/")
+        for prefix, label in self.patterns:
+            if url_path.startswith(prefix):
+                return label
+        return None
+
+    def to_dict(self) -> dict:
+        return {
+            "patterns": [list(p) for p in self.patterns],
+            "listings": [list(l) for l in self.listings],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Taxonomy":
+        return cls(
+            patterns=tuple((str(p), str(l)) for p, l in data["patterns"]),
+            listings=tuple((str(p), bool(c)) for p, c in data["listings"]),
+        )
+
+
+DEFAULT_TAXONOMY = Taxonomy()
+
+
+@dataclass(frozen=True)
+class CrawlConfig:
+    """Politeness / retry tunables. Override per run instead of editing globals."""
+    sitemap_delay: float = 0.5        # seconds between sitemap fetches
+    crawl_delay: float = 0.8          # seconds between listing-page fetches
+    max_retries: int = 5
+    request_timeout: int = 30
+    # Early stop after N consecutive pages with 0 new entries. None (default)
+    # disables it: a listing is crawled until it has no next page (or
+    # max_pages_per_listing is hit). Set e.g. 3 for quick incremental runs.
+    consecutive_empty_limit: int | None = None
+    max_pages_per_listing: float = inf
+
+
+DEFAULT_CONFIG = CrawlConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -144,21 +182,23 @@ def make_session():
     return session
 
 
-def fetch(url: str, session, delay: float = 0.0) -> bytes | None:
+def fetch(url: str, session, cfg: CrawlConfig = DEFAULT_CONFIG,
+          delay: float = 0.0) -> bytes | None:
     """
     Fetch a URL and return raw bytes, retrying transient errors with backoff.
     Returns None if all attempts fail.
     """
     import requests
     time.sleep(delay)
-    for attempt in range(MAX_RETRIES):
+    for attempt in range(cfg.max_retries):
         try:
-            response = session.get(url, timeout=REQUEST_TIMEOUT)
+            response = session.get(url, timeout=cfg.request_timeout)
             response.raise_for_status()
             return response.content
         except requests.RequestException as exc:
-            if attempt == MAX_RETRIES - 1:
-                log.error("Gave up on %s after %d attempts: %s", url, MAX_RETRIES, exc)
+            if attempt == cfg.max_retries - 1:
+                log.error("Gave up on %s after %d attempts: %s",
+                          url, cfg.max_retries, exc)
                 return None
             wait_seconds = 4 ** attempt
             log.warning("Attempt %d failed for %s: %s — retrying in %ds",
@@ -175,24 +215,14 @@ def decompress_if_gzip(raw: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# URL classification helpers
+# URL classification / record construction
 # ---------------------------------------------------------------------------
-
-def namespace_of(url_path: str) -> str | None:
-    """Return the KYM namespace label for a URL path, or None if unrecognised."""
-    url_path = url_path.rstrip("/")
-    for prefix, label in NAMESPACE_PATTERNS:
-        if url_path.startswith(prefix):
-            return label
-    return None
-
 
 def is_entry_url(url: str) -> bool:
     """
-    True if ``url`` points at an actual KYM entry rather than a listing/nav page.
-
-    An entry has a recognised top-level section, depth >= 2, and a final
-    segment that is not a known status/listing word. This is intentionally
+    True if ``url`` points at an actual KYM entry rather than a listing/nav
+    page. An entry has a recognised top-level section, depth >= 2, and a
+    final segment that is not a known status/listing word. Intentionally
     CSS-agnostic so listing-page redesigns don't break discovery.
     """
     parsed = urlparse(url)
@@ -209,6 +239,7 @@ def is_entry_url(url: str) -> bool:
 
 
 def make_record(url: str, lastmod: str | None, existing_record: dict | None,
+                taxonomy: Taxonomy = DEFAULT_TAXONOMY,
                 confirmed: bool | None = None) -> dict:
     """
     Build a discovery record. ``last_scraped`` from an existing record is
@@ -224,7 +255,7 @@ def make_record(url: str, lastmod: str | None, existing_record: dict | None,
         lastmod = None
     return {
         "url": url,
-        "namespace": namespace_of(urlparse(url).path),
+        "namespace": taxonomy.namespace_of(urlparse(url).path),
         "Confirmed": confirmed,
         "lastmod": lastmod,
         "page_template_type": None,
@@ -236,10 +267,10 @@ def make_record(url: str, lastmod: str | None, existing_record: dict | None,
 # Phase 1 — Sitemap discovery
 # ---------------------------------------------------------------------------
 
-def discover_sitemap_roots(session) -> list[str]:
+def discover_sitemap_roots(session, cfg: CrawlConfig = DEFAULT_CONFIG) -> list[str]:
     """Read robots.txt and return all Sitemap: URLs (fallback: /sitemap.xml)."""
     log.info("Reading robots.txt: %s", ROBOTS_URL)
-    raw = fetch(ROBOTS_URL, session)
+    raw = fetch(ROBOTS_URL, session, cfg)
     if raw is None:
         log.warning("robots.txt unreachable — using fallback %s", SITEMAP_FALLBACK)
         return [SITEMAP_FALLBACK]
@@ -303,11 +334,21 @@ def parse_sitemap(raw: bytes) -> tuple[list[str], list[tuple[str, str | None]]]:
     return child_sitemap_urls, url_entries
 
 
-def fetch_all_sitemaps(session, existing: dict[str, dict]) -> tuple[dict[str, dict], dict]:
-    """Walk the full sitemap tree; return (index, stats)."""
-    index = dict(existing)
+def fetch_all_sitemaps(session, existing: dict[str, dict],
+                       taxonomy: Taxonomy = DEFAULT_TAXONOMY,
+                       cfg: CrawlConfig = DEFAULT_CONFIG,
+                       ) -> tuple[dict[str, dict], dict]:
+    """
+    Walk the full sitemap tree.
+
+    ``existing`` is READ-ONLY here — used to skip unchanged entries and to
+    preserve last_scraped / a previously-set Confirmed. Returns
+    (changed, stats) where ``changed`` holds only NEW or UPDATED records.
+    The caller merges/upserts them wherever it likes.
+    """
+    changed: dict[str, dict] = {}
     stats = {"seen": 0, "added": 0, "updated": 0, "skipped": 0}
-    queue = discover_sitemap_roots(session)
+    queue = discover_sitemap_roots(session, cfg)
     visited: set[str] = set()
 
     while queue:
@@ -317,7 +358,7 @@ def fetch_all_sitemaps(session, existing: dict[str, dict]) -> tuple[dict[str, di
         visited.add(sitemap_url)
 
         log.info("Fetching sitemap: %s", sitemap_url)
-        raw = fetch(sitemap_url, session, delay=SITEMAP_DELAY)
+        raw = fetch(sitemap_url, session, cfg, delay=cfg.sitemap_delay)
         if raw is None:
             continue
 
@@ -328,7 +369,7 @@ def fetch_all_sitemaps(session, existing: dict[str, dict]) -> tuple[dict[str, di
 
         for url, lastmod in url_entries:
             stats["seen"] += 1
-            existing_record = index.get(url)
+            existing_record = changed.get(url) or existing.get(url)
             if existing_record and existing_record.get("lastmod") == lastmod:
                 stats["skipped"] += 1
                 continue
@@ -336,31 +377,31 @@ def fetch_all_sitemaps(session, existing: dict[str, dict]) -> tuple[dict[str, di
             confirmed = True if lastmod is not None else (
                 existing_record.get("Confirmed", False) if existing_record else False
             )
-            index[url] = make_record(url, lastmod, existing_record, confirmed=confirmed)
-            stats["updated" if existing_record else "added"] += 1
+            changed[url] = make_record(url, lastmod, existing_record,
+                                       taxonomy, confirmed=confirmed)
+            stats["updated" if url in existing else "added"] += 1
 
     log.info("Sitemaps done — seen=%d added=%d updated=%d skipped=%d",
              stats["seen"], stats["added"], stats["updated"], stats["skipped"])
-    return index, stats
+    return changed, stats
 
 
 # ---------------------------------------------------------------------------
 # Phase 1b — Taxonomy inference
 # ---------------------------------------------------------------------------
 
-MIN_NAMESPACE_URL_COUNT = 2
-
-
-def infer_taxonomy(index: dict[str, dict]) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]:
+def infer_taxonomy(urls: Iterable[str]) -> Taxonomy:
     """
-    Derive namespace patterns and listing pages from the collected corpus.
-
-    Returns (namespace_patterns, listings) where listings is the merged set of
-    DEFAULT_LISTINGS plus any status pages observed in the corpus, as
-    (path, confirmed_default) pairs.
+    Derive a Taxonomy (namespace patterns + listing pages) from a URL corpus.
+    Pure: reads URLs, returns a new frozen object, mutates nothing.
     """
+    urls = list(urls)
+    if not urls:
+        log.warning("Empty corpus — using default taxonomy")
+        return DEFAULT_TAXONOMY
+
     prefix_counts: dict[str, int] = {}
-    for url in index:
+    for url in urls:
         segs = [s for s in urlparse(url).path.rstrip("/").split("/") if s]
         if len(segs) >= 2:
             prefix = "/" + "/".join(segs[:-1]) + "/"
@@ -375,7 +416,7 @@ def infer_taxonomy(index: dict[str, dict]) -> tuple[list[tuple[str, str]], list[
     # Listings: defaults always present, plus any 2-segment status pages seen.
     listings: list[tuple[str, bool]] = list(DEFAULT_LISTINGS)
     seen_paths = {p for p, _ in listings}
-    for url in index:
+    for url in urls:
         segs = [s for s in urlparse(url).path.rstrip("/").split("/") if s]
         if len(segs) == 2 and segs[0] in ENTRY_ROOTS and segs[1] in KNOWN_CATEGORY_SEGMENTS:
             path = "/" + "/".join(segs)
@@ -385,7 +426,7 @@ def infer_taxonomy(index: dict[str, dict]) -> tuple[list[tuple[str, str]], list[
 
     log.info("Taxonomy inferred — %d namespace patterns, %d listings",
              len(namespaces), len(listings))
-    return namespaces, listings
+    return Taxonomy(patterns=tuple(namespaces), listings=tuple(listings))
 
 
 # ---------------------------------------------------------------------------
@@ -444,21 +485,26 @@ def find_next_page(html: str, current_url: str) -> str | None:
     return None
 
 
-def crawl_listing(session, index: dict[str, dict], path: str, confirmed: bool,
-                  max_pages: float = inf) -> int:
+def crawl_listing(session, known_urls: set[str], path: str, confirmed: bool,
+                  taxonomy: Taxonomy = DEFAULT_TAXONOMY,
+                  cfg: CrawlConfig = DEFAULT_CONFIG) -> dict[str, dict]:
     """
-    Paginate one listing, adding new entry URLs to ``index`` in place.
+    Paginate one listing and return ONLY the new records found.
 
-    Stops when: no next-page link, ``CONSECUTIVE_EMPTY_LIMIT`` consecutive
-    pages add nothing new, or ``max_pages`` is reached. Returns # added.
+    ``known_urls`` is read (copied) for dedup; the caller's set is never
+    mutated. Stops when there is no next-page link or
+    ``cfg.max_pages_per_listing`` is reached. If ``cfg.consecutive_empty_limit``
+    is set (default: None = disabled), also stops after that many consecutive
+    pages that add nothing new.
     """
-    added = 0
+    seen = set(known_urls)
+    new_records: dict[str, dict] = {}
     consecutive_empty = 0
     page = 1
     page_url: str | None = f"{BASE_URL}{path}"
 
-    while page_url and page <= max_pages:
-        raw = fetch(page_url, session, delay=CRAWL_DELAY)
+    while page_url and page <= cfg.max_pages_per_listing:
+        raw = fetch(page_url, session, cfg, delay=cfg.crawl_delay)
         if raw is None:
             break
         html = raw.decode("utf-8", errors="replace")
@@ -466,17 +512,21 @@ def crawl_listing(session, index: dict[str, dict], path: str, confirmed: bool,
         links = extract_entry_links(html)
         new_here = 0
         for url in links:
-            if url not in index:
-                index[url] = make_record(url, lastmod=None, existing_record=None,
-                                         confirmed=confirmed)
-                added += 1
+            if url not in seen:
+                new_records[url] = make_record(url, lastmod=None,
+                                               existing_record=None,
+                                               taxonomy=taxonomy,
+                                               confirmed=confirmed)
+                seen.add(url)
                 new_here += 1
 
         log.info("  %s page %d: %d links, %d new", path, page, len(links), new_here)
 
         consecutive_empty = consecutive_empty + 1 if new_here == 0 else 0
-        if consecutive_empty >= CONSECUTIVE_EMPTY_LIMIT:
-            log.info("  %d consecutive empty pages — stopping %s", consecutive_empty, path)
+        if (cfg.consecutive_empty_limit is not None
+                and consecutive_empty >= cfg.consecutive_empty_limit):
+            log.info("  %d consecutive empty pages — stopping %s",
+                     consecutive_empty, path)
             break
 
         next_url = find_next_page(html, page_url)
@@ -486,75 +536,57 @@ def crawl_listing(session, index: dict[str, dict], path: str, confirmed: bool,
         page_url = next_url
         page += 1
 
-    return added
+    return new_records
 
 
-def crawl_categories(session, existing: dict[str, dict], listings: list[tuple[str, bool]],
-                     max_category_pages: float = inf) -> tuple[dict[str, dict], dict]:
-    """Crawl every configured listing; return (index, stats)."""
-    index = dict(existing)
-    stats = {"added": 0}
-    for path, confirmed in listings:
+def crawl_categories(session, known_urls: set[str],
+                     taxonomy: Taxonomy = DEFAULT_TAXONOMY,
+                     cfg: CrawlConfig = DEFAULT_CONFIG,
+                     ) -> tuple[dict[str, dict], dict]:
+    """
+    Crawl every listing in ``taxonomy.listings`` sequentially.
+    Returns (new_records, stats). ``known_urls`` is not mutated.
+    """
+    seen = set(known_urls)
+    all_new: dict[str, dict] = {}
+    for path, confirmed in taxonomy.listings:
         log.info("Crawling listing: %s (confirmed=%s)", path, confirmed)
-        stats["added"] += crawl_listing(session, index, path, confirmed, max_category_pages)
+        new = crawl_listing(session, seen, path, confirmed, taxonomy, cfg)
+        all_new.update(new)
+        seen.update(new)
+    stats = {"added": len(all_new)}
     log.info("Listing crawl done — added=%d", stats["added"])
-    return index, stats
+    return all_new, stats
 
 
 # ---------------------------------------------------------------------------
-# Persistence
+# Reporting helper (shared by CLI and DAG summary task)
 # ---------------------------------------------------------------------------
 
-def load(path: Path) -> dict[str, dict]:
-    """Load an existing index from JSON (full envelope or bare list)."""
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        records = data["urls"] if isinstance(data, dict) and "urls" in data else data
-        loaded = {r["url"]: r for r in records if "url" in r}
-        log.info("Loaded %d existing records from %s", len(loaded), path)
-        return loaded
-    except (json.JSONDecodeError, KeyError) as exc:
-        log.warning("Could not load %s: %s — starting fresh", path, exc)
-        return {}
-
-
-def save(path: Path, index: dict[str, dict]) -> None:
-    """Write the full index to JSON with a metadata envelope (sorted records)."""
-    records = sorted(index.values(), key=lambda r: (r.get("namespace") or "", r["url"]))
-    output = {
-        "metadata": {
-            "source": BASE_URL,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "total_urls": len(records),
-            "namespaces": sorted({r.get("namespace") or "unknown" for r in records}),
-        },
-        "urls": records,
+def summarize_index(index: dict[str, dict]) -> dict:
+    """Compute the summary counts for a full index."""
+    namespace_counts: dict[str, int] = {}
+    for record in index.values():
+        ns = record.get("namespace") or "unknown"
+        namespace_counts[ns] = namespace_counts.get(ns, 0) + 1
+    return {
+        "total": len(index),
+        "confirmed": sum(1 for r in index.values() if r.get("Confirmed")),
+        "lastmod_null": sum(1 for r in index.values() if r.get("lastmod") is None),
+        "namespaces": namespace_counts,
     }
-    path.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
-    log.info("Saved %d records → %s", len(records), path)
-
-
-def save_to_mongo(index: dict[str, dict]) -> None:
-    """Upsert every record into the MongoDB ``urls`` collection."""
-    from src.db.mongo import get_store
-    store = get_store()
-    try:
-        stats = store.upsert_urls(index.values())
-        log.info("MongoDB upsert — added=%d updated=%d (total in db=%d)",
-                 stats["added"], stats["updated"], store.count_urls())
-    finally:
-        store.close()
 
 
 # ---------------------------------------------------------------------------
-# Entry point
+# Entry point — thin CLI over the library (same calls the Airflow DAG makes)
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    import kym_store as store
+    from pathlib import Path
+
     parser = argparse.ArgumentParser(description="Discover all URLs on knowyourmeme.com")
-    parser.add_argument("--output", "-o", default=OUTPUT_FILE, help="Output JSON file")
+    parser.add_argument("--output", "-o", default="kym_urls.json", help="Output JSON file")
     parser.add_argument("--max-category-pages", type=int, default=None,
                         help="Limit listing pagination to N pages per listing")
     parser.add_argument("--sitemap-only", action="store_true",
@@ -576,55 +608,49 @@ def main() -> None:
     if args.no_file and not args.mongo:
         parser.error("--no-file requires --mongo")
 
+    cfg = DEFAULT_CONFIG
+    if args.max_category_pages is not None:
+        cfg = replace(cfg, max_pages_per_listing=args.max_category_pages)
+
     out_path = Path(args.output)
     session = make_session()
-    existing = {} if args.fresh else load(out_path)
-
+    index = {} if args.fresh else store.load_json(out_path)
     crawl_stats = {"added": 0}
 
     # Phase 1: sitemaps
-    index, sitemap_stats = fetch_all_sitemaps(session, existing)
+    changed, sitemap_stats = fetch_all_sitemaps(session, index, DEFAULT_TAXONOMY, cfg)
+    index.update(changed)
     if not args.no_file:
-        save(out_path, index)
+        store.save_json(out_path, index)
 
-    # Phase 1b: taxonomy inference (updates module globals used by namespace_of)
-    listings = list(DEFAULT_LISTINGS)
-    if index:
-        inferred_namespaces, listings = infer_taxonomy(index)
-        global NAMESPACE_PATTERNS
-        NAMESPACE_PATTERNS = inferred_namespaces
+    # Phase 1b: taxonomy inference
+    taxonomy = infer_taxonomy(index.keys())
 
     # Phase 2: listing crawl
     if not args.sitemap_only:
-        max_pages = args.max_category_pages if args.max_category_pages is not None else inf
-        index, crawl_stats = crawl_categories(session, index, listings, max_pages)
+        new_records, crawl_stats = crawl_categories(session, set(index), taxonomy, cfg)
+        index.update(new_records)
         if not args.no_file:
-            save(out_path, index)
+            store.save_json(out_path, index)
 
     # Optional MongoDB sink
     if args.mongo:
-        save_to_mongo(index)
+        store.mongo_upsert(index.values())
 
     # Summary
-    namespace_counts: dict[str, int] = {}
-    for record in index.values():
-        ns = record.get("namespace") or "unknown"
-        namespace_counts[ns] = namespace_counts.get(ns, 0) + 1
-    confirmed_count = sum(1 for r in index.values() if r.get("Confirmed"))
-    null_lastmod = sum(1 for r in index.values() if r.get("lastmod") is None)
-
+    summary = summarize_index(index)
     log.info("=" * 55)
     log.info("DISCOVERY COMPLETE")
-    log.info("  Total URLs      : %d", len(index))
-    log.info("  Confirmed       : %d", confirmed_count)
+    log.info("  Total URLs      : %d", summary["total"])
+    log.info("  Confirmed       : %d", summary["confirmed"])
     log.info("  Sitemap — added : %d  updated: %d  skipped: %d",
              sitemap_stats["added"], sitemap_stats["updated"], sitemap_stats["skipped"])
     log.info("  Crawl   — added : %d", crawl_stats["added"])
-    log.info("  lastmod=null    : %d", null_lastmod)
+    log.info("  lastmod=null    : %d", summary["lastmod_null"])
     log.info("  Output          : %s", "MongoDB" if args.no_file else out_path)
     log.info("Breakdown by namespace:")
-    for ns in sorted(namespace_counts):
-        log.info("  %-35s %d", ns, namespace_counts[ns])
+    for ns in sorted(summary["namespaces"]):
+        log.info("  %-35s %d", ns, summary["namespaces"][ns])
     log.info("=" * 55)
 
 
