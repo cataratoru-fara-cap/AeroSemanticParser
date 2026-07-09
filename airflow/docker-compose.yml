@@ -139,6 +139,28 @@ services:
     mem_reservation: 256m
     networks:
       - Practice
+  
+  mongo:
+    image: mongo:7.0
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE}
+    ports:
+      - "${MONGO_PORT}:27017"
+    volumes:
+      - mongo-data-volume:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok", "mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@localhost:27017/admin"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: always
+    mem_limit: 1024m
+    mem_reservation: 512m
+    networks:
+      - Practice
 
   airflow-apiserver:
     <<: *airflow-common
@@ -375,28 +397,24 @@ services:
       - "${PGADMIN_PORT}:80" # type localhost:5050 to your browser to access the UI
     networks:
       - Practice
-
-  mongo:
-    image: mongo:7.0
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
-      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE}
-    ports:
-      - "${MONGO_PORT}:27017"
-    volumes:
-      - mongo-data-volume:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok", "mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@localhost:27017/admin"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
+    
+  mongo-express:
+    image: mongo-express:latest
+    container_name: mongo_express_airflow
     restart: always
-    mem_limit: 1024m
-    mem_reservation: 512m
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@mongo:27017/?authSource=admin
+      ME_CONFIG_BASICAUTH_USERNAME: "mongo"      # The username to log into the web UI
+      ME_CONFIG_BASICAUTH_PASSWORD: "mongo"   # The password to log into the web UI
     networks:
       - Practice
+    depends_on:
+      mongo:
+        condition: service_healthy
 
 networks:
   Practice:
