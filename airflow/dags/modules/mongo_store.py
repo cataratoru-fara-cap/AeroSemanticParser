@@ -76,6 +76,7 @@ class MongoStore:
         self.db = self.client[db_name or os.getenv("MONGODB_DB", "memes")]
         self.urls = self.db[os.getenv("MONGODB_URLS_COLLECTION", "urls")]
         self.urls.create_index("url", unique=True)
+        self.urls.create_index("namespace")
         self.urls.create_index("Confirmed")
         self.urls.create_index("last_scraped")
 

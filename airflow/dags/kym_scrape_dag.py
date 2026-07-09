@@ -70,7 +70,10 @@ DEFAULT_ARGS = {
         "chunk_size": Param(50, type="integer", minimum=1,
                             description="URLs per mapped scrape task"),
         "namespaces": Param([], type="array", items={"type": "string"},
-                    description="One namespace per line, e.g. 'memes'. Empty = all."),
+                            description="One namespace prefix per line, e.g. "
+                                        "'memes' (matches memes, memes/events, "
+                                        "memes/people, ...). 'unknown' = URLs "
+                                        "with no namespace. Empty = all."),
         "refetch_days": Param(0, type="integer", minimum=0,
                               description="Re-scrape OK pages older than N "
                                           "days (0 = never refetch)"),
@@ -83,10 +86,9 @@ def kym_scrape():
     @task
     def select_urls(params: dict | None = None) -> list[str]:
         p = params or {}
-        namespaces = dom_store.clean_namespaces(p.get("namespaces"))
         urls = dom_store.pending_urls(
             limit=p.get("batch_size", 0),
-            namespaces=namespaces or None,
+            namespaces=p.get("namespaces"),   # sanitised in dom_store
             confirmed_only=p.get("confirmed_only", True),
             refetch_older_than_days=p.get("refetch_days", 0),
         )

@@ -86,12 +86,25 @@ def _parse_lastmod(lastmod: str | None) -> datetime | None:
         return None
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
-def clean_namespaces(raw: str | Iterable[str] | None) -> list[str] | None:
-    """'' | '"' | 'memes, events' | ['memes'] -> None | ['memes','events']"""
+UNKNOWN_NAMESPACE = "unknown"
+
+# Junk that trigger forms and CLI quoting leak into a namespaces param.
+_NS_JUNK = " \t\r\n\"'/"
+
+def _clean_namespaces(raw: str | Iterable[str] | None) -> list[str] | None:
+    """Normalise a namespaces filter from any trigger source.
+
+    ``''`` / ``'"'`` / ``None``  -> None            (no filter: every namespace)
+    ``'memes, events'``          -> ['memes', 'events']
+    ``['/memes/']``              -> ['memes']
+
+    Returning None (never []) keeps the "no filter" case unrepresentable as a
+    truthy empty list, which is how a stray quote silently emptied the corpus.
+    """
     if raw is None:
         return None
     tokens = raw.split(",") if isinstance(raw, str) else list(raw)
-    out = [t for t in (str(t).strip().strip("\"'").strip() for t in tokens) if t]
+    out = [t for t in (str(t).strip(_NS_JUNK) for t in tokens) if t]
     return out or None
 
 def _encode_html(html: str, compression: str) -> tuple[Any, str]:
@@ -140,7 +153,7 @@ class DomStore:
     # -- selection ----------------------------------------------------------
 
     def select_pending(self, limit: int = 0,
-                       namespaces: Iterable[str] | None = None,
+                       namespaces: str | Iterable[str] | None = None,
                        confirmed_only: bool = True,
                        refetch_older_than_days: int = 0,
                        max_failed_attempts: int = 3) -> list[str]:
@@ -155,16 +168,18 @@ class DomStore:
         query: dict[str, Any] = {}
         if confirmed_only:
             query["Confirmed"] = True
-        
-        ns = clean_namespaces(namespaces)
-        if ns:
-            known = {n for n in self.urls.distinct("namespace") if n}
-            unknown = sorted(set(ns) - known)
-            if unknown:
-                raise ValueError(f"Unknown namespace(s) {unknown}. Known: {sorted(known)}")
-            query["namespace"] = {"$in": ns}
+        ns = _clean_namespaces(namespaces)
 
-        log.info("select_pending query=%s matched=%d", query, self.urls.count_documents(query))
+        if ns:
+            query["namespace"] = {"$in": self._resolve_namespaces(ns)}
+
+        matched = self.urls.count_documents(query)
+        log.info("select_pending — query=%s matched=%d", query, matched)
+
+        if ns and matched == 0:
+            raise ValueError(
+                f"namespaces={ns} (confirmed_only={confirmed_only}) matched 0 "
+                f"URLs. Namespace counts: {self.namespace_counts()}")
 
         fresh_cutoff = None
         if refetch_older_than_days > 0:
@@ -203,6 +218,38 @@ class DomStore:
         lm = _parse_lastmod(lastmod)
         return lm is not None and lm > fetched_at
 
+    def _resolve_namespaces(self, ns: list[str]) -> list[str | None]:
+        """Expand namespace *prefixes* to the concrete labels stored in ``urls``.
+
+        Labels are hierarchical ('memes', 'memes/events', 'sensitive/memes'),
+        so 'memes' means memes and everything under it — but NOT 'sensitive/memes',
+        which is a different root. The literal 'unknown' resolves to None, and
+        {"$in": [None]} matches both an explicit null and a missing field.
+        """
+        labels = sorted(l for l in self.urls.distinct("namespace") if l)
+        resolved: list[str | None] = []
+        unresolved: list[str] = []
+        for n in ns:
+            if n == UNKNOWN_NAMESPACE:
+                resolved.append(None)
+                continue
+            hits = [l for l in labels if l == n or l.startswith(n + "/")]
+            if hits:
+                resolved.extend(hits)
+            else:
+                unresolved.append(n)
+        if unresolved:
+            raise ValueError(
+                f"No URLs under namespace prefix(es) {unresolved}. "
+                f"Known: {labels + [UNKNOWN_NAMESPACE]}")
+        return list(dict.fromkeys(resolved))  # dedupe, order-stable
+
+    def namespace_counts(self) -> dict[str, int]:
+        """Corpus breakdown, with null/missing folded into 'unknown'."""
+        return {(d["_id"] or UNKNOWN_NAMESPACE): d["n"]
+                for d in self.urls.aggregate(
+                    [{"$group": {"_id": "$namespace", "n": {"$sum": 1}}}])}
+    
     def filter_unscraped(self, urls: list[str]) -> list[str]:
         """Drop URLs that already have a good DOM — makes Airflow task
         retries idempotent and, since ScrapingAnt bills per request,
@@ -307,7 +354,8 @@ def get_store(uri: str | None = None, db_name: str | None = None) -> DomStore:
 # Facade functions — the only calls the scrape DAG makes (kym_store style)
 # ---------------------------------------------------------------------------
 
-def pending_urls(limit: int = 0, namespaces: Iterable[str] | None = None,
+def pending_urls(limit: int = 0, 
+                 namespaces: str | Iterable[str] | None = None,
                  confirmed_only: bool = True,
                  refetch_older_than_days: int = 0,
                  max_failed_attempts: int = 3) -> list[str]:
@@ -355,5 +403,12 @@ def scrape_stats() -> dict[str, int]:
     store = get_store()
     try:
         return store.stats()
+    finally:
+        store.close()
+
+def namespace_counts() -> dict[str, int]:
+    store = get_store()
+    try:
+        return store.namespace_counts()
     finally:
         store.close()
