@@ -16,7 +16,7 @@ so re-running discovery is safe and idempotent.
 
 Connection settings come from the environment (set in docker-compose):
     MONGODB_URI   (default: mongodb://localhost:27017)
-    MONGODB_DB    (default: airflow)
+    MONGODB_DB    (default: memes)
     MONGODB_URLS_COLLECTION (default: urls)
 """
 
