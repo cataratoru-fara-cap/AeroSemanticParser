@@ -69,9 +69,8 @@ DEFAULT_ARGS = {
                                         "browser=false => ~1 credit per URL."),
         "chunk_size": Param(50, type="integer", minimum=1,
                             description="URLs per mapped scrape task"),
-        "namespaces": Param("", type="string",
-                            description="Comma-separated, e.g. 'memes' "
-                                        "('' = all namespaces)"),
+        "namespaces": Param([], type="array", items={"type": "string"},
+                    description="One namespace per line, e.g. 'memes'. Empty = all."),
         "refetch_days": Param(0, type="integer", minimum=0,
                               description="Re-scrape OK pages older than N "
                                           "days (0 = never refetch)"),
@@ -84,8 +83,7 @@ def kym_scrape():
     @task
     def select_urls(params: dict | None = None) -> list[str]:
         p = params or {}
-        namespaces = [s.strip() for s in (p.get("namespaces") or "").split(",")
-                      if s.strip()]
+        namespaces = dom_store.clean_namespaces(p.get("namespaces"))
         urls = dom_store.pending_urls(
             limit=p.get("batch_size", 0),
             namespaces=namespaces or None,

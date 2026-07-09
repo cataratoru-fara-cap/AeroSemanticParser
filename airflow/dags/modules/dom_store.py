@@ -86,6 +86,13 @@ def _parse_lastmod(lastmod: str | None) -> datetime | None:
         return None
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
+def clean_namespaces(raw: str | Iterable[str] | None) -> list[str] | None:
+    """'' | '"' | 'memes, events' | ['memes'] -> None | ['memes','events']"""
+    if raw is None:
+        return None
+    tokens = raw.split(",") if isinstance(raw, str) else list(raw)
+    out = [t for t in (str(t).strip().strip("\"'").strip() for t in tokens) if t]
+    return out or None
 
 def _encode_html(html: str, compression: str) -> tuple[Any, str]:
     if compression == "zlib":
@@ -101,6 +108,7 @@ def _decode_html(payload: Any, encoding: str | None) -> str:
     if encoding == "zlib":
         return zlib.decompress(bytes(payload)).decode("utf-8")
     return payload if isinstance(payload, str) else bytes(payload).decode("utf-8")
+
 
 
 # ---------------------------------------------------------------------------
@@ -147,9 +155,16 @@ class DomStore:
         query: dict[str, Any] = {}
         if confirmed_only:
             query["Confirmed"] = True
-        ns = [n for n in (namespaces or []) if n]
+        
+        ns = clean_namespaces(namespaces)
         if ns:
+            known = {n for n in self.urls.distinct("namespace") if n}
+            unknown = sorted(set(ns) - known)
+            if unknown:
+                raise ValueError(f"Unknown namespace(s) {unknown}. Known: {sorted(known)}")
             query["namespace"] = {"$in": ns}
+
+        log.info("select_pending query=%s matched=%d", query, self.urls.count_documents(query))
 
         fresh_cutoff = None
         if refetch_older_than_days > 0:
