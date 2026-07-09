@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import logging
+import re
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, replace
@@ -68,6 +69,10 @@ KNOWN_CATEGORY_SEGMENTS = frozenset({
     "researching", "newsworthy", "popular", "people", "events",
     "subcultures", "sites", "editorials", "videos", "photos", "cultures",
     "guides", "interviews", "page",
+    # Nav/sidebar pages present on every listing page — not entries.
+    "trending", "templates", "collections", "white-papers", "insights",
+    "episode-notes", "behind-the-scenes", "meme-review", "in-the-media",
+    "poll", "meme-insider", "rules-and-guidelines", "the-style-guide",
 })
 
 # Fallback namespace patterns (longest prefix first). A run normally replaces
@@ -461,9 +466,10 @@ def find_next_page(html: str, current_url: str) -> str | None:
     Resolve the next-page URL from a listing page.
 
     Tries, in order: <link rel="next">, a.pagination__next / a.next_page,
-    and finally any anchor whose visible text is "Next". Returns an absolute
-    URL or None. Following the site's own next link avoids guessing KYM's
-    pagination URL format.
+    any anchor whose visible text is "Next", the icon-only a.page-button
+    arrow KYM currently uses, and an explicit on-page link to page N+1 of
+    the current listing. Returns an absolute URL or None. Following the
+    site's own links avoids guessing KYM's pagination URL format.
     """
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(html, "html.parser")
@@ -479,9 +485,34 @@ def find_next_page(html: str, current_url: str) -> str | None:
         if tag and tag.get("href"):
             return urljoin(current_url, tag["href"])
 
-    for anchor in soup.find_all("a", href=True):
+    anchors = soup.find_all("a", href=True)
+
+    for anchor in anchors:
         if anchor.get_text(strip=True).lower() in ("next", "next page", "next ›", "›"):
             return urljoin(current_url, anchor["href"])
+
+    # KYM's next arrow has no rel/text — only a Font Awesome icon:
+    # <a class="page-button" href="..."><i class="fa fa-chevron-right"></i></a>
+    for anchor in anchors:
+        if "page-button" not in (anchor.get("class") or []):
+            continue
+        icon = anchor.find("i")
+        if icon is not None and "fa-chevron-right" in (icon.get("class") or []):
+            return urljoin(current_url, anchor["href"])
+
+    # Styling-agnostic fallback: follow the page's own link to page N+1.
+    parsed_current = urlparse(current_url)
+    path = parsed_current.path.rstrip("/")
+    match = re.search(r"^(.*)/page/(\d+)$", path)
+    listing_path, page_no = (match.group(1), int(match.group(2))) if match else (path, 1)
+    successor = f"{listing_path}/page/{page_no + 1}"
+    for anchor in anchors:
+        target = urljoin(current_url, anchor["href"])
+        parsed_target = urlparse(target)
+        if parsed_target.netloc and parsed_target.netloc != parsed_current.netloc:
+            continue
+        if parsed_target.path.rstrip("/") == successor:
+            return target
     return None
 
 
