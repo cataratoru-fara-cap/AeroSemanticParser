@@ -485,25 +485,33 @@ def find_next_page(html: str, current_url: str) -> str | None:
         if tag and tag.get("href"):
             return urljoin(current_url, tag["href"])
 
-    for anchor in soup.find_all("a", href=True):
+    anchors = soup.find_all("a", href=True)
+
+    for anchor in anchors:
         if anchor.get_text(strip=True).lower() in ("next", "next page", "next ›", "›"):
             return urljoin(current_url, anchor["href"])
 
     # KYM's next arrow has no rel/text — only a Font Awesome icon:
     # <a class="page-button" href="..."><i class="fa fa-chevron-right"></i></a>
-    for anchor in soup.find_all("a", class_="page-button", href=True):
+    for anchor in anchors:
+        if "page-button" not in (anchor.get("class") or []):
+            continue
         icon = anchor.find("i")
         if icon is not None and "fa-chevron-right" in (icon.get("class") or []):
             return urljoin(current_url, anchor["href"])
 
     # Styling-agnostic fallback: follow the page's own link to page N+1.
-    path = urlparse(current_url).path.rstrip("/")
+    parsed_current = urlparse(current_url)
+    path = parsed_current.path.rstrip("/")
     match = re.search(r"^(.*)/page/(\d+)$", path)
     listing_path, page_no = (match.group(1), int(match.group(2))) if match else (path, 1)
     successor = f"{listing_path}/page/{page_no + 1}"
-    for anchor in soup.find_all("a", href=True):
+    for anchor in anchors:
         target = urljoin(current_url, anchor["href"])
-        if urlparse(target).path.rstrip("/") == successor:
+        parsed_target = urlparse(target)
+        if parsed_target.netloc and parsed_target.netloc != parsed_current.netloc:
+            continue
+        if parsed_target.path.rstrip("/") == successor:
             return target
     return None
 
