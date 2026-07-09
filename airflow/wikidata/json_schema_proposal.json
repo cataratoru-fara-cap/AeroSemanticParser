@@ -1,0 +1,80 @@
+"type": "object",
+    "required": ["title", "status", "about", "tags", "origin", "origin_description", "spread_description", "year", "region", "about"],
+    "properties": {
+    "title": {
+        "type": "string",
+        "description": "The official name of the meme as given on the page"
+    },
+    "aliases": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Alternative names or spellings for the meme"
+    },
+    "entry_type": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Entry categories, e.g. 'Image Macro', 'Catchphrase', 'Exploitable'"
+    },
+    "status": {
+        "type": "string",
+        "enum": ["confirmed", "submission", "deadpool", "researching", "unknown"],
+        "description": "The entry's confirmation status"
+    },
+    "origin": {
+        "type": "string",
+        "description": "The platform or source where the meme originated, e.g. '4chan', 'Twitter'"
+    },
+    "year": {
+        "type": "integer",
+        "description": "Year the meme originated"
+    },
+    "region": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Countries or regions associated with the meme"
+    },
+    "tags": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Tags listed on the entry"
+    },
+    "about": {
+        "type": "string",
+        "description": "Summary of what the meme is, from the About section"
+    },
+    "origin_description": {
+        "type": "string",
+        "description": "Description of how and where the meme originated"
+    },
+    "spread_description": {
+        "type": "string",
+        "description": "Description of how the meme spread across platforms"
+    },
+    "notable_examples": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Notable examples, variations, or derivatives mentioned"
+    },
+    "related_memes": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Titles of related meme entries"
+    },
+    "parent_meme": {
+        "type": "string",
+        "description": "Parent meme if this entry is a subentry or derivative"
+    },
+    "search_interest": {
+        "type": "string",
+        "description": "Summary of search interest / Google Trends info if present"
+    },
+    "external_references": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "External reference links or citations"
+    },
+    "nsfw": {
+        "type": "boolean",
+        "description": "Whether the entry is marked NSFW"
+    }
+},
