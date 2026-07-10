@@ -1,5 +1,5 @@
 "type": "object",
-    "required": ["title", "status", "about", "tags", "origin", "origin_description", "spread_description", "year", "region", "about"],
+    "required": ["title", "status", "about", "tags", "origin", "origin_description", "year", "region", "about"],
     "properties": {
     "title": {
         "type": "string",
