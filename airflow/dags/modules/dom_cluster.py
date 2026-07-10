@@ -358,7 +358,7 @@ def cluster_token_maps(
                 "bump it in airflow/requirements.txt"
             ) from exc
         model = HDBSCAN(min_cluster_size=cfg.min_cluster_size,
-                        min_samples=cfg.min_samples)
+                        min_samples=cfg.min_samples, copy=True)
         model.fit(Z)
         labels = model.labels_.astype(int)
         probs = getattr(model, "probabilities_", None)
