@@ -58,7 +58,7 @@ def _config_from_params(params: dict | None) -> kd.CrawlConfig:
 
 @dag(
     dag_id="kym_discovery",
-    schedule="@weekly",
+    schedule="@monthly",
     catchup=False,
     max_active_runs=1,
     default_args=DEFAULT_ARGS,
