@@ -1,80 +1,220 @@
-"type": "object",
-    "required": ["title", "status", "about", "tags", "origin", "origin_description", "year", "region", "about"],
-    "properties": {
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memeatlas/kym_scrape_schema.json",
+  "title": "KYMEntryScrape",
+  "description": "Deterministic scrape-layer schema for a Know Your Meme entry. Scope: confirmed memes only. Every field here is directly liftable from the raw HTML with no interpretation. `required` lists the fields structurally guaranteed on a confirmed-meme page (measured >=99.7% present on 5,574 confirmed memes) — it validates well-formedness. Corpus-completeness requirements (year, origin/spread sections, entry_type) are a SEPARATE, tunable gate, not schema `required`, so thin entries are flagged and reported rather than silently discarded. Narrative sections are captured as faithful blocks (text/links/images); interpreted summaries belong to the downstream extraction schema, not here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["url", "title", "category", "status", "origin", "tags"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Version of THIS scrape schema. Bump only when the scrape contract changes (kept separate from EXTRACTOR_VERSION).",
+      "default": "1.0.0"
+    },
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Canonical entry URL on knowyourmeme.com. Primary key; also the join key back to the Mongo `doms` document."
+    },
     "title": {
-        "type": "string",
-        "description": "The official name of the meme as given on the page"
+      "type": "string",
+      "description": "Official entry name (page H1 / og:title)."
     },
-    "aliases": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "Alternative names or spellings for the meme"
-    },
-    "entry_type": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "Entry categories, e.g. 'Image Macro', 'Catchphrase', 'Exploitable'"
+    "category": {
+      "type": "string",
+      "enum": ["meme", "subculture", "culture", "event", "person", "site", "unknown"],
+      "description": "Top-level entry kind, from the breadcrumb / URL namespace. Present on 100% of the dump."
     },
     "status": {
-        "type": "string",
-        "enum": ["confirmed", "submission", "deadpool", "researching", "unknown"],
-        "description": "The entry's confirmation status"
+      "type": "string",
+      "enum": ["confirmed", "submission", "deadpool", "researching", "unlisted", "unknown"],
+      "description": "Entry confirmation status from the details sidebar. Coerce anything unrecognised to 'unknown' rather than failing."
     },
-    "origin": {
-        "type": "string",
-        "description": "The platform or source where the meme originated, e.g. '4chan', 'Twitter'"
+    "entry_type": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "Type slugs from details.type, normalised from the /types/<slug> URLs (e.g. 'image-macro', 'catchphrase'). Multiple per entry is normal."
     },
     "year": {
-        "type": "integer",
-        "description": "Year the meme originated"
+      "type": ["integer", "null"],
+      "description": "Origin year from the details sidebar. Source is a string or null; coerce to int, leave null if absent/non-numeric. Do NOT require it (~11% are null).",
+      "minimum": 1500,
+      "maximum": 2100
+    },
+    "origin": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Origin platform/source label from the details sidebar (e.g. '4chan', 'I Can Has Cheezburger'). Raw label only — no interpretation. Required: present on 100% of confirmed memes."
     },
     "region": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "Countries or regions associated with the meme"
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "Region/country labels from the details sidebar. Sparse — absent in the old dump; capture when the sidebar exposes it, else []."
+    },
+    "aliases": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "Alternative names, from an 'Also Known As' field when present. Sparse."
     },
     "tags": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "Tags listed on the entry"
-    },
-    "about": {
-        "type": "string",
-        "description": "Summary of what the meme is, from the About section"
-    },
-    "origin_description": {
-        "type": "string",
-        "description": "Description of how and where the meme originated"
-    },
-    "spread_description": {
-        "type": "string",
-        "description": "Description of how the meme spread across platforms"
-    },
-    "notable_examples": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "Notable examples, variations, or derivatives mentioned"
-    },
-    "related_memes": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "Titles of related meme entries"
-    },
-    "parent_meme": {
-        "type": "string",
-        "description": "Parent meme if this entry is a subentry or derivative"
-    },
-    "search_interest": {
-        "type": "string",
-        "description": "Summary of search interest / Google Trends info if present"
-    },
-    "external_references": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "External reference links or citations"
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1,
+      "description": "Flat list of tag strings from the entry footer. Deduplicate, preserve order. Required: present on 99.7% of confirmed memes."
     },
     "nsfw": {
-        "type": "boolean",
-        "description": "Whether the entry is marked NSFW"
+      "type": "boolean",
+      "default": false,
+      "description": "Derived deterministically: true if the URL sits under the /sensitive/ namespace or the page carries an 18+/NSFW badge. Not a judgement call."
+    },
+    "badges": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "Any explicit badges rendered on the page (e.g. 'NSFW', 'NSFL', 'Spoiler')."
+    },
+    "template_image_url": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "The entry's template/icon image (template_image_url in the dump; 100% present there)."
+    },
+    "og_image": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "Social card image (meta og:image). Provenance/thumbnail use."
+    },
+    "parent": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "Parent entry URL if this is a sub-entry (covers the old 'parent_meme' intent, losslessly, as a link)."
+    },
+    "children": {
+      "type": "array",
+      "items": {"type": "string", "format": "uri"},
+      "default": [],
+      "description": "Child entry URLs."
+    },
+    "siblings": {
+      "type": "array",
+      "items": {"type": "string", "format": "uri"},
+      "default": [],
+      "description": "Sibling entry URLs."
+    },
+    "additional_references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "url"],
+        "properties": {
+          "name": {"type": "string", "description": "Source name, e.g. 'Encyclopedia Dramatica'."},
+          "url": {"type": "string", "format": "uri"}
+        }
+      },
+      "default": [],
+      "description": "The 'Additional References' sidebar box. In the dump this is a {name: url} map (present on 53.5%); flattened here to a list so ordering and duplicate names survive."
+    },
+    "external_references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url"],
+        "properties": {
+          "index": {"type": ["integer", "null"], "description": "The [n] citation number if present."},
+          "text": {"type": ["string", "null"], "description": "Citation display text."},
+          "url": {"type": "string", "format": "uri"}
+        }
+      },
+      "default": [],
+      "description": "The numbered [n] citations from the References section, structured. Replaces the flat string list, which lost the URL/label split."
+    },
+    "sections": {
+      "type": "array",
+      "description": "The narrative body as an ordered list of blocks, one per heading. Order-preserving and collision-free (keying by heading text produced ~3000 junk keys in the old dump). Downstream indexes by `kind`.",
+      "items": {"$ref": "#/$defs/section"},
+      "default": []
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": {"type": "string"},
+      "default": {},
+      "description": "Raw og:/twitter: meta tags, kept verbatim for provenance and as an extraction fallback (og:description is a clean one-liner)."
+    },
+    "kym_last_updated": {
+      "type": ["integer", "null"],
+      "description": "KYM's own last-updated timestamp (unix seconds), from last_update_source. Page-authored, not scrape time."
+    },
+    "kym_added": {
+      "type": ["integer", "null"],
+      "description": "KYM's entry-added timestamp (unix seconds), from `added`."
+    },
+    "scraped_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "When this scrape ran (ISO 8601). Set by the scraper, not from the page."
     }
-},
+  },
+  "$defs": {
+    "link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "url"],
+      "properties": {
+        "text": {"type": "string"},
+        "url": {"type": "string", "format": "uri"}
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["src"],
+      "properties": {
+        "src": {"type": "string", "format": "uri"},
+        "alt": {"type": ["string", "null"]},
+        "caption": {"type": ["string", "null"]}
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["heading", "kind", "level"],
+      "properties": {
+        "heading": {
+          "type": "string",
+          "description": "Raw heading text, normalised (trimmed, lowercased). Guard against embed-script blobs and cap length so Google-Trends JS never lands here as a heading."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["about", "origin", "spread", "search_interest", "notable_examples", "various_examples", "related_memes", "external_references", "other"],
+          "description": "Best-effort canonical bucket for the heading. The long tail all maps to 'other' but keeps its raw `heading`."
+        },
+        "level": {
+          "type": "integer",
+          "enum": [2, 3],
+          "description": "Heading level (H2 vs H3) so subsection nesting is recoverable."
+        },
+        "text": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": [],
+          "description": "Paragraphs under this heading, in order. Strip embed scripts/trend-widget noise here."
+        },
+        "links": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/link"},
+          "default": []
+        },
+        "images": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/image"},
+          "default": []
+        }
+      }
+    }
+  }
+}

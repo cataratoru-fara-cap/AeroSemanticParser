@@ -24,10 +24,15 @@ lxml = pytest.importorskip("lxml")
 from modules.dom_cluster import (  # noqa: E402
     ClusterConfig,
     ExtractConfig,
+    _fit,
+    _prepare,
+    _stratified_silhouette,
     build_count_matrix,
     cluster_token_maps,
     extract_structure_tokens,
     iter_extract,
+    sweep_token_maps,
+    _format_sweep_table,
 )
 
 
@@ -186,7 +191,7 @@ def test_hdbscan_flags_unknown_template_as_noise():
     maps, _ = _corpus()
     maps.append(extract_structure_tokens(_alien_page())["tokens"])  # the intruder
     cfg = ClusterConfig(algorithm="hdbscan", min_cluster_size=5,
-                        min_df=1, svd_components=20)
+                        min_samples=3, min_df=1, svd_components=20)
     result = cluster_token_maps(maps, cfg)
 
     assert result.metrics["n_clusters"] == 3
@@ -224,3 +229,93 @@ def test_too_few_documents_raises():
     pytest.importorskip("sklearn")
     with pytest.raises(ValueError):
         cluster_token_maps([{"a": 1}] * 3)
+
+
+# ---------------------------------------------------------------------------
+# Binary features, stratified silhouette, sweep
+# ---------------------------------------------------------------------------
+
+def test_binary_features_ignore_article_length():
+    """Same skeleton, wildly different paragraph counts -> identical
+    vectors under binary features (counts leak length; presence keeps
+    layout only)."""
+    pytest.importorskip("sklearn")
+    np = pytest.importorskip("numpy")
+    maps = [
+        extract_structure_tokens(_entry_page("short", 2, 3))["tokens"],
+        extract_structure_tokens(_entry_page("long", 40, 3))["tokens"],
+        extract_structure_tokens(_gallery_page(5))["tokens"],   # anchor doc
+    ]
+    X, _ = _prepare(maps, min_df=1)
+
+    z_bin = _fit(X, ClusterConfig(algorithm="kmeans", k=2, binary=True, svd_components=2))["Z"]
+    assert np.allclose(z_bin[0], z_bin[1])
+
+    z_cnt = _fit(X, ClusterConfig(algorithm="kmeans", k=2, binary=False, svd_components=2))["Z"]
+    assert not np.allclose(z_cnt[0], z_cnt[1])
+
+
+def test_counts_mode_still_separates_templates():
+    pytest.importorskip("sklearn")
+    maps, truth = _corpus()
+    cfg = ClusterConfig(algorithm="kmeans", k=3, binary=False,
+                        min_df=1, svd_components=20)
+    result = cluster_token_maps(maps, cfg)
+
+    from sklearn.metrics import adjusted_rand_score
+    assert adjusted_rand_score(truth, result.labels) == pytest.approx(1.0)
+
+
+def test_metrics_carry_the_new_fields():
+    pytest.importorskip("sklearn")
+    maps, _ = _corpus()
+    cfg = ClusterConfig(algorithm="kmeans", k=3, min_df=1, svd_components=20)
+    m = cluster_token_maps(maps, cfg).metrics
+
+    assert m["binary_features"] is True
+    assert m["davies_bouldin"] is not None and m["davies_bouldin"] >= 0
+    assert m["largest_cluster_frac"] == pytest.approx(15 / 45, abs=1e-3)
+    assert m["silhouette"] is not None
+
+
+def test_stratified_silhouette_sees_tiny_clusters():
+    """The 17,186/14 failure mode: a plain random subsample of a huge
+    blob + a tiny satellite scores the split as excellent while barely
+    sampling the satellite. Stratification must include the satellite
+    wholesale and still return a finite, computable score."""
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(0)
+    big = rng.normal(0.0, 1.0, size=(2000, 5))
+    tiny = rng.normal(8.0, 0.1, size=(6, 5))
+    Z = np.vstack([big, tiny])
+    labels = np.array([0] * 2000 + [1] * 6)
+
+    cfg = ClusterConfig(silhouette_sample=200, silhouette_floor=5)
+    score = _stratified_silhouette(Z, labels, cfg)
+    assert score is not None and 0.0 < score <= 1.0
+
+    # single cluster -> undefined
+    assert _stratified_silhouette(Z, np.zeros(len(Z), dtype=int), cfg) is None
+
+
+def test_sweep_runs_grid_and_persists_nothing():
+    pytest.importorskip("sklearn")
+    maps, _ = _corpus()
+    configs = [
+        ClusterConfig(algorithm="kmeans", k=2, min_df=1, svd_components=10),
+        ClusterConfig(algorithm="kmeans", k=3, min_df=1, svd_components=10),
+        ClusterConfig(algorithm="hdbscan", min_cluster_size=5, min_samples=3,
+                      min_df=1, svd_components=10, binary=False),
+    ]
+    rows = sweep_token_maps(maps, configs)
+
+    assert len(rows) == 3
+    assert {r["algorithm"] for r in rows} == {"kmeans", "hdbscan"}
+    assert all("silhouette" in r["metrics"] and "fit_seconds" in r for r in rows)
+    assert rows[2]["features"] == "counts"
+
+    table = _format_sweep_table(rows)
+    assert "kmeans" in table and "hdbscan" in table and "noise%" in table
+    # k=3 matches the three synthetic families -> should sort to the top
+    assert "k=3" in table.splitlines()[2]

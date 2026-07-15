@@ -412,3 +412,40 @@ def namespace_counts() -> dict[str, int]:
         return store.namespace_counts()
     finally:
         store.close()
+
+# ---------------------------------------------------------------------------   
+# Read-only facade used by modules/kym_parse.py --sample. Keeps all Mongo
+# access inside the *_store module, per the architecture rule. Reads only;
+# writes to `doms` remain owned by the scrape stage.
+# ---------------------------------------------------------------------------
+
+def iter_ok_html(limit: int = 0, namespaces: Iterable[str] | None = None,
+                 confirmed_only: bool = True):
+    """Yield (url, decompressed_html) for stored OK DOMs, joined against
+    the discovery `urls` collection so callers can restrict to
+    confirmed entries in given namespaces (e.g. ["memes"]).
+
+    Generator holds one connection for its lifetime and closes it when
+    exhausted or garbage-collected.
+    """
+    store = get_store()
+    try:
+        query: dict = {}
+        if confirmed_only:
+            query["Confirmed"] = True
+        if namespaces:
+            query["namespace"] = {"$in": list(namespaces)}
+        yielded = 0
+        for rec in store.urls.find(query, {"url": 1, "_id": 0}):
+            url = rec.get("url")
+            if not url:
+                continue
+            html = store.load_html(url)   # None if not scraped OK yet
+            if html is None:
+                continue
+            yield url, html
+            yielded += 1
+            if limit and yielded >= limit:
+                return
+    finally:
+        store.close()

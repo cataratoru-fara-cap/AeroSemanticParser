@@ -247,16 +247,29 @@ def iter_extract(
 
 @dataclass(frozen=True)
 class ClusterConfig:
-    """One clustering run's knobs (frozen; asdict() goes in the run doc)."""
+    """One clustering run's knobs (frozen; asdict() goes in the run doc).
+
+    min_cluster_size and min_samples are deliberately decoupled:
+    min_cluster_size is the smallest template family worth its own
+    scraping script (a product decision), min_samples is how readily a
+    point is declared noise (a density decision). High min_cluster_size
+    with low min_samples means "only big families get a label, but a
+    page must genuinely fit one to escape the -1 bucket" — which is
+    what makes -1 usable as a new-template detector.
+    """
     algorithm: str = "hdbscan"      # 'hdbscan' | 'kmeans'
-    min_cluster_size: int = 25      # hdbscan: smallest template family we care about
-    min_samples: int | None = None  # hdbscan conservativeness (None = library default)
+    min_cluster_size: int = 100     # hdbscan: smallest family worth a script
+    min_samples: int | None = 10    # hdbscan noise-readiness (None = library default)
     k: int = 8                      # kmeans only
-    svd_components: int = 100
+    binary: bool = True             # presence/absence instead of counts —
+                                    # template identity is which structures
+                                    # exist, not how many paragraphs a page has
+    svd_components: int = 30        # ~96% variance sits well below 100 dims
     min_df: int = 2                 # drop tokens appearing in fewer docs
     top_tokens: int = 12            # distinguishing tokens kept per cluster
     sample_urls: int = 5            # example pages kept per cluster
-    silhouette_sample: int = 4000
+    silhouette_sample: int = 4000   # stratified across clusters, see below
+    silhouette_floor: int = 50      # min points each cluster contributes
     random_state: int = 42
 
 
@@ -304,43 +317,34 @@ def build_count_matrix(token_maps: list[dict[str, int]]):
     return X, terms
 
 
-def cluster_token_maps(
-    token_maps: list[dict[str, int]],
-    cfg: ClusterConfig = DEFAULT_CLUSTER,
-    return_models: bool = False,
-):
-    """
-    Cluster documents by structural-token distribution.
-
-    Returns a ClusterResult, or (ClusterResult, models) when
-    return_models=True — models holds the fitted tfidf/svd/normalizer,
-    the term list and per-cluster medoid vectors, i.e. everything needed
-    later to assign a NEW page to its nearest cluster (or flag it
-    unknown) without re-clustering the corpus.
-    """
+def _prepare(token_maps: list[dict[str, int]], min_df: int):
+    """counts matrix + min_df filter — shared by cluster and sweep runs."""
     import numpy as np
+
+    X, terms = build_count_matrix(token_maps)
+    df = np.asarray((X > 0).sum(axis=0)).ravel()
+    keep = np.where(df >= min_df)[0]
+    if keep.size == 0:
+        raise ValueError(f"no tokens survive min_df={min_df}")
+    return X[:, keep], [terms[i] for i in keep]
+
+
+def _fit(X_counts, cfg: ClusterConfig) -> dict[str, Any]:
+    """df-filtered counts -> labels/probabilities + fitted transforms."""
     from sklearn.decomposition import TruncatedSVD
     from sklearn.feature_extraction.text import TfidfTransformer
     from sklearn.preprocessing import Normalizer
 
-    n_docs = len(token_maps)
-    floor = cfg.k if cfg.algorithm == "kmeans" else cfg.min_cluster_size
-    if n_docs < max(floor, 10):
-        raise ValueError(
-            f"only {n_docs} documents — need at least {max(floor, 10)} "
-            f"for a meaningful {cfg.algorithm} run (extract more DOMs first)"
-        )
+    X = X_counts
+    if cfg.binary:
+        # Which structures exist, not how many: a 40-paragraph and a
+        # 4-paragraph entry page are the same template. Counts leak
+        # article LENGTH into the vectors; presence keeps only layout.
+        X = X.copy()
+        X.data[:] = 1.0
 
-    # counts -> tf-idf (L2-normalised)
-    X, terms = build_count_matrix(token_maps)
-    df = np.asarray((X > 0).sum(axis=0)).ravel()
-    keep = np.where(df >= cfg.min_df)[0]
-    if keep.size == 0:
-        raise ValueError(f"no tokens survive min_df={cfg.min_df}")
-    X = X[:, keep]
-    terms = [terms[i] for i in keep]
-
-    tfidf_tr = TfidfTransformer(sublinear_tf=True)  # norm='l2' by default
+    # sublinear_tf dampens counts; pointless on 0/1 data
+    tfidf_tr = TfidfTransformer(sublinear_tf=not cfg.binary)  # norm='l2'
     T = tfidf_tr.fit_transform(X)
 
     # LSA: SVD + re-normalise, so euclidean ~ cosine in the reduced space
@@ -370,33 +374,106 @@ def cluster_token_maps(
     else:
         raise ValueError(f"unknown algorithm {cfg.algorithm!r}")
 
+    return {"labels": labels, "probs": probs, "T": T, "Z": Z,
+            "tfidf_transformer": tfidf_tr, "svd": svd,
+            "normalizer": normalizer, "n_components": n_comp}
+
+
+def _stratified_silhouette(Z, labels, cfg: ClusterConfig) -> float | None:
+    """
+    Silhouette on a sample stratified BY CLUSTER: every cluster
+    contributes at least silhouette_floor points (or all it has), the
+    rest of the budget is split proportionally.
+
+    A plain random subsample lets one dominant cluster crowd small ones
+    out entirely — the 17,186/14 failure mode, where the score only
+    measured "the 14 weirdos are far away" and reported 0.61 for a
+    degenerate split. Green metric, nothing measured.
+    """
+    import numpy as np
+    from sklearn.metrics import silhouette_score
+
+    ids = sorted({int(l) for l in labels} - {-1})
+    if len(ids) < 2:
+        return None
+
+    rng = np.random.default_rng(cfg.random_state)
+    n_labelled = int((labels != -1).sum())
+    picked = []
+    for cid in ids:
+        idxs = np.where(labels == cid)[0]
+        share = int(round(cfg.silhouette_sample * idxs.size / n_labelled))
+        take = min(idxs.size, max(cfg.silhouette_floor, share))
+        picked.append(rng.choice(idxs, size=take, replace=False))
+    sel = np.concatenate(picked)
+    if sel.size <= len(ids) + 1:
+        return None
+    return float(silhouette_score(Z[sel], labels[sel]))
+
+
+def _compute_metrics(fit: dict[str, Any], cfg: ClusterConfig,
+                     n_docs: int, n_features: int) -> dict[str, Any]:
+    labels, Z = fit["labels"], fit["Z"]
     cluster_ids = sorted({int(l) for l in labels} - {-1})
     n_noise = int((labels == -1).sum())
+    sizes = {str(c): int((labels == c).sum()) for c in cluster_ids}
 
-    silhouette = None
+    davies_bouldin = None
     if len(cluster_ids) >= 2:
-        from sklearn.metrics import silhouette_score
+        from sklearn.metrics import davies_bouldin_score
         mask = labels != -1
-        pts = int(mask.sum())
-        if pts > len(cluster_ids) + 1:
-            silhouette = float(silhouette_score(
-                Z[mask], labels[mask],
-                sample_size=min(cfg.silhouette_sample, pts),
-                random_state=cfg.random_state,
-            ))
+        davies_bouldin = float(davies_bouldin_score(Z[mask], labels[mask]))
 
-    metrics: dict[str, Any] = {
+    silhouette = _stratified_silhouette(Z, labels, cfg)
+    return {
         "algorithm": cfg.algorithm,
+        "binary_features": cfg.binary,
         "n_docs": n_docs,
-        "n_features": len(terms),
-        "svd_components": n_comp,
-        "svd_explained_variance": round(float(svd.explained_variance_ratio_.sum()), 4),
+        "n_features": n_features,
+        "svd_components": fit["n_components"],
+        "svd_explained_variance": round(
+            float(fit["svd"].explained_variance_ratio_.sum()), 4),
         "n_clusters": len(cluster_ids),
         "n_noise": n_noise,
         "noise_frac": round(n_noise / n_docs, 4),
+        "largest_cluster_frac": round(max(sizes.values()) / n_docs, 4) if sizes else 0.0,
         "silhouette": None if silhouette is None else round(silhouette, 4),
-        "cluster_sizes": {str(c): int((labels == c).sum()) for c in cluster_ids},
+        "davies_bouldin": None if davies_bouldin is None else round(davies_bouldin, 4),
+        "cluster_sizes": sizes,
     }
+
+
+def cluster_token_maps(
+    token_maps: list[dict[str, int]],
+    cfg: ClusterConfig = DEFAULT_CLUSTER,
+    return_models: bool = False,
+):
+    """
+    Cluster documents by structural-token distribution.
+
+    Returns a ClusterResult, or (ClusterResult, models) when
+    return_models=True — models holds the fitted tfidf/svd/normalizer,
+    the term list and per-cluster medoid vectors, i.e. everything needed
+    later to assign a NEW page to its nearest cluster (or flag it
+    unknown) without re-clustering the corpus.
+    """
+    import numpy as np
+
+    n_docs = len(token_maps)
+    floor = cfg.k if cfg.algorithm == "kmeans" else cfg.min_cluster_size
+    if n_docs < max(floor, 10):
+        raise ValueError(
+            f"only {n_docs} documents — need at least {max(floor, 10)} "
+            f"for a meaningful {cfg.algorithm} run (extract more DOMs first)"
+        )
+
+    X, terms = _prepare(token_maps, cfg.min_df)
+    fit = _fit(X, cfg)
+    labels, probs, T, Z = fit["labels"], fit["probs"], fit["T"], fit["Z"]
+    metrics = _compute_metrics(fit, cfg, n_docs, len(terms))
+
+    cluster_ids = sorted({int(l) for l in labels} - {-1})
+    n_noise = int((labels == -1).sum())
 
     # per-cluster summaries: top distinguishing tokens, medoid, samples
     gmean = np.asarray(T.mean(axis=0)).ravel()
@@ -447,12 +524,89 @@ def cluster_token_maps(
         "extractor_version": EXTRACTOR_VERSION,
         "config": asdict(cfg),
         "terms": terms,
-        "tfidf_transformer": tfidf_tr,
-        "svd": svd,
-        "normalizer": normalizer,
+        "tfidf_transformer": fit["tfidf_transformer"],
+        "svd": fit["svd"],
+        "normalizer": fit["normalizer"],
         "medoids": medoids,
     }
     return result, models
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — config sweep (evidence before commitment)
+# ---------------------------------------------------------------------------
+
+def sweep_token_maps(token_maps: list[dict[str, int]],
+                     configs: list[ClusterConfig]) -> list[dict[str, Any]]:
+    """
+    Dry-run many configs on one corpus and return one metrics row each.
+
+    Persists NOTHING: no assignments, no runs, no clusters — evidence
+    only. The winning config then gets a real `cluster` run. The count
+    matrix is built once per distinct min_df and shared across configs,
+    so the sweep cost is dominated by the fits themselves.
+    """
+    import time
+
+    rows: list[dict[str, Any]] = []
+    prepared: dict[int, tuple[Any, list[str]]] = {}
+    for i, cfg in enumerate(configs, 1):
+        if cfg.min_df not in prepared:
+            prepared[cfg.min_df] = _prepare(token_maps, cfg.min_df)
+        X, terms = prepared[cfg.min_df]
+
+        t0 = time.perf_counter()
+        fit = _fit(X, cfg)
+        metrics = _compute_metrics(fit, cfg, len(token_maps), len(terms))
+        elapsed = round(time.perf_counter() - t0, 1)
+
+        param = (f"mcs={cfg.min_cluster_size},ms={cfg.min_samples}"
+                 if cfg.algorithm == "hdbscan" else f"k={cfg.k}")
+        rows.append({
+            "algorithm": cfg.algorithm,
+            "features": "binary" if cfg.binary else "counts",
+            "param": param,
+            "svd": metrics["svd_components"],
+            "metrics": metrics,
+            "fit_seconds": elapsed,
+        })
+        log.info("  sweep %d/%d — %s/%s %s svd=%d: clusters=%d noise=%.1f%% "
+                 "silh=%s (%.1fs)",
+                 i, len(configs), cfg.algorithm,
+                 "binary" if cfg.binary else "counts", param,
+                 metrics["svd_components"], metrics["n_clusters"],
+                 100 * metrics["noise_frac"], metrics["silhouette"], elapsed)
+    return rows
+
+
+def _format_sweep_table(rows: list[dict[str, Any]]) -> str:
+    """Rows -> aligned text table, best (non-degenerate) configs first."""
+    def _fmt(v: float | None) -> str:
+        return "     —" if v is None else f"{v:6.3f}"
+
+    header = (f"{'algo':<8} {'feats':<7} {'params':<15} {'svd':>4} "
+              f"{'clu':>4} {'noise%':>7} {'top%':>6} {'silh':>7} "
+              f"{'DB':>7} {'sec':>6}")
+    lines = [header, "-" * len(header)]
+
+    def _key(r: dict[str, Any]):
+        m = r["metrics"]
+        degenerate = m["n_clusters"] < 2
+        return (degenerate, -(m["silhouette"] if m["silhouette"] is not None else -9))
+
+    for r in sorted(rows, key=_key):
+        m = r["metrics"]
+        lines.append(
+            f"{r['algorithm']:<8} {r['features']:<7} {r['param']:<15} "
+            f"{r['svd']:>4} {m['n_clusters']:>4} "
+            f"{100 * m['noise_frac']:>6.1f}% {100 * m['largest_cluster_frac']:>5.1f}% "
+            f"{_fmt(m['silhouette']):>7} {_fmt(m['davies_bouldin']):>7} "
+            f"{r['fit_seconds']:>6.1f}")
+
+    lines += ["", "silh: higher is better (stratified by cluster) · "
+                  "DB (Davies-Bouldin): lower is better · "
+                  "top%: largest cluster's share · noise%: -1 fraction"]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +649,7 @@ def _cmd_cluster(args: argparse.Namespace) -> None:
             min_cluster_size=args.min_cluster_size,
             min_samples=args.min_samples,
             k=args.k,
+            binary=not args.counts,
             svd_components=args.svd_components,
         )
         out = cluster_token_maps(token_maps, cfg, return_models=bool(args.model_out))
@@ -561,6 +716,47 @@ def _cmd_cluster(args: argparse.Namespace) -> None:
         store.close()
 
 
+def _parse_int_list(raw: str) -> list[int]:
+    return [int(x) for x in raw.split(",") if x.strip()]
+
+def _cmd_sweep(args: argparse.Namespace) -> None:
+    store = _import_store().get_store()
+    try:
+        urls, token_maps = store.load_features(EXTRACTOR_VERSION)
+    finally:
+        store.close()  # sweep never writes — release the connection early
+    log.info("Loaded %d feature rows — sweeping (nothing is persisted)",
+             len(urls))
+
+    if args.features == "both":
+        feature_modes = [True, False]
+    else:
+        feature_modes = [args.features == "binary"]
+
+    configs: list[ClusterConfig] = []
+    for binary in feature_modes:
+        for svd in _parse_int_list(args.svd_list):
+            for mcs in _parse_int_list(args.min_cluster_sizes):
+                configs.append(ClusterConfig(
+                    algorithm="hdbscan", min_cluster_size=mcs,
+                    min_samples=args.min_samples, binary=binary,
+                    svd_components=svd))
+            for k in _parse_int_list(args.k_list):
+                configs.append(ClusterConfig(
+                    algorithm="kmeans", k=k, binary=binary,
+                    svd_components=svd))
+
+    log.info("%d configurations queued", len(configs))
+    rows = sweep_token_maps(token_maps, configs)
+    print(_format_sweep_table(rows))
+
+    if args.out:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+        log.info("Sweep rows → %s", out_path)
+
+
 def _cmd_stats(_args: argparse.Namespace) -> None:
     store = _import_store().get_store()
     try:
@@ -592,10 +788,15 @@ def main() -> None:
     p_cl.add_argument("--min-cluster-size", type=int,
                       default=DEFAULT_CLUSTER.min_cluster_size,
                       help="hdbscan: smallest template family worth a script")
-    p_cl.add_argument("--min-samples", type=int, default=None,
-                      help="hdbscan conservativeness (default: library default)")
+    p_cl.add_argument("--min-samples", type=int,
+                      default=DEFAULT_CLUSTER.min_samples,
+                      help="hdbscan noise-readiness — kept LOW on purpose "
+                           "so ill-fitting pages land in -1")
     p_cl.add_argument("--k", type=int, default=DEFAULT_CLUSTER.k,
                       help="kmeans: number of clusters")
+    p_cl.add_argument("--counts", action="store_true",
+                      help="use raw token counts instead of binary "
+                           "presence features (default: binary)")
     p_cl.add_argument("--svd-components", type=int,
                       default=DEFAULT_CLUSTER.svd_components)
     p_cl.add_argument("--report", default="dom_cluster_report.json",
@@ -607,6 +808,23 @@ def main() -> None:
                       help="write page_template_type back onto the urls "
                            "collection (dom_cN / unknown)")
     p_cl.set_defaults(func=_cmd_cluster)
+
+    p_sw = sub.add_parser("sweep",
+                          help="dry-run a config grid, print a comparison "
+                               "table — persists nothing to Mongo")
+    p_sw.add_argument("--k-list", default="4,6,8,12",
+                      help="comma-separated kmeans k values")
+    p_sw.add_argument("--min-cluster-sizes", default="50,100,200",
+                      help="comma-separated hdbscan min_cluster_size values")
+    p_sw.add_argument("--min-samples", type=int,
+                      default=DEFAULT_CLUSTER.min_samples)
+    p_sw.add_argument("--svd-list", default="30,100",
+                      help="comma-separated SVD dimensionalities")
+    p_sw.add_argument("--features", choices=["binary", "counts", "both"],
+                      default="both")
+    p_sw.add_argument("--out", default=None,
+                      help="also dump the sweep rows as JSON")
+    p_sw.set_defaults(func=_cmd_sweep)
 
     p_st = sub.add_parser("stats", help="corpus / feature / run counters")
     p_st.set_defaults(func=_cmd_stats)
