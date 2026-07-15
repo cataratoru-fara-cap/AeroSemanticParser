@@ -46,6 +46,20 @@ class ParseDogeTests(unittest.TestCase):
         self.assertIn("shiba inu", self.entry.tags)
         self.assertEqual(len(self.entry.tags), len({t.lower() for t in self.entry.tags}))
 
+    def test_tags_do_not_bleed_from_additional_references(self):
+        # Regression: dl#entry_tags holds BOTH the Tags dt/dd and the
+        # Additional References dt/dd side by side; a naive 'dl a' selector
+        # merges reference site names ("Wikipedia", "Reddit"-the-site, etc.)
+        # into tags. Reddit is legitimately both a tag AND a reference name
+        # here, so assert on names that only belong to one side.
+        self.assertNotIn("Encyclopedia Dramatica", self.entry.tags)
+        self.assertNotIn("Wikipedia", self.entry.tags)
+        self.assertNotIn("Dictionary.com", self.entry.tags)
+        ref_names = {r.name for r in self.entry.additional_references}
+        self.assertNotIn("shiba inu", ref_names)
+        self.assertEqual(len(self.entry.tags), 22)
+        self.assertEqual(len(self.entry.additional_references), 8)
+
     def test_parent_series(self):
         self.assertEqual(
             str(self.entry.parent),

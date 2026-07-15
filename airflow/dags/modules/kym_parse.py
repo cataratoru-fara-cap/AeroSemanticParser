@@ -53,6 +53,7 @@ from modules.kym_models import (
 )
 
 log = logging.getLogger("kym_parse")
+PARSER_VERSION = "15/7/26"
 
 BASE_URL = "https://knowyourmeme.com"
 
@@ -127,6 +128,11 @@ def _classify(heading_id: str | None, heading_text: str) -> str:
     if heading_id and heading_id in _ID_KIND:
         return _ID_KIND[heading_id]
     key = re.sub(r"[:.\s]+$", "", heading_text.strip().lower())
+    if key.startswith("template"):
+        # Catches the whole family: "Template", "Templates", "Template / GIF",
+        # "Template / Gut Genug Chorus Only", etc. — prefix, not exact match,
+        # since the suffix after "/" is often a one-off track/format name.
+        return "template"
     return _TEXT_KIND.get(key, "other")
 
 
@@ -163,6 +169,20 @@ def _sidebar(soup) -> dict:
         key = dt.get_text(strip=True).lower().rstrip(":")
         out[key] = dd
     return out
+
+
+def _tags(soup) -> list[str]:
+    """True tags carry a data-tag attribute. NOTE: dl#entry_tags is a shared
+    container — it holds the Tags dt/dd AND the Additional References
+    dt/dd side by side, so a bare 'dl#entry_tags a' selector bleeds
+    reference links into tags. data-tag is the reliable discriminator;
+    dt-text scoping below is a fallback if KYM ever drops the attribute."""
+    tagged = [a.get_text(strip=True) for a in soup.select("dl#entry_tags a[data-tag]")]
+    if tagged:
+        return tagged
+    dt = soup.find("dt", string=re.compile(r"^\s*Tags\s*$"))
+    dd = dt.find_next_sibling("dd") if dt else None
+    return [a.get_text(strip=True) for a in dd.find_all("a")] if dd else []
 
 
 def _additional_refs(soup) -> list[dict]:
@@ -308,8 +328,7 @@ def parse_entry(html: str, url: str | None = None,
     aka_raw = dd_text("also known as") or dd_text("aka")
     aliases = [a.strip() for a in aka_raw.split(",")] if aka_raw else []
 
-    tags = [a.get_text(strip=True)
-            for a in soup.select("dl#entry_tags a")] or None  # None -> raise
+    tags = _tags(soup) or None  # None -> raise (tags is model-required)
 
     parent_el = soup.select_one("h5.parent a[href]")
     parent = None

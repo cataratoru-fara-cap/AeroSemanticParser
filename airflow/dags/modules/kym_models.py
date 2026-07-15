@@ -27,12 +27,14 @@ Scope: confirmed memes only. Two levels of "required", kept separate on purpose:
      across 5,574 confirmed memes). Missing one means a malformed scrape;
      raising is correct.
   2. Corpus-completeness gate (`corpus_ready`) — the documentation bar (year,
-     entry_type, about/origin/spread sections, optionally region). This FLAGS
-     and reports missing fields instead of raising, so a thin-but-valid entry
-     is kept and inspectable rather than discarded with its scrape work. Reject
-     rates if these were hard-required instead: year ~10.5%, origin section
-     ~11%, spread section ~15%, entry_type ~52%, region unverified (0% captured
-     by the prior scrape — leave gated off until sampled on live pages).
+     entry_type, about/origin/spread sections, region). This FLAGS and reports
+     missing fields instead of raising, so a thin-but-valid entry is kept and
+     inspectable rather than discarded with its scrape work. Measured on a
+     100-page live sample (2026-07): year 99%, entry_type 100%, about/origin/
+     spread sections 100%, region 94% — all five enabled as of that
+     measurement. Region was gated off pre-measurement (0% in the PRIOR
+     scraper's dump); re-verify any gate you flip against a fresh sample if
+     selectors change again.
 """
 
 from __future__ import annotations
@@ -57,7 +59,7 @@ _TYPE_SLUG_RE = re.compile(r"/types/([a-z0-9-]+)")
 # is DOM garbage the old scraper mistook for a section title.
 _MAX_HEADING_LEN = 120
 _EMBED_NOISE_RE = re.compile(r"renderexplorewidget|trends\.embed", re.IGNORECASE)
-
+CORPUS_POLICY_VERSION = "7/15/26"
 
 class Status(str, Enum):
     confirmed = "confirmed"
@@ -87,6 +89,7 @@ class SectionKind(str, Enum):
     various_examples = "various_examples"
     related_memes = "related_memes"
     external_references = "external_references"
+    template = "template"
     other = "other"
 
 
@@ -276,7 +279,7 @@ class CorpusPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     require_year: bool = True
     require_entry_type: bool = True
-    require_region: bool = False  # 0% coverage in prior scrape; verify first
+    require_region: bool = True  # 94% coverage measured on a 100-page live sample
     require_sections: tuple[str, ...] = ("about", "origin", "spread")
 
 

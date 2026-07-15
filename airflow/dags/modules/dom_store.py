@@ -413,17 +413,80 @@ def namespace_counts() -> dict[str, int]:
     finally:
         store.close()
 
-# ---------------------------------------------------------------------------   
-# Read-only facade used by modules/kym_parse.py --sample. Keeps all Mongo
-# access inside the *_store module, per the architecture rule. Reads only;
-# writes to `doms` remain owned by the scrape stage.
 # ---------------------------------------------------------------------------
+# writes to `doms` remain owned by the scrape stage. Verified against a
+# mongomock reconstruction of DomStore before shipping.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# v2 — REPLACES the previously appended load_many/iter_ok_html block in
+# airflow/dags/modules/dom_store.py. Delete load_many if you pasted it (it
+# materializes every page's decompressed HTML at once — the OOM). Append
+# the three functions below instead. Read-only facades; all writes to
+# `doms` remain owned by the scrape stage.
+# ---------------------------------------------------------------------------
+
+def content_shas(urls: Iterable[str]) -> dict[str, str]:
+    """{url: content_sha256} for OK-scraped urls — the parse stage's
+    staleness key. Projection deliberately EXCLUDES the html field: this is
+    called over the full candidate set (tens of thousands of urls), and
+    pulling html here decompresses the entire corpus into memory just to
+    read a 64-byte hash — exactly what OOM-killed the first select_urls run.
+    """
+    store = get_store()
+    try:
+        ids = {_url_doc_id(u): u for u in urls}
+        if not ids:
+            return {}
+        out: dict[str, str] = {}
+        cursor = store.doms.find(
+            {"_id": {"$in": list(ids)}, "scrape_status": "ok"},
+            {"content_sha256": 1})          # NO html — sha only
+        for doc in cursor:
+            url = ids.get(doc["_id"])
+            if url is not None and doc.get("content_sha256"):
+                out[url] = doc["content_sha256"]
+        return out
+    finally:
+        store.close()
+
+
+def iter_html_for(urls: Iterable[str]):
+    """Stream (url, decompressed_html, content_sha256) for OK-scraped urls,
+    one document at a time off the cursor. Used by the parse DAG's chunk
+    task: each page's html is released as soon as the caller moves to the
+    next yield, so peak memory is ~one page regardless of chunk size —
+    never materialize this generator into a list/dict.
+
+    Generator holds one connection for its lifetime and closes it when
+    exhausted or garbage-collected.
+    """
+    store = get_store()
+    try:
+        ids = {_url_doc_id(u): u for u in urls}
+        if not ids:
+            return
+        cursor = store.doms.find(
+            {"_id": {"$in": list(ids)}, "scrape_status": "ok"},
+            {"html": 1, "encoding": 1, "content_sha256": 1})
+        for doc in cursor:
+            url = ids.get(doc["_id"])
+            if url is None or doc.get("html") is None:
+                continue
+            yield (url,
+                   _decode_html(doc["html"], doc.get("encoding")),
+                   doc.get("content_sha256"))
+    finally:
+        store.close()
+
 
 def iter_ok_html(limit: int = 0, namespaces: Iterable[str] | None = None,
                  confirmed_only: bool = True):
     """Yield (url, decompressed_html) for stored OK DOMs, joined against
-    the discovery `urls` collection so callers can restrict to
-    confirmed entries in given namespaces (e.g. ["memes"]).
+    the discovery `urls` collection so callers can restrict to confirmed
+    entries in given namespaces (e.g. ["memes"]). Used by
+    `kym_parse.py --sample` for one-off coverage sampling — for the DAG's
+    bulk parse task, prefer load_many() (batched, not one query per URL).
 
     Generator holds one connection for its lifetime and closes it when
     exhausted or garbage-collected.
