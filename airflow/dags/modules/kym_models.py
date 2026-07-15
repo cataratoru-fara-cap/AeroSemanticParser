@@ -50,7 +50,6 @@ from pydantic import (
     Field,
     HttpUrl,
     field_validator,
-    model_validator,
 )
 
 _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
@@ -59,7 +58,7 @@ _TYPE_SLUG_RE = re.compile(r"/types/([a-z0-9-]+)")
 # is DOM garbage the old scraper mistook for a section title.
 _MAX_HEADING_LEN = 120
 _EMBED_NOISE_RE = re.compile(r"renderexplorewidget|trends\.embed", re.IGNORECASE)
-CORPUS_POLICY_VERSION = "7/15/26"
+
 
 class Status(str, Enum):
     confirmed = "confirmed"
@@ -166,14 +165,12 @@ class KYMEntryScrape(BaseModel):
     tags: list[str] = Field(..., min_length=1)  # required: 99.7% on confirmed memes
 
     # --- flags / media ---
-    nsfw: bool = False
     badges: list[str] = Field(default_factory=list)
     template_image_url: HttpUrl | None = None
     og_image: HttpUrl | None = None
 
     # --- relations ---
     parent: HttpUrl | None = None
-    children: list[HttpUrl] = Field(default_factory=list)
     siblings: list[HttpUrl] = Field(default_factory=list)
 
     # --- references ---
@@ -262,12 +259,6 @@ class KYMEntryScrape(BaseModel):
             return [{"name": k, "url": u} for k, u in v.items()]
         return v or []
 
-    @model_validator(mode="after")
-    def _nsfw_implied_by_namespace(self):
-        if "/sensitive/" in str(self.url):
-            object.__setattr__(self, "nsfw", True)
-        return self
-
 
 class CorpusPolicy(BaseModel):
     """The documentation bar for admitting a scraped meme into the corpus.
@@ -284,6 +275,12 @@ class CorpusPolicy(BaseModel):
 
 
 DEFAULT_CORPUS_POLICY = CorpusPolicy()
+
+# Bump whenever DEFAULT_CORPUS_POLICY's field defaults change (e.g. the
+# require_region flip below). parse_store stamps this onto every entries
+# doc so a later policy change can be distinguished from a stale grade
+# without needing to know Python's own change history.
+CORPUS_POLICY_VERSION = "2026-07-15-region-enabled"
 
 
 def corpus_ready(

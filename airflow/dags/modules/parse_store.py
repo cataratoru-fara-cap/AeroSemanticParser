@@ -92,7 +92,7 @@ def _now_utc() -> datetime:
 def clean_namespaces(raw):
     """Reuse dom_store's helper rather than re-implement it — same '' | '"'
     | 'a,b' | ['a'] -> None | ['a','b'] contract."""
-    from modules.dom_store import clean_namespaces as _clean
+    from modules.dom_store import _clean_namespaces as _clean
     return _clean(raw)
 
 

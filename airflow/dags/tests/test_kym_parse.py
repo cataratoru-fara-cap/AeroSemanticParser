@@ -106,6 +106,18 @@ class ParseDogeTests(unittest.TestCase):
         ready, _ = corpus_ready(self.entry, CorpusPolicy(require_region=True))
         self.assertTrue(ready)
 
+    def test_badges_empty_when_no_badges_row(self):
+        # Doge's sidebar has no "Badges:" dt at all (SFW page) — confirms
+        # _badges() degrades to [] rather than erroring or hallucinating.
+        self.assertEqual(self.entry.badges, [])
+
+    def test_nsfw_and_children_fields_removed(self):
+        # nsfw (URL-inference) and children (never populated, redundant
+        # with parent) were removed from the schema — badges['Sensitive']
+        # from the sidebar is now the authoritative signal instead.
+        self.assertNotIn("nsfw", type(self.entry).model_fields)
+        self.assertNotIn("children", type(self.entry).model_fields)
+
 
 class ModelGuardTests(unittest.TestCase):
     def test_missing_origin_and_tags_rejected(self):

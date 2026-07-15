@@ -25,8 +25,13 @@ Selector map (verified against a live 2026 confirmed-meme page, Doge):
                      by the preceding "Updated" / "Added" text
 
 Children/siblings are NOT inline on live pages (they sit behind a
-"/children" link), so they parse to [] here; the old dump's values can be
-backfilled by URL join if wanted.
+"/children" link). The `children` field was removed from the schema as
+redundant with `parent` + the related_memes section; `siblings` remains as
+a placeholder, always [] until a targeted-fetch stage is built.
+
+NSFW/content-warning detection uses the sidebar's own 'Badges:' row (see
+_badges()) rather than a URL-path inference — pages under /sensitive/
+carry a 'Sensitive' badge there, which is authoritative.
 
 CLI:
     python -m modules.kym_parse --file page.html [--url https://...]
@@ -53,9 +58,15 @@ from modules.kym_models import (
 )
 
 log = logging.getLogger("kym_parse")
-PARSER_VERSION = "15/7/26"
 
 BASE_URL = "https://knowyourmeme.com"
+
+# Bump whenever a selector or classifier change could alter parse output for
+# ALREADY-scraped pages (e.g. the tags/additional_references fix, the
+# Template SectionKind addition, the nsfw->badges schema change). parse_store
+# compares this against a previously-stored entries doc to decide whether a
+# re-parse is warranted even when the underlying DOM hasn't changed.
+PARSER_VERSION = "1.1.0"
 
 # h2 id -> kind. Live pages give sections STABLE anchor ids, so this is the
 # primary classifier; the text alias table below is the fallback for older
@@ -183,6 +194,25 @@ def _tags(soup) -> list[str]:
     dt = soup.find("dt", string=re.compile(r"^\s*Tags\s*$"))
     dd = dt.find_next_sibling("dd") if dt else None
     return [a.get_text(strip=True) for a in dd.find_all("a")] if dd else []
+
+
+def _badges(soup) -> list[str]:
+    """Sidebar 'Badges:' dt/dd — e.g. 'Sensitive' on /sensitive/ pages.
+    This is now the AUTHORITATIVE content-warning signal (replaces the old
+    URL-path-based nsfw:bool field, which the sidebar itself makes
+    redundant). dd content observed as plain text ('Sensitive'), but handle
+    a link-based dd too in case KYM ever wraps badge names in <a>."""
+    dt = soup.find("dt", string=re.compile(r"^\s*Badges\s*:?\s*$"))
+    if not dt:
+        return []
+    dd = dt.find_next_sibling("dd")
+    if not dd:
+        return []
+    links = [a.get_text(strip=True) for a in dd.find_all("a")]
+    if links:
+        return links
+    text = dd.get_text(" ", strip=True)
+    return [b.strip() for b in text.split(",") if b.strip()]
 
 
 def _additional_refs(soup) -> list[dict]:
@@ -349,6 +379,7 @@ def parse_entry(html: str, url: str | None = None,
         "region": region,
         "aliases": aliases,
         "tags": tags,
+        "badges": _badges(soup),
         "template_image_url": og_image,
         "og_image": og_image,
         "parent": parent,

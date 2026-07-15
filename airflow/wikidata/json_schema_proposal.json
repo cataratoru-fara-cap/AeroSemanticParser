@@ -66,16 +66,11 @@
       "minItems": 1,
       "description": "Flat list of tag strings from the entry footer. Deduplicate, preserve order. Required: present on 99.7% of confirmed memes."
     },
-    "nsfw": {
-      "type": "boolean",
-      "default": false,
-      "description": "Derived deterministically: true if the URL sits under the /sensitive/ namespace or the page carries an 18+/NSFW badge. Not a judgement call."
-    },
     "badges": {
       "type": "array",
       "items": {"type": "string"},
       "default": [],
-      "description": "Any explicit badges rendered on the page (e.g. 'NSFW', 'NSFL', 'Spoiler')."
+      "description": "Explicit badges from the sidebar's 'Badges:' row (e.g. 'Sensitive'). This is the authoritative NSFW/content-warning signal, preferred over any URL-path inference — pages under /sensitive/ carry a 'Sensitive' badge here."
     },
     "template_image_url": {
       "type": ["string", "null"],
@@ -92,17 +87,11 @@
       "format": "uri",
       "description": "Parent entry URL if this is a sub-entry (covers the old 'parent_meme' intent, losslessly, as a link)."
     },
-    "children": {
-      "type": "array",
-      "items": {"type": "string", "format": "uri"},
-      "default": [],
-      "description": "Child entry URLs."
-    },
     "siblings": {
       "type": "array",
       "items": {"type": "string", "format": "uri"},
       "default": [],
-      "description": "Sibling entry URLs."
+      "description": "Sibling entry URLs. NOTE: not populated by the current parser — live pages don't inline siblings (behind a separate URL), same situation the 'children' field was in before it was removed. Kept as a placeholder for a possible future targeted-fetch stage; currently always []."
     },
     "additional_references": {
       "type": "array",
