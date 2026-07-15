@@ -171,7 +171,6 @@ class KYMEntryScrape(BaseModel):
 
     # --- relations ---
     parent: HttpUrl | None = None
-    siblings: list[HttpUrl] = Field(default_factory=list)
 
     # --- references ---
     additional_references: list[NamedReference] = Field(default_factory=list)

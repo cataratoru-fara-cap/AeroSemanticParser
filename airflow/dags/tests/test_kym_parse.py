@@ -112,11 +112,13 @@ class ParseDogeTests(unittest.TestCase):
         self.assertEqual(self.entry.badges, [])
 
     def test_nsfw_and_children_fields_removed(self):
-        # nsfw (URL-inference) and children (never populated, redundant
-        # with parent) were removed from the schema — badges['Sensitive']
-        # from the sidebar is now the authoritative signal instead.
+        # nsfw (URL-inference), children, and siblings (never populated,
+        # need a separate fetch, redundant with parent) were removed from
+        # the schema — badges['Sensitive'] from the sidebar is now the
+        # authoritative content-warning signal instead.
         self.assertNotIn("nsfw", type(self.entry).model_fields)
         self.assertNotIn("children", type(self.entry).model_fields)
+        self.assertNotIn("siblings", type(self.entry).model_fields)
 
 
 class ModelGuardTests(unittest.TestCase):

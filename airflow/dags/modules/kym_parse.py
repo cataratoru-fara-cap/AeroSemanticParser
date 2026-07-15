@@ -25,9 +25,10 @@ Selector map (verified against a live 2026 confirmed-meme page, Doge):
                      by the preceding "Updated" / "Added" text
 
 Children/siblings are NOT inline on live pages (they sit behind a
-"/children" link). The `children` field was removed from the schema as
-redundant with `parent` + the related_memes section; `siblings` remains as
-a placeholder, always [] until a targeted-fetch stage is built.
+"/children" link). Both `children` and `siblings` were removed from the
+schema as redundant with `parent` + the related_memes section — a
+dedicated targeted-fetch stage would be needed to populate either
+faithfully, and neither was ever populated by this parser.
 
 NSFW/content-warning detection uses the sidebar's own 'Badges:' row (see
 _badges()) rather than a URL-path inference — pages under /sensitive/
@@ -63,10 +64,11 @@ BASE_URL = "https://knowyourmeme.com"
 
 # Bump whenever a selector or classifier change could alter parse output for
 # ALREADY-scraped pages (e.g. the tags/additional_references fix, the
-# Template SectionKind addition, the nsfw->badges schema change). parse_store
-# compares this against a previously-stored entries doc to decide whether a
-# re-parse is warranted even when the underlying DOM hasn't changed.
-PARSER_VERSION = "1.1.0"
+# Template SectionKind addition, the nsfw->badges schema change, the
+# children/siblings removal). parse_store compares this against a
+# previously-stored entries doc to decide whether a re-parse is warranted
+# even when the underlying DOM hasn't changed.
+PARSER_VERSION = "1.1.1"
 
 # h2 id -> kind. Live pages give sections STABLE anchor ids, so this is the
 # primary classifier; the text alias table below is the fallback for older

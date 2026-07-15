@@ -87,12 +87,6 @@
       "format": "uri",
       "description": "Parent entry URL if this is a sub-entry (covers the old 'parent_meme' intent, losslessly, as a link)."
     },
-    "siblings": {
-      "type": "array",
-      "items": {"type": "string", "format": "uri"},
-      "default": [],
-      "description": "Sibling entry URLs. NOTE: not populated by the current parser — live pages don't inline siblings (behind a separate URL), same situation the 'children' field was in before it was removed. Kept as a placeholder for a possible future targeted-fetch stage; currently always []."
-    },
     "additional_references": {
       "type": "array",
       "items": {
