@@ -17,7 +17,8 @@ Collections
     first run). Parsing streams html one page at a time
     (dom_store.iter_html_for) so peak memory stays ~one page.
 
-``entries``  (owned by this module)
+``entries``  (owned by this module) — SCHEMA-PURE: every doc is a valid
+             KYMEntryScrape plus grading/provenance metadata, nothing else
     _id                     sha1(url)  (same convention as urls/doms)
     url                     canonical page URL
     ...                     every KYMEntryScrape field, flattened
@@ -30,6 +31,18 @@ Collections
                             the current doms.content_sha256, the page
                             changed and is due for re-parse
     parsed_at               when THIS record was written
+
+``parse_failures``  (owned by this module) — the dead-letter collection,
+    holding only currently-unresolved failures (a later successful parse
+    of the same url deletes the record):
+    _id / url               same convention as entries
+    error / error_type      str(exc) truncated / exception class name
+    failed_at / attempts    last failure time / how many times it failed
+    dom_content_sha256 / parser_version / corpus_policy_version
+                            the SAME staleness stamps as entries docs, so
+                            select_pending (which consults both
+                            collections) skips deterministic failures
+                            until the parser or the page actually changes
 
 Nothing is ever discarded for being "incomplete" — corpus_status/missing are
 labels, not a filter. A thin entry stays in `entries`, fully queryable
@@ -46,10 +59,11 @@ that are OK-scraped but either never parsed, or stale by one of:
 
 Connection settings come from the environment (docker-compose), same
 variable names as dom_store/mongo_store:
-    MONGODB_URI                  (default: mongodb://localhost:27017)
-    MONGODB_DB                   (default: memes)
-    MONGODB_URLS_COLLECTION      (default: urls)
-    MONGODB_ENTRIES_COLLECTION   (default: entries)
+    MONGODB_URI                        (default: mongodb://localhost:27017)
+    MONGODB_DB                         (default: memes)
+    MONGODB_URLS_COLLECTION            (default: urls)
+    MONGODB_ENTRIES_COLLECTION         (default: entries)
+    MONGODB_PARSE_FAILURES_COLLECTION  (default: parse_failures)
 """
 
 from __future__ import annotations
@@ -78,7 +92,7 @@ def _now_utc() -> datetime:
 def clean_namespaces(raw):
     """Reuse dom_store's helper rather than re-implement it — same '' | '"'
     | 'a,b' | ['a'] -> None | ['a','b'] contract."""
-    from modules.dom_store import _clean_namespaces as _clean
+    from modules.dom_store import clean_namespaces as _clean
     return _clean(raw)
 
 
@@ -102,12 +116,15 @@ class ParseStore:
         self.db = self.client[db_name or os.getenv("MONGODB_DB", "memes")]
         self.urls = self.db[os.getenv("MONGODB_URLS_COLLECTION", "urls")]
         self.entries = self.db[os.getenv("MONGODB_ENTRIES_COLLECTION", "entries")]
+        self.failures = self.db[
+            os.getenv("MONGODB_PARSE_FAILURES_COLLECTION", "parse_failures")]
 
         self.entries.create_index("url", unique=True)
         self.entries.create_index("corpus_status")
-        self.entries.create_index("parse_status")
         self.entries.create_index("category")
         self.entries.create_index("status")
+        self.failures.create_index("url", unique=True)
+        self.failures.create_index("error_type")
 
     # -- selection ------------------------------------------------------
 
@@ -130,25 +147,29 @@ class ParseStore:
         if force_reparse:
             pending = list(candidate_shas)
         else:
-            existing = {
-                d["url"]: d
-                for d in self.entries.find(
-                    {"url": {"$in": list(candidate_shas)}},
-                    {"_id": 0, "url": 1, "dom_content_sha256": 1,
-                     "parser_version": 1, "corpus_policy_version": 1})
-            }
-            pending = []
-            for url, sha in candidate_shas.items():
-                prior = existing.get(url)
-                if prior is None:
-                    pending.append(url)
-                    continue
-                if prior.get("dom_content_sha256") != sha:
-                    pending.append(url)
-                elif prior.get("parser_version") != current_parser_version:
-                    pending.append(url)
-                elif prior.get("corpus_policy_version") != current_policy_version:
-                    pending.append(url)
+            proj = {"_id": 0, "url": 1, "dom_content_sha256": 1,
+                    "parser_version": 1, "corpus_policy_version": 1}
+            url_list = list(candidate_shas)
+            parsed_ok = {d["url"]: d
+                         for d in self.entries.find(
+                             {"url": {"$in": url_list}}, proj)}
+            # Dead-letter records carry the same stamps; consulting them
+            # here is what stops a deterministic failure being re-queued
+            # on every run (it has no entries doc, so it would otherwise
+            # always look "never parsed").
+            failed = {d["url"]: d
+                      for d in self.failures.find(
+                          {"url": {"$in": url_list}}, proj)}
+
+            def _up_to_date(doc: dict | None, sha: str) -> bool:
+                return (doc is not None
+                        and doc.get("dom_content_sha256") == sha
+                        and doc.get("parser_version") == current_parser_version
+                        and doc.get("corpus_policy_version") == current_policy_version)
+
+            pending = [url for url, sha in candidate_shas.items()
+                       if not (_up_to_date(parsed_ok.get(url), sha)
+                               or _up_to_date(failed.get(url), sha))]
         return pending[:limit] if limit else pending
 
     # -- writes -----------------------------------------------------------
@@ -162,11 +183,6 @@ class ParseStore:
         ready, missing = corpus_ready(entry, policy)
         doc = entry.model_dump(mode="json", exclude_none=True)
         doc["_id"] = _url_doc_id(str(entry.url))
-        doc["parse_status"] = "ok"
-        # Clear any failure bookkeeping from a previous attempt — a
-        # successful reparse supersedes it ($set of the full doc).
-        doc["last_parse_error"] = None
-        doc["last_parse_error_type"] = None
         doc["corpus_status"] = "ready" if ready else "incomplete"
         doc["corpus_missing"] = missing
         doc["corpus_policy_version"] = policy_version
@@ -177,53 +193,55 @@ class ParseStore:
 
     def upsert_entries(self, docs: Iterable[dict]) -> dict[str, int]:
         """Upsert already-built docs (see build_entry_doc). Returns tallies
-        by corpus_status; nothing here ever discards a record."""
+        by corpus_status; nothing here ever discards a record. A successful
+        parse RESOLVES any dead-letter record for the same url — the doc is
+        deleted from `parse_failures` so that collection only ever holds
+        currently-unresolved failures (no zombies after a parser fix)."""
         tallies = {"ready": 0, "incomplete": 0}
+        resolved_ids: list[str] = []
         for doc in docs:
             self.entries.update_one(
                 {"_id": doc["_id"]}, {"$set": doc}, upsert=True)
             tallies[doc["corpus_status"]] += 1
+            resolved_ids.append(doc["_id"])
+        if resolved_ids:
+            self.failures.delete_many({"_id": {"$in": resolved_ids}})
         return tallies
 
     def save_failures(self, failures: Iterable[dict],
                       parser_version: str, policy_version: str) -> int:
-        """Persist parse failures as queryable dead-letter records (the
-        dom_store scrape_status='failed' pattern, applied to this stage).
+        """Persist parse failures into the dedicated `parse_failures`
+        collection — kept OUT of `entries` so that collection stays
+        schema-pure (every entries doc is a valid KYMEntryScrape + grading).
         Each failure dict: {url, dom_content_sha256, error, error_type}.
 
-        Two invariants:
-          * Never downgrade — if the url already has a good parsed entry
-            (parse_status='ok'), its data and status are preserved; only
-            the error bookkeeping and staleness stamps update.
-          * No retry loops — the failure carries the same staleness stamps
-            as a normal entry (dom sha + parser + policy versions), so
-            select_pending naturally skips it until the parser is upgraded
-            or the page content actually changes; deterministic failures
-            are never blindly re-queued.
-
-        Troubleshooting queries this enables:
-            db.entries.find({"parse_status": "failed"})          # never parsed OK
-            db.entries.find({"last_parse_error": {"$ne": None}}) # incl. prior-OK
+        Invariants:
+          * Never downgrades — a failure physically cannot touch `entries`;
+            a previously parsed entry survives a failed reparse untouched.
+          * No retry loops — the record carries the same staleness stamps
+            as an entries doc (dom sha + parser + policy versions), and
+            select_pending consults BOTH collections, so a deterministic
+            failure is not re-queued until the parser is upgraded or the
+            page content actually changes.
+          * Self-cleaning — upsert_entries deletes the record when the url
+            later parses successfully.
         """
         now = _now_utc()
         n = 0
         for f in failures:
             url = f["url"]
-            self.entries.update_one(
+            self.failures.update_one(
                 {"_id": _url_doc_id(url)},
                 {"$set": {
                     "url": url,
-                    "last_parse_error": str(f.get("error"))[:2000],
-                    "last_parse_error_type": f.get("error_type"),
-                    "last_parse_failed_at": now,
+                    "error": str(f.get("error"))[:2000],
+                    "error_type": f.get("error_type"),
+                    "failed_at": now,
                     "dom_content_sha256": f.get("dom_content_sha256"),
                     "parser_version": parser_version,
                     "corpus_policy_version": policy_version,
                  },
-                 "$setOnInsert": {
-                    "parse_status": "failed",
-                    "corpus_status": "unparsed",
-                 }},
+                 "$inc": {"attempts": 1}},
                 upsert=True)
             n += 1
         return n
@@ -233,19 +251,20 @@ class ParseStore:
     def stats(self) -> dict[str, Any]:
         total = self.entries.count_documents({})
         ready = self.entries.count_documents({"corpus_status": "ready"})
-        failed = self.entries.count_documents({"parse_status": "failed"})
-        with_errors = self.entries.count_documents(
-            {"last_parse_error": {"$ne": None}})
         by_missing: dict[str, int] = {}
         for field in self.entries.distinct("corpus_missing"):
             by_missing[field] = self.entries.count_documents(
                 {"corpus_missing": field})
+        by_error: dict[str, int] = {}
+        for etype in self.failures.distinct("error_type"):
+            by_error[etype] = self.failures.count_documents(
+                {"error_type": etype})
         return {
             "entries_total": total,
             "entries_ready": ready,
-            "entries_incomplete": total - ready - failed,
-            "parse_failed": failed,
-            "with_parse_errors": with_errors,
+            "entries_incomplete": total - ready,
+            "parse_failures": self.failures.count_documents({}),
+            "failure_type_counts": by_error,
             "missing_field_counts": by_missing,
         }
 

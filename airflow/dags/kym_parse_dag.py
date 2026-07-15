@@ -20,12 +20,14 @@ Pipeline:
 
 A page that fails schema validation (missing url/title/category/status/
 origin/tags — the well-formedness gate) is persisted as a dead-letter record
-in `entries` with parse_status='failed' plus the error message/type and the
-same staleness stamps as ok docs — so it is queryable for debugging
-(db.entries.find({"parse_status": "failed"})) and is NOT re-queued until the
-parser version or the DOM content changes (parse failures are deterministic;
-blind retries would fail identically). Should be near-zero on confirmed
-memes; any failure here is worth inspecting by hand.
+in the dedicated `parse_failures` collection (kept out of `entries` so that
+collection stays schema-pure), with the error message/type and the same
+staleness stamps as entries docs — queryable for debugging
+(db.parse_failures.find()) and NOT re-queued until the parser version or the
+DOM content changes (parse failures are deterministic; blind retries would
+fail identically). A later successful parse of the url deletes its
+dead-letter record. Should be near-zero on confirmed memes; any failure here
+is worth inspecting by hand.
 
 Trigger-time params:
     batch_size     URLs per DAG run (0 = everything pending)

@@ -34,6 +34,7 @@ def fresh_store() -> ps.ParseStore:
     store.db = client["memes"]
     store.urls = store.db["urls"]
     store.entries = store.db["entries"]
+    store.failures = store.db["parse_failures"]
     return store
 
 
@@ -175,7 +176,8 @@ class SelectPendingTests(unittest.TestCase):
 
 
 class SaveFailuresTests(unittest.TestCase):
-    """Dead-letter behavior for parse failures."""
+    """Dead-letter behavior: failures live in `parse_failures`, never in
+    `entries` (which stays schema-pure)."""
 
     URL = "https://knowyourmeme.com/memes/broken-page"
 
@@ -185,16 +187,26 @@ class SaveFailuresTests(unittest.TestCase):
                      "error": "6 validation errors for KYMEntryScrape ...",
                      "error_type": "ValidationError"}
 
-    def test_failure_persisted_and_queryable(self):
+    def test_failure_goes_to_failures_collection_only(self):
         n = self.store.save_failures([self.fail], PARSER_VERSION,
                                      CORPUS_POLICY_VERSION)
         self.assertEqual(n, 1)
-        doc = self.store.entries.find_one({"parse_status": "failed"})
-        self.assertEqual(doc["url"], self.URL)
-        self.assertEqual(doc["last_parse_error_type"], "ValidationError")
-        self.assertIn("validation errors", doc["last_parse_error"])
-        self.assertEqual(doc["corpus_status"], "unparsed")
-        self.assertIn("last_parse_failed_at", doc)
+        self.assertEqual(self.store.entries.count_documents({}), 0)
+        doc = self.store.failures.find_one({"url": self.URL})
+        self.assertEqual(doc["error_type"], "ValidationError")
+        self.assertIn("validation errors", doc["error"])
+        self.assertEqual(doc["attempts"], 1)
+        self.assertIn("failed_at", doc)
+
+    def test_repeat_failure_increments_attempts(self):
+        self.store.save_failures([self.fail], PARSER_VERSION,
+                                 CORPUS_POLICY_VERSION)
+        self.store.save_failures([self.fail], "1.0.2",
+                                 CORPUS_POLICY_VERSION)
+        doc = self.store.failures.find_one({"url": self.URL})
+        self.assertEqual(doc["attempts"], 2)
+        self.assertEqual(doc["parser_version"], "1.0.2")
+        self.assertEqual(self.store.failures.count_documents({}), 1)
 
     def test_failure_not_requeued_until_something_changes(self):
         self.store.save_failures([self.fail], PARSER_VERSION,
@@ -212,38 +224,45 @@ class SaveFailuresTests(unittest.TestCase):
             {self.URL: "sha_new"}, PARSER_VERSION, CORPUS_POLICY_VERSION)
         self.assertEqual(pending, [self.URL])
 
-    def test_failure_never_downgrades_prior_ok_entry(self):
+    def test_failure_never_touches_prior_ok_entry(self):
         good = self.store.build_entry_doc(
             _thin_entry(self.URL), "sha_v1", DEFAULT_CORPUS_POLICY,
             PARSER_VERSION, CORPUS_POLICY_VERSION)
         self.store.upsert_entries([good])
+        before = self.store.entries.find_one({"url": self.URL})
         # page changed, new version fails to parse
         self.store.save_failures(
             [{**self.fail, "dom_content_sha256": "sha_v2"}],
             PARSER_VERSION, CORPUS_POLICY_VERSION)
-        doc = self.store.entries.find_one({"url": self.URL})
-        self.assertEqual(doc["parse_status"], "ok")       # not downgraded
-        self.assertEqual(doc["title"], "Thin Stub")       # data preserved
-        self.assertEqual(doc["last_parse_error_type"], "ValidationError")
-        self.assertEqual(doc["dom_content_sha256"], "sha_v2")  # stamp moved
-        # and the moved stamp prevents a retry loop on the same broken DOM
+        after = self.store.entries.find_one({"url": self.URL})
+        self.assertEqual(before, after)  # entries doc byte-identical
+        # and the failure record's stamp prevents a retry loop on the
+        # same broken DOM (select_pending consults both collections)
         pending = self.store.select_pending(
             {self.URL: "sha_v2"}, PARSER_VERSION, CORPUS_POLICY_VERSION)
         self.assertEqual(pending, [])
 
-    def test_successful_reparse_clears_failure_bookkeeping(self):
+    def test_successful_reparse_deletes_dead_letter(self):
         self.store.save_failures([self.fail], PARSER_VERSION,
                                  CORPUS_POLICY_VERSION)
         good = self.store.build_entry_doc(
             _thin_entry(self.URL), "sha_fixed", DEFAULT_CORPUS_POLICY,
             PARSER_VERSION, CORPUS_POLICY_VERSION)
         self.store.upsert_entries([good])
-        doc = self.store.entries.find_one({"url": self.URL})
-        self.assertEqual(doc["parse_status"], "ok")
-        self.assertIsNone(doc["last_parse_error"])
-        self.assertIsNone(doc["last_parse_error_type"])
+        self.assertEqual(self.store.failures.count_documents({}), 0)
+        self.assertEqual(self.store.entries.count_documents({}), 1)
 
-    def test_stats_counts_failures(self):
+    def test_entries_stays_schema_pure(self):
+        good = self.store.build_entry_doc(
+            _thin_entry(), "sha1", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
+            CORPUS_POLICY_VERSION)
+        self.store.upsert_entries([good])
+        doc = self.store.entries.find_one({})
+        for legacy in ("parse_status", "last_parse_error",
+                       "last_parse_error_type"):
+            self.assertNotIn(legacy, doc)
+
+    def test_stats_counts_failures_by_type(self):
         self.store.save_failures([self.fail], PARSER_VERSION,
                                  CORPUS_POLICY_VERSION)
         good = self.store.build_entry_doc(
@@ -251,10 +270,11 @@ class SaveFailuresTests(unittest.TestCase):
             CORPUS_POLICY_VERSION)
         self.store.upsert_entries([good])
         stats = self.store.stats()
-        self.assertEqual(stats["parse_failed"], 1)
-        self.assertEqual(stats["with_parse_errors"], 1)
-        self.assertEqual(stats["entries_total"], 2)
-        self.assertEqual(stats["entries_incomplete"], 1)  # failed not counted
+        self.assertEqual(stats["parse_failures"], 1)
+        self.assertEqual(stats["failure_type_counts"],
+                         {"ValidationError": 1})
+        self.assertEqual(stats["entries_total"], 1)
+        self.assertEqual(stats["entries_incomplete"], 1)
 
 
 if __name__ == "__main__":
