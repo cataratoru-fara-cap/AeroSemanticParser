@@ -19,10 +19,13 @@ Pipeline:
     summarize     corpus-level tallies from Mongo
 
 A page that fails schema validation (missing url/title/category/status/
-origin/tags — the well-formedness gate) is logged and skipped, NOT written
-to `entries`; this should be near-zero on confirmed memes and any failure
-here is worth inspecting by hand (see modules/kym_parse.py's docstring for
-the measured coverage this is calibrated against).
+origin/tags — the well-formedness gate) is persisted as a dead-letter record
+in `entries` with parse_status='failed' plus the error message/type and the
+same staleness stamps as ok docs — so it is queryable for debugging
+(db.entries.find({"parse_status": "failed"})) and is NOT re-queued until the
+parser version or the DOM content changes (parse failures are deterministic;
+blind retries would fail identically). Should be near-zero on confirmed
+memes; any failure here is worth inspecting by hand.
 
 Trigger-time params:
     batch_size     URLs per DAG run (0 = everything pending)
@@ -121,7 +124,8 @@ def kym_parse_dag():
         # memory ≈ one page, independent of chunk_size. Do NOT "optimise"
         # this into a list; materializing a chunk of multi-MB pages is
         # what OOM-killed the first run.
-        counters = {"seen": 0, "parse_failed": 0}
+        counters = {"seen": 0}
+        failures: list[dict] = []  # tiny (url + error string) — safe to buffer
 
         def parsed_stream():
             for url, html, sha in store.iter_html(chunk):
@@ -129,7 +133,9 @@ def kym_parse_dag():
                 try:
                     entry = kym_parse.parse_entry(html, url=url)
                 except (ValidationError, ValueError) as exc:
-                    counters["parse_failed"] += 1
+                    failures.append({
+                        "url": url, "dom_content_sha256": sha,
+                        "error": str(exc), "error_type": type(exc).__name__})
                     log.warning("Parse failed for %s: %s", url, exc)
                     continue
                 yield entry, sha
@@ -138,7 +144,14 @@ def kym_parse_dag():
             parsed_stream(), DEFAULT_CORPUS_POLICY, kym_parse.PARSER_VERSION,
             CORPUS_POLICY_VERSION)
 
-        tallies["parse_failed"] = counters["parse_failed"]
+        # Dead-letter records: queryable via
+        # db.entries.find({"parse_status": "failed"}); they carry the same
+        # staleness stamps as ok docs, so select_pending won't re-queue them
+        # until the parser version or the DOM content actually changes.
+        store.save_failures(failures, kym_parse.PARSER_VERSION,
+                            CORPUS_POLICY_VERSION)
+
+        tallies["parse_failed"] = len(failures)
         tallies["skipped"] = len(chunk) - counters["seen"]
         log.info("Chunk done — %s", tallies)
         return tallies

@@ -78,7 +78,7 @@ def _now_utc() -> datetime:
 def clean_namespaces(raw):
     """Reuse dom_store's helper rather than re-implement it — same '' | '"'
     | 'a,b' | ['a'] -> None | ['a','b'] contract."""
-    from modules.dom_store import clean_namespaces as _clean
+    from modules.dom_store import _clean_namespaces as _clean
     return _clean(raw)
 
 
@@ -105,6 +105,7 @@ class ParseStore:
 
         self.entries.create_index("url", unique=True)
         self.entries.create_index("corpus_status")
+        self.entries.create_index("parse_status")
         self.entries.create_index("category")
         self.entries.create_index("status")
 
@@ -161,6 +162,11 @@ class ParseStore:
         ready, missing = corpus_ready(entry, policy)
         doc = entry.model_dump(mode="json", exclude_none=True)
         doc["_id"] = _url_doc_id(str(entry.url))
+        doc["parse_status"] = "ok"
+        # Clear any failure bookkeeping from a previous attempt — a
+        # successful reparse supersedes it ($set of the full doc).
+        doc["last_parse_error"] = None
+        doc["last_parse_error_type"] = None
         doc["corpus_status"] = "ready" if ready else "incomplete"
         doc["corpus_missing"] = missing
         doc["corpus_policy_version"] = policy_version
@@ -179,11 +185,57 @@ class ParseStore:
             tallies[doc["corpus_status"]] += 1
         return tallies
 
+    def save_failures(self, failures: Iterable[dict],
+                      parser_version: str, policy_version: str) -> int:
+        """Persist parse failures as queryable dead-letter records (the
+        dom_store scrape_status='failed' pattern, applied to this stage).
+        Each failure dict: {url, dom_content_sha256, error, error_type}.
+
+        Two invariants:
+          * Never downgrade — if the url already has a good parsed entry
+            (parse_status='ok'), its data and status are preserved; only
+            the error bookkeeping and staleness stamps update.
+          * No retry loops — the failure carries the same staleness stamps
+            as a normal entry (dom sha + parser + policy versions), so
+            select_pending naturally skips it until the parser is upgraded
+            or the page content actually changes; deterministic failures
+            are never blindly re-queued.
+
+        Troubleshooting queries this enables:
+            db.entries.find({"parse_status": "failed"})          # never parsed OK
+            db.entries.find({"last_parse_error": {"$ne": None}}) # incl. prior-OK
+        """
+        now = _now_utc()
+        n = 0
+        for f in failures:
+            url = f["url"]
+            self.entries.update_one(
+                {"_id": _url_doc_id(url)},
+                {"$set": {
+                    "url": url,
+                    "last_parse_error": str(f.get("error"))[:2000],
+                    "last_parse_error_type": f.get("error_type"),
+                    "last_parse_failed_at": now,
+                    "dom_content_sha256": f.get("dom_content_sha256"),
+                    "parser_version": parser_version,
+                    "corpus_policy_version": policy_version,
+                 },
+                 "$setOnInsert": {
+                    "parse_status": "failed",
+                    "corpus_status": "unparsed",
+                 }},
+                upsert=True)
+            n += 1
+        return n
+
     # -- reads / stats ------------------------------------------------------
 
     def stats(self) -> dict[str, Any]:
         total = self.entries.count_documents({})
         ready = self.entries.count_documents({"corpus_status": "ready"})
+        failed = self.entries.count_documents({"parse_status": "failed"})
+        with_errors = self.entries.count_documents(
+            {"last_parse_error": {"$ne": None}})
         by_missing: dict[str, int] = {}
         for field in self.entries.distinct("corpus_missing"):
             by_missing[field] = self.entries.count_documents(
@@ -191,7 +243,9 @@ class ParseStore:
         return {
             "entries_total": total,
             "entries_ready": ready,
-            "entries_incomplete": total - ready,
+            "entries_incomplete": total - ready - failed,
+            "parse_failed": failed,
+            "with_parse_errors": with_errors,
             "missing_field_counts": by_missing,
         }
 
@@ -266,6 +320,19 @@ def save_parsed(entries_with_meta: Iterable[tuple[KYMEntryScrape, str]],
                                       policy_version)
                 for entry, sha in entries_with_meta)
         return store.upsert_entries(docs)
+    finally:
+        store.close()
+
+
+def save_failures(failures: list[dict], parser_version: str,
+                  policy_version: str) -> int:
+    """Persist parse-failure dead-letter records; see ParseStore.save_failures.
+    ``failures``: [{url, dom_content_sha256, error, error_type}, ...]"""
+    if not failures:
+        return 0
+    store = get_store()
+    try:
+        return store.save_failures(failures, parser_version, policy_version)
     finally:
         store.close()
 

@@ -174,5 +174,88 @@ class SelectPendingTests(unittest.TestCase):
         self.assertEqual(len(pending), 2)
 
 
+class SaveFailuresTests(unittest.TestCase):
+    """Dead-letter behavior for parse failures."""
+
+    URL = "https://knowyourmeme.com/memes/broken-page"
+
+    def setUp(self):
+        self.store = fresh_store()
+        self.fail = {"url": self.URL, "dom_content_sha256": "sha_bad",
+                     "error": "6 validation errors for KYMEntryScrape ...",
+                     "error_type": "ValidationError"}
+
+    def test_failure_persisted_and_queryable(self):
+        n = self.store.save_failures([self.fail], PARSER_VERSION,
+                                     CORPUS_POLICY_VERSION)
+        self.assertEqual(n, 1)
+        doc = self.store.entries.find_one({"parse_status": "failed"})
+        self.assertEqual(doc["url"], self.URL)
+        self.assertEqual(doc["last_parse_error_type"], "ValidationError")
+        self.assertIn("validation errors", doc["last_parse_error"])
+        self.assertEqual(doc["corpus_status"], "unparsed")
+        self.assertIn("last_parse_failed_at", doc)
+
+    def test_failure_not_requeued_until_something_changes(self):
+        self.store.save_failures([self.fail], PARSER_VERSION,
+                                 CORPUS_POLICY_VERSION)
+        # same sha + same versions -> deterministic failure, do NOT retry
+        pending = self.store.select_pending(
+            {self.URL: "sha_bad"}, PARSER_VERSION, CORPUS_POLICY_VERSION)
+        self.assertEqual(pending, [])
+        # parser upgraded -> retry
+        pending = self.store.select_pending(
+            {self.URL: "sha_bad"}, "9.9.9", CORPUS_POLICY_VERSION)
+        self.assertEqual(pending, [self.URL])
+        # DOM content changed -> retry
+        pending = self.store.select_pending(
+            {self.URL: "sha_new"}, PARSER_VERSION, CORPUS_POLICY_VERSION)
+        self.assertEqual(pending, [self.URL])
+
+    def test_failure_never_downgrades_prior_ok_entry(self):
+        good = self.store.build_entry_doc(
+            _thin_entry(self.URL), "sha_v1", DEFAULT_CORPUS_POLICY,
+            PARSER_VERSION, CORPUS_POLICY_VERSION)
+        self.store.upsert_entries([good])
+        # page changed, new version fails to parse
+        self.store.save_failures(
+            [{**self.fail, "dom_content_sha256": "sha_v2"}],
+            PARSER_VERSION, CORPUS_POLICY_VERSION)
+        doc = self.store.entries.find_one({"url": self.URL})
+        self.assertEqual(doc["parse_status"], "ok")       # not downgraded
+        self.assertEqual(doc["title"], "Thin Stub")       # data preserved
+        self.assertEqual(doc["last_parse_error_type"], "ValidationError")
+        self.assertEqual(doc["dom_content_sha256"], "sha_v2")  # stamp moved
+        # and the moved stamp prevents a retry loop on the same broken DOM
+        pending = self.store.select_pending(
+            {self.URL: "sha_v2"}, PARSER_VERSION, CORPUS_POLICY_VERSION)
+        self.assertEqual(pending, [])
+
+    def test_successful_reparse_clears_failure_bookkeeping(self):
+        self.store.save_failures([self.fail], PARSER_VERSION,
+                                 CORPUS_POLICY_VERSION)
+        good = self.store.build_entry_doc(
+            _thin_entry(self.URL), "sha_fixed", DEFAULT_CORPUS_POLICY,
+            PARSER_VERSION, CORPUS_POLICY_VERSION)
+        self.store.upsert_entries([good])
+        doc = self.store.entries.find_one({"url": self.URL})
+        self.assertEqual(doc["parse_status"], "ok")
+        self.assertIsNone(doc["last_parse_error"])
+        self.assertIsNone(doc["last_parse_error_type"])
+
+    def test_stats_counts_failures(self):
+        self.store.save_failures([self.fail], PARSER_VERSION,
+                                 CORPUS_POLICY_VERSION)
+        good = self.store.build_entry_doc(
+            _thin_entry(), "sha1", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
+            CORPUS_POLICY_VERSION)
+        self.store.upsert_entries([good])
+        stats = self.store.stats()
+        self.assertEqual(stats["parse_failed"], 1)
+        self.assertEqual(stats["with_parse_errors"], 1)
+        self.assertEqual(stats["entries_total"], 2)
+        self.assertEqual(stats["entries_incomplete"], 1)  # failed not counted
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
