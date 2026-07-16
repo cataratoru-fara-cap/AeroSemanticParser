@@ -102,12 +102,12 @@ def infer_namespace_from_url(url: str) -> str:
 
 # Bump whenever a selector or classifier change could alter parse output for
 # ALREADY-scraped pages (e.g. the tags/additional_references fix, the
-# Template SectionKind addition, the nsfw->badges schema change, the
-# children/siblings removal, tags moving from required to gated, the year
-# lower-bound loosening). parse_store compares this against a
-# previously-stored entries doc to decide whether a re-parse is warranted
-# even when the underlying DOM hasn't changed.
-PARSER_VERSION = "1.2.1"
+# Template SectionKind addition, the nsfw->badges schema change, tags moving
+# from required to gated, the year lower-bound loosening, the malformed-URL
+# repair layer). parse_store compares this against a previously-stored
+# entries doc to decide whether a re-parse is warranted even when the
+# underlying DOM hasn't changed.
+PARSER_VERSION = "1.3.0"
 
 # h2 id -> kind. Live pages give sections STABLE anchor ids, so this is the
 # primary classifier; the text alias table below is the fallback for older
@@ -149,6 +149,40 @@ _TEXT_KIND: dict[str, str] = {
 
 _BLANK_IMG_RE = re.compile(r"/assets/blank-")
 _FOOTNOTE_RE = re.compile(r"\[(\d+)\]")
+# Scheme typos observed in KYM editors' wiki content: 'https;//' (semicolon
+# for colon) and 'https//' (missing colon). Both start with 'http' so a
+# startswith filter passes them straight into HttpUrl, which raises.
+_SCHEME_TYPO_RE = re.compile(r"^(https?)\s*[;,]?\s*//", re.IGNORECASE)
+_EMBEDDED_URL_RE = re.compile(r"https?://", re.IGNORECASE)
+_PLAUSIBLE_URL_RE = re.compile(r"^https?://[^\s<>\"']+$", re.IGNORECASE)
+
+
+def _clean_url(raw: str | None) -> str | None:
+    """Repair the malformed-URL classes KYM editors actually produce, or
+    return None if the string is unrecoverable.
+
+    Observed in production failures (14 confirmed memes, 2026-07):
+      * 'https;//knowyourmeme.com/...'  — semicolon-for-colon typo
+      * 'https//knowyourmeme.com/...'   — missing colon
+      * '%7Bwidth:425px%7Dhttps://i.kym-cdn.com/...' — wiki image-sizing
+        directive ({width:425px}, URL-encoded) fused onto the src
+
+    Rationale: these live in body-section links/images — bulk enrichment
+    data, not identity fields. One editor typo must not fail the whole
+    page; repair what's mechanically certain, drop the single item
+    otherwise (caller logs it).
+    """
+    if not raw:
+        return None
+    s = raw.strip()
+    # Fix scheme typos at the start.
+    s = _SCHEME_TYPO_RE.sub(lambda m: m.group(1).lower() + "://", s)
+    # Styling-prefix garbage: real URL begins at the first http(s)://.
+    if not s.lower().startswith(("http://", "https://")):
+        m = _EMBEDDED_URL_RE.search(s)
+        if m:
+            s = s[m.start():]
+    return s if _PLAUSIBLE_URL_RE.match(s) else None
 
 # URL namespace -> category (mirrors kym_discover's taxonomy; longest first).
 _CATEGORY_BY_PREFIX: tuple[tuple[str, Category], ...] = (
@@ -198,7 +232,11 @@ def _img_dict(img) -> dict | None:
     src = img.get("data-src") or img.get("src")
     if not src or _BLANK_IMG_RE.search(src):
         return None
-    return {"src": _abs(src),
+    cleaned = _clean_url(_abs(src))
+    if cleaned is None:
+        log.debug("Dropped unrecoverable image src %r", src[:120])
+        return None
+    return {"src": cleaned,
             "alt": img.get("alt") or None,
             "caption": img.get("title") or None}
 
@@ -263,9 +301,12 @@ def _additional_refs(soup) -> list[dict]:
     dd = dt.find_next_sibling("dd")
     if not dd:
         return []
-    return [{"name": a.get_text(strip=True), "url": _abs(a.get("href"))}
-            for a in dd.find_all("a", href=True)
-            if a.get("href", "").startswith("http")]
+    out = []
+    for a in dd.find_all("a", href=True):
+        url = _clean_url(_abs(a.get("href")))
+        if url:
+            out.append({"name": a.get_text(strip=True), "url": url})
+    return out
 
 
 def _external_refs(soup) -> list[dict]:
@@ -282,7 +323,12 @@ def _external_refs(soup) -> list[dict]:
             current_index = int(m.group(1))
             continue
         if href.startswith("http"):
-            refs.append({"index": current_index, "text": text or None, "url": href})
+            url = _clean_url(href)
+            if url:
+                refs.append({"index": current_index, "text": text or None,
+                             "url": url})
+            else:
+                log.debug("Dropped unrecoverable reference href %r", href[:120])
             current_index = None
     return refs
 
@@ -321,10 +367,13 @@ def _sections(soup) -> list[dict]:
             if para:
                 current["text"].append(para)
             for a in child.find_all("a", href=True):
-                url = _abs(a["href"])
+                url = _clean_url(_abs(a["href"]))
                 label = a.get_text(strip=True)
-                if url and label and url.startswith("http"):
+                if url and label:
                     current["links"].append({"text": label, "url": url})
+                elif label and a["href"].strip():
+                    log.debug("Dropped unrecoverable link href %r (%r)",
+                              a["href"][:120], label[:40])
         for img in child.find_all("img", class_="kym-image"):
             d = _img_dict(img)
             if d:

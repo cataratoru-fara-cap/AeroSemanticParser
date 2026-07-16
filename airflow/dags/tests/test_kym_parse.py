@@ -121,6 +121,63 @@ class ParseDogeTests(unittest.TestCase):
         self.assertNotIn("siblings", type(self.entry).model_fields)
 
 
+class MalformedUrlRepairTests(unittest.TestCase):
+    """Root cause of all 14 production confirmed-meme failures (2026-07):
+    KYM editors' wiki-content typos in body links/images. One bad href was
+    failing the WHOLE page; the repair layer fixes what's mechanically
+    certain and drops single unrecoverable items instead."""
+
+    def test_scheme_typos_repaired(self):
+        # exact values from production parse_failures
+        from modules.kym_parse import _clean_url
+        self.assertEqual(
+            _clean_url("https;//knowyourmeme.com/memes/sites/youtube"),
+            "https://knowyourmeme.com/memes/sites/youtube")
+        self.assertEqual(
+            _clean_url("https//knowyourmeme.com/memes/aqua"),
+            "https://knowyourmeme.com/memes/aqua")
+
+    def test_styling_prefix_stripped(self):
+        from modules.kym_parse import _clean_url
+        self.assertEqual(
+            _clean_url("--%7Bwidth:170px%7Dhttps://i.kym-cdn.com/x/5dc.gif"),
+            "https://i.kym-cdn.com/x/5dc.gif")
+        self.assertEqual(
+            _clean_url("%7Bwidth:425pxhttps://i.kym-cdn.com/x/302.jpg"),
+            "https://i.kym-cdn.com/x/302.jpg")
+
+    def test_healthy_urls_untouched(self):
+        from modules.kym_parse import _clean_url
+        for url in ("https://knowyourmeme.com/memes/doge",
+                    "http://example.com/a?b=c"):
+            self.assertEqual(_clean_url(url), url)
+
+    def test_unrecoverable_garbage_dropped(self):
+        from modules.kym_parse import _clean_url
+        for bad in ("javascript:void(0)", "not a url at all", "", None):
+            self.assertIsNone(_clean_url(bad))
+
+    def test_page_survives_typo_links(self):
+        # The granularity fix itself: a page whose body contains typo'd and
+        # garbage links parses successfully; typos repaired, garbage
+        # dropped, nothing page-fatal.
+        html = '''<html><head>
+<link rel="canonical" href="https://knowyourmeme.com/memes/typo-repro"/>
+</head><body>
+<h1 class="entry-title">Typo Repro</h1>
+<aside class="left"><dl><dt>Status</dt><dd>Confirmed</dd>
+<dt>Origin</dt><dd>TikTok</dd></dl></aside>
+<dl id="entry_tags"><dt>Tags</dt><dd><a data-tag="m">m</a></dd></dl>
+<section class="bodycopy"><h2 id="about">About</h2>
+<p><a href="https;//knowyourmeme.com/memes/rickroll">typo</a>
+<a href="https://knowyourmeme.com/memes/doge">ok</a>
+<a href="javascript:void(0)">junk</a></p></section></body></html>'''
+        entry = parse_entry(html)
+        urls = [str(l.url) for l in entry.sections[0].links]
+        self.assertEqual(urls, ["https://knowyourmeme.com/memes/rickroll",
+                                "https://knowyourmeme.com/memes/doge"])
+
+
 class ModelGuardTests(unittest.TestCase):
     def test_missing_origin_still_rejected(self):
         with self.assertRaises(ValidationError):
@@ -139,6 +196,28 @@ class ModelGuardTests(unittest.TestCase):
         ready, missing = corpus_ready(entry)
         self.assertFalse(ready)
         self.assertIn("tags", missing)
+
+    def test_pre_1500_year_no_longer_rejected(self):
+        # year's lower bound was ge=1500, which raised on the WHOLE page for
+        # any culture/event/person entry with a genuinely pre-1500 origin
+        # year (e.g. a painting, a historical event) — not just the field.
+        entry = KYMEntryScrape.model_validate({
+            "url": "https://knowyourmeme.com/cultures/renaissance-art",
+            "title": "Renaissance Art", "category": "culture",
+            "status": "confirmed", "origin": "Italy", "year": "1200"})
+        self.assertEqual(entry.year, 1200)
+
+    def test_year_still_rejects_nonsense_values(self):
+        with self.assertRaises(ValidationError):
+            KYMEntryScrape.model_validate({
+                "url": "https://knowyourmeme.com/memes/x", "title": "X",
+                "category": "meme", "status": "confirmed",
+                "origin": "Twitter", "year": 0})
+        with self.assertRaises(ValidationError):
+            KYMEntryScrape.model_validate({
+                "url": "https://knowyourmeme.com/memes/x", "title": "X",
+                "category": "meme", "status": "confirmed",
+                "origin": "Twitter", "year": 3000})
 
 
 if __name__ == "__main__":
