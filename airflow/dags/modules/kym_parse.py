@@ -103,10 +103,10 @@ def infer_namespace_from_url(url: str) -> str:
 # Bump whenever a selector or classifier change could alter parse output for
 # ALREADY-scraped pages (e.g. the tags/additional_references fix, the
 # Template SectionKind addition, the nsfw->badges schema change, the
-# children/siblings removal). parse_store compares this against a
-# previously-stored entries doc to decide whether a re-parse is warranted
-# even when the underlying DOM hasn't changed.
-PARSER_VERSION = "1.1.1"
+# children/siblings removal, tags moving from required to gated). parse_store
+# compares this against a previously-stored entries doc to decide whether a
+# re-parse is warranted even when the underlying DOM hasn't changed.
+PARSER_VERSION = "1.2.0"
 
 # h2 id -> kind. Live pages give sections STABLE anchor ids, so this is the
 # primary classifier; the text alias table below is the fallback for older
@@ -398,7 +398,7 @@ def parse_entry(html: str, url: str | None = None,
     aka_raw = dd_text("also known as") or dd_text("aka")
     aliases = [a.strip() for a in aka_raw.split(",")] if aka_raw else []
 
-    tags = _tags(soup) or None  # None -> raise (tags is model-required)
+    tags = _tags(soup)  # [] is valid now — gated by CorpusPolicy, not schema-required
 
     parent_el = soup.select_one("h5.parent a[href]")
     parent = None

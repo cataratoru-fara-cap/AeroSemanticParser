@@ -22,19 +22,21 @@ an unexpected scraped key surfaces as a validation error rather than silently
 vanishing.
 
 Scope: confirmed memes only. Two levels of "required", kept separate on purpose:
-  1. Model-required fields (url, title, category, status, origin, tags) — the
-     fields structurally guaranteed on a confirmed-meme page (>=99.7% present
-     across 5,574 confirmed memes). Missing one means a malformed scrape;
-     raising is correct.
-  2. Corpus-completeness gate (`corpus_ready`) — the documentation bar (year,
-     entry_type, about/origin/spread sections, region). This FLAGS and reports
-     missing fields instead of raising, so a thin-but-valid entry is kept and
-     inspectable rather than discarded with its scrape work. Measured on a
-     100-page live sample (2026-07): year 99%, entry_type 100%, about/origin/
-     spread sections 100%, region 94% — all five enabled as of that
-     measurement. Region was gated off pre-measurement (0% in the PRIOR
-     scraper's dump); re-verify any gate you flip against a fresh sample if
-     selectors change again.
+  1. Model-required fields (url, title, category, status, origin) — the
+     fields structurally guaranteed on a confirmed-meme page (essentially
+     100% present across 5,574 confirmed memes). Missing one means a
+     malformed scrape; raising is correct.
+  2. Corpus-completeness gate (`corpus_ready`) — the documentation bar
+     (year, entry_type, region, tags, about/origin/spread sections). This
+     FLAGS and reports missing fields instead of raising, so a
+     thin-but-valid entry is kept and inspectable rather than discarded
+     with its scrape work. `tags` moved here from model-required: at 99.7%
+     coverage it looked safe to hard-require, but the remaining 0.3% are
+     real confirmed memes that were being rejected outright rather than
+     flagged — exactly the failure mode this two-tier split exists to
+     avoid. Measured on a 100-page live sample (2026-07): year 99%,
+     entry_type 100%, about/origin/spread sections 100%, region 94%, tags
+     ~99.7% — all enabled by default as of that measurement.
 """
 
 from __future__ import annotations
@@ -162,7 +164,7 @@ class KYMEntryScrape(BaseModel):
     origin: str = Field(..., min_length=1)  # required: 100% on confirmed memes
     region: list[str] = Field(default_factory=list)
     aliases: list[str] = Field(default_factory=list)
-    tags: list[str] = Field(..., min_length=1)  # required: 99.7% on confirmed memes
+    tags: list[str] = Field(default_factory=list)  # gated, not required — see CorpusPolicy
 
     # --- flags / media ---
     badges: list[str] = Field(default_factory=list)
@@ -270,6 +272,7 @@ class CorpusPolicy(BaseModel):
     require_year: bool = True
     require_entry_type: bool = True
     require_region: bool = True  # 94% coverage measured on a 100-page live sample
+    require_tags: bool = True  # 99.7% coverage, but real confirmed memes lack it
     require_sections: tuple[str, ...] = ("about", "origin", "spread")
 
 
@@ -279,7 +282,7 @@ DEFAULT_CORPUS_POLICY = CorpusPolicy()
 # require_region flip below). parse_store stamps this onto every entries
 # doc so a later policy change can be distinguished from a stale grade
 # without needing to know Python's own change history.
-CORPUS_POLICY_VERSION = "2026-07-15-region-enabled"
+CORPUS_POLICY_VERSION = "2026-07-16-tags-gated-not-required"
 
 
 def corpus_ready(
@@ -297,6 +300,8 @@ def corpus_ready(
         missing.append("entry_type")
     if policy.require_region and not entry.region:
         missing.append("region")
+    if policy.require_tags and not entry.tags:
+        missing.append("tags")
     have = {s.kind for s in entry.sections}  # use_enum_values -> plain strings
     missing.extend(f"section:{k}" for k in policy.require_sections if k not in have)
     return (not missing, missing)

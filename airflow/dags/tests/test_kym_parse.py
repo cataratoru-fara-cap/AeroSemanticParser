@@ -122,11 +122,23 @@ class ParseDogeTests(unittest.TestCase):
 
 
 class ModelGuardTests(unittest.TestCase):
-    def test_missing_origin_and_tags_rejected(self):
+    def test_missing_origin_still_rejected(self):
         with self.assertRaises(ValidationError):
             KYMEntryScrape.model_validate({
                 "url": "https://knowyourmeme.com/memes/x",
                 "title": "X", "category": "meme", "status": "confirmed"})
+
+    def test_missing_tags_no_longer_rejected(self):
+        # tags moved from model-required to CorpusPolicy.require_tags: a
+        # legitimate confirmed meme without tags should validate fine and
+        # only be FLAGGED incomplete, not rejected outright.
+        entry = KYMEntryScrape.model_validate({
+            "url": "https://knowyourmeme.com/memes/x", "title": "X",
+            "category": "meme", "status": "confirmed", "origin": "Twitter"})
+        self.assertEqual(entry.tags, [])
+        ready, missing = corpus_ready(entry)
+        self.assertFalse(ready)
+        self.assertIn("tags", missing)
 
 
 if __name__ == "__main__":

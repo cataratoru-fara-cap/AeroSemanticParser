@@ -84,6 +84,30 @@ class BuildEntryDocTests(unittest.TestCase):
             _thin_entry(), "sha", lenient, PARSER_VERSION, "lenient-v1")
         self.assertNotIn("region", doc["corpus_missing"])
 
+    def test_missing_tags_flagged_incomplete_not_rejected(self):
+        # The behavior this whole change is about: a real confirmed meme
+        # without tags validates (no exception) and is kept in `entries`,
+        # just labelled incomplete.
+        no_tags = KYMEntryScrape.model_validate({
+            "url": "https://knowyourmeme.com/memes/no-tags-stub",
+            "title": "No Tags Stub", "category": "meme",
+            "status": "confirmed", "origin": "Twitter"})
+        doc = self.store.build_entry_doc(
+            no_tags, "sha_nt", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
+            CORPUS_POLICY_VERSION)
+        self.assertEqual(doc["corpus_status"], "incomplete")
+        self.assertIn("tags", doc["corpus_missing"])
+
+    def test_tags_optional_policy_changes_grading(self):
+        no_tags = KYMEntryScrape.model_validate({
+            "url": "https://knowyourmeme.com/memes/no-tags-stub2",
+            "title": "No Tags Stub 2", "category": "meme",
+            "status": "confirmed", "origin": "Twitter"})
+        lenient = CorpusPolicy(require_tags=False)
+        doc = self.store.build_entry_doc(
+            no_tags, "sha", lenient, PARSER_VERSION, "lenient-v2")
+        self.assertNotIn("tags", doc["corpus_missing"])
+
 
 class UpsertTests(unittest.TestCase):
     def setUp(self):
