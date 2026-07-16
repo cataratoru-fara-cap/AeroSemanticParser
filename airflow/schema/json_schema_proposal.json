@@ -40,8 +40,6 @@
     "year": {
       "type": ["integer", "null"],
       "description": "Origin year from the details sidebar. Source is a string or null; coerce to int, leave null if absent/non-numeric. Do NOT require it (~11% are null).",
-      "minimum": 1500,
-      "maximum": 2100
     },
     "origin": {
       "type": "string",
