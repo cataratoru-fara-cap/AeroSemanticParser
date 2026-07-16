@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://memeatlas/kym_scrape_schema.json",
   "title": "KYMEntryScrape",
-  "description": "Deterministic scrape-layer schema for a Know Your Meme entry. Scope: confirmed memes only. Every field here is directly liftable from the raw HTML with no interpretation. `required` lists the fields structurally guaranteed on a confirmed-meme page (measured >=99.7% present on 5,574 confirmed memes) — it validates well-formedness. Corpus-completeness requirements (year, origin/spread sections, entry_type) are a SEPARATE, tunable gate, not schema `required`, so thin entries are flagged and reported rather than silently discarded. Narrative sections are captured as faithful blocks (text/links/images); interpreted summaries belong to the downstream extraction schema, not here.",
+  "description": "Deterministic scrape-layer schema for a Know Your Meme entry. Scope: confirmed memes only. Every field here is directly liftable from the raw HTML with no interpretation. `required` lists the fields structurally guaranteed on essentially every confirmed-meme page (url/title/category/status/origin, all measured 100% on a 5,574-entry sample) — it validates well-formedness. Corpus-completeness requirements (year, region, entry_type, tags, about/origin/spread sections) are a SEPARATE, tunable gate (CorpusPolicy), not schema `required` — even a 99.7%-coverage field like tags legitimately has real confirmed memes without it, so thin entries are flagged and reported rather than rejected outright. Narrative sections are captured as faithful blocks (text/links/images); interpreted summaries belong to the downstream extraction schema, not here.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["url", "title", "category", "status", "origin", "tags"],
+  "required": ["url", "title", "category", "status", "origin"],
   "properties": {
     "schema_version": {
       "type": "string",
@@ -63,8 +63,7 @@
     "tags": {
       "type": "array",
       "items": {"type": "string"},
-      "minItems": 1,
-      "description": "Flat list of tag strings from the entry footer. Deduplicate, preserve order. Required: present on 99.7% of confirmed memes."
+      "description": "Flat list of tag strings from the entry footer. Deduplicate, preserve order. NOT schema-required (moved to CorpusPolicy.require_tags): 99.7% coverage on confirmed memes, but the missing 0.3% are legitimate entries that should be kept and flagged incomplete, not rejected."
     },
     "badges": {
       "type": "array",
