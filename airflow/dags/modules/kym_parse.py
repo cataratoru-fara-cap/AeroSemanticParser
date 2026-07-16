@@ -103,10 +103,11 @@ def infer_namespace_from_url(url: str) -> str:
 # Bump whenever a selector or classifier change could alter parse output for
 # ALREADY-scraped pages (e.g. the tags/additional_references fix, the
 # Template SectionKind addition, the nsfw->badges schema change, the
-# children/siblings removal, tags moving from required to gated). parse_store
-# compares this against a previously-stored entries doc to decide whether a
-# re-parse is warranted even when the underlying DOM hasn't changed.
-PARSER_VERSION = "1.2.0"
+# children/siblings removal, tags moving from required to gated, the year
+# lower-bound loosening). parse_store compares this against a
+# previously-stored entries doc to decide whether a re-parse is warranted
+# even when the underlying DOM hasn't changed.
+PARSER_VERSION = "1.2.1"
 
 # h2 id -> kind. Live pages give sections STABLE anchor ids, so this is the
 # primary classifier; the text alias table below is the fallback for older

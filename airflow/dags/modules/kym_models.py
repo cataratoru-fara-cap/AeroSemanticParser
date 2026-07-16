@@ -160,7 +160,14 @@ class KYMEntryScrape(BaseModel):
 
     # --- details sidebar ---
     entry_type: list[str] = Field(default_factory=list)
-    year: int | None = Field(default=None, ge=1500, le=2100)
+    year: int | None = Field(
+        default=None,
+        description="Loosened from an earlier ge=1500: non-meme categories "
+                    "(culture/event/person) can have a genuinely pre-1500 "
+                    "origin year (e.g. a painting, a historical event used "
+                    "as the meme's origin point), and that constraint was "
+                    "rejecting the whole page — not just the field — since "
+                    "Field bounds apply to any non-None value.")
     origin: str = Field(..., min_length=1)  # required: 100% on confirmed memes
     region: list[str] = Field(default_factory=list)
     aliases: list[str] = Field(default_factory=list)
