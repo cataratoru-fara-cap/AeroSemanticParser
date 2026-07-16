@@ -276,6 +276,42 @@ class SaveFailuresTests(unittest.TestCase):
         self.assertEqual(stats["entries_total"], 1)
         self.assertEqual(stats["entries_incomplete"], 1)
 
+    def test_namespace_from_urls_collection_is_authoritative(self):
+        self.store.urls.insert_one({"url": self.URL, "namespace": "editorials"})
+        ns = self.store.namespaces_for([self.URL])
+        self.assertEqual(ns[self.URL], "editorials")
+
+    def test_namespace_falls_back_when_missing_from_urls_doc(self):
+        # urls doc exists but has no namespace field recorded
+        self.store.urls.insert_one({"url": self.URL})
+        ns = self.store.namespaces_for([self.URL])
+        self.assertEqual(ns[self.URL], "memes")  # inferred from /memes/... path
+
+    def test_namespace_falls_back_when_url_not_in_urls_collection(self):
+        ns = self.store.namespaces_for([self.URL])
+        self.assertEqual(ns[self.URL], "memes")
+
+    def test_failure_record_stores_namespace(self):
+        self.store.urls.insert_one({"url": self.URL, "namespace": "memes"})
+        ns_by_url = self.store.namespaces_for([self.URL])
+        fail_with_ns = {**self.fail, "namespace": ns_by_url[self.URL]}
+        self.store.save_failures([fail_with_ns], PARSER_VERSION,
+                                 CORPUS_POLICY_VERSION)
+        doc = self.store.failures.find_one({"url": self.URL})
+        self.assertEqual(doc["namespace"], "memes")
+
+    def test_stats_breaks_down_failures_by_namespace(self):
+        editorial_url = "https://knowyourmeme.com/editorials/oops"
+        self.store.save_failures(
+            [{**self.fail, "namespace": "memes"},
+             {"url": editorial_url, "dom_content_sha256": "sha2",
+              "error": "e", "error_type": "ValidationError",
+              "namespace": "editorials"}],
+            PARSER_VERSION, CORPUS_POLICY_VERSION)
+        stats = self.store.stats()
+        self.assertEqual(stats["failure_namespace_counts"],
+                         {"memes": 1, "editorials": 1})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

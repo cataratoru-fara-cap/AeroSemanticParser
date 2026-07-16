@@ -146,10 +146,19 @@ def kym_parse_dag():
             parsed_stream(), DEFAULT_CORPUS_POLICY, kym_parse.PARSER_VERSION,
             CORPUS_POLICY_VERSION)
 
-        # Dead-letter records: queryable via
-        # db.entries.find({"parse_status": "failed"}); they carry the same
-        # staleness stamps as ok docs, so select_pending won't re-queue them
-        # until the parser version or the DOM content actually changes.
+        # Dead-letter records: queryable via db.parse_failures.find({}) —
+        # a kept-separate collection so `entries` stays schema-pure. They
+        # carry the same staleness stamps as ok docs, so select_pending
+        # won't re-queue them until the parser version or the DOM content
+        # actually changes. The namespace lookup is cheap here — only the
+        # (typically few) failed urls in this chunk, not the whole batch —
+        # and it clusters failures by source: e.g. a run of namespace=
+        # 'editorials' failures means an editorial URL slipped through the
+        # confirmed-meme filter, not that the parser itself is broken.
+        if failures:
+            ns_by_url = store.namespaces_for(f["url"] for f in failures)
+            for f in failures:
+                f["namespace"] = ns_by_url.get(f["url"])
         store.save_failures(failures, kym_parse.PARSER_VERSION,
                             CORPUS_POLICY_VERSION)
 

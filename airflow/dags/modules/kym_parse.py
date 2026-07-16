@@ -62,6 +62,44 @@ log = logging.getLogger("kym_parse")
 
 BASE_URL = "https://knowyourmeme.com"
 
+# Fallback ONLY for namespaces_for() when a urls doc predates discovery's
+# namespace field or has it null. The authoritative value always comes
+# from urls.namespace (kym_discover's Taxonomy) — this is deliberately a
+# small, dependency-free mirror of that pattern table, not an import of
+# kym_discover, to keep this module's boundary (pure HTML parsing) intact.
+_NAMESPACE_FALLBACK_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("/sensitive/memes/", "sensitive/memes"),
+    ("/sensitive/", "sensitive"),
+    ("/memes/subcultures/", "memes/subcultures"),
+    ("/memes/events/", "memes/events"),
+    ("/memes/people/", "memes/people"),
+    ("/memes/sites/", "memes/sites"),
+    ("/memes/", "memes"),
+    ("/editorials/guides/", "editorials/guides"),
+    ("/editorials/interviews/", "editorials/interviews"),
+    ("/editorials/", "editorials"),
+    ("/cultures/", "cultures"),
+    ("/subcultures/", "subcultures"),
+    ("/people/", "people"),
+    ("/events/", "events"),
+    ("/videos/", "videos"),
+    ("/photos/", "photos"),
+    ("/forums/", "forums"),
+    ("/users/", "users"),
+    ("/news/", "news"),
+)
+
+
+def infer_namespace_from_url(url: str) -> str:
+    """Longest-prefix namespace guess from the URL path alone. Only used as
+    a fallback when the urls collection doc has no namespace recorded —
+    the authoritative source is always discovery's own Taxonomy."""
+    path = urlparse(url).path
+    for prefix, ns in _NAMESPACE_FALLBACK_PATTERNS:
+        if path.startswith(prefix):
+            return ns
+    return "unknown"
+
 # Bump whenever a selector or classifier change could alter parse output for
 # ALREADY-scraped pages (e.g. the tags/additional_references fix, the
 # Template SectionKind addition, the nsfw->badges schema change, the

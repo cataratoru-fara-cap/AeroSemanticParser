@@ -125,6 +125,7 @@ class ParseStore:
         self.entries.create_index("status")
         self.failures.create_index("url", unique=True)
         self.failures.create_index("error_type")
+        self.failures.create_index("namespace")
 
     # -- selection ------------------------------------------------------
 
@@ -172,6 +173,24 @@ class ParseStore:
                                or _up_to_date(failed.get(url), sha))]
         return pending[:limit] if limit else pending
 
+    def namespaces_for(self, urls: Iterable[str]) -> dict[str, str]:
+        """{url: namespace} from the urls collection — the authoritative
+        source (discovery's Taxonomy), not a re-inference. Falls back to
+        kym_parse.infer_namespace_from_url() only for urls whose doc
+        predates the namespace field or has it null."""
+        from modules.kym_parse import infer_namespace_from_url
+
+        url_list = list(urls)
+        if not url_list:
+            return {}
+        out: dict[str, str] = {}
+        for d in self.urls.find({"url": {"$in": url_list}},
+                                {"_id": 0, "url": 1, "namespace": 1}):
+            out[d["url"]] = d.get("namespace") or infer_namespace_from_url(d["url"])
+        for url in url_list:
+            out.setdefault(url, infer_namespace_from_url(url))
+        return out
+
     # -- writes -----------------------------------------------------------
 
     def build_entry_doc(self, entry: KYMEntryScrape, dom_content_sha256: str,
@@ -213,7 +232,11 @@ class ParseStore:
         """Persist parse failures into the dedicated `parse_failures`
         collection — kept OUT of `entries` so that collection stays
         schema-pure (every entries doc is a valid KYMEntryScrape + grading).
-        Each failure dict: {url, dom_content_sha256, error, error_type}.
+        Each failure dict: {url, dom_content_sha256, error, error_type,
+        namespace}. ``namespace`` is the label this method is about — e.g.
+        a run of failures clustering under namespace='editorials' means an
+        editorial URL slipped through the confirmed-meme filter, not that
+        the parser itself is broken; that's a very different fix.
 
         Invariants:
           * Never downgrades — a failure physically cannot touch `entries`;
@@ -234,6 +257,7 @@ class ParseStore:
                 {"_id": _url_doc_id(url)},
                 {"$set": {
                     "url": url,
+                    "namespace": f.get("namespace"),
                     "error": str(f.get("error"))[:2000],
                     "error_type": f.get("error_type"),
                     "failed_at": now,
@@ -259,12 +283,17 @@ class ParseStore:
         for etype in self.failures.distinct("error_type"):
             by_error[etype] = self.failures.count_documents(
                 {"error_type": etype})
+        by_namespace: dict[str, int] = {}
+        for ns in self.failures.distinct("namespace"):
+            by_namespace[ns] = self.failures.count_documents(
+                {"namespace": ns})
         return {
             "entries_total": total,
             "entries_ready": ready,
             "entries_incomplete": total - ready,
             "parse_failures": self.failures.count_documents({}),
             "failure_type_counts": by_error,
+            "failure_namespace_counts": by_namespace,
             "missing_field_counts": by_missing,
         }
 
@@ -339,6 +368,18 @@ def save_parsed(entries_with_meta: Iterable[tuple[KYMEntryScrape, str]],
                                       policy_version)
                 for entry, sha in entries_with_meta)
         return store.upsert_entries(docs)
+    finally:
+        store.close()
+
+
+def namespaces_for(urls: Iterable[str]) -> dict[str, str]:
+    """{url: namespace} — see ParseStore.namespaces_for."""
+    url_list = list(urls)
+    if not url_list:
+        return {}
+    store = get_store()
+    try:
+        return store.namespaces_for(url_list)
     finally:
         store.close()
 
