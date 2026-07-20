@@ -20,15 +20,19 @@ Selector map (verified against a live 2026 confirmed-meme page, Doge):
                      in title, src is a blank gif)
     external refs    h2#external-references + div.references
                      ([n] -> #fnrN anchor, then the real link)
-    parent           h5.parent a  ("Part of a series on X")
+    series_parent    h5.parent a  ("Part of a series on X")
     timestamps       div.entry-timestamps abbr.timeago[title] (ISO), labelled
                      by the preceding "Updated" / "Added" text
 
-Children/siblings are NOT inline on live pages (they sit behind a
-"/children" link). Both `children` and `siblings` were removed from the
-schema as redundant with `parent` + the related_memes section — a
-dedicated targeted-fetch stage would be needed to populate either
-faithfully, and neither was ever populated by this parser.
+Series relation: `series_parent` only, from the "Part of a series on X"
+link — KYM's own framing for this relationship. An earlier version also
+scraped `related_entries`/`related_sub_entries` from the inline "Related
+(Sub-)entries" galleries; reverted as unreliable (fragile dual desktop/
+mobile containers) and redundant (those galleries are truncated summaries
+of the same series `series_parent` already points to — no information they
+added wasn't reachable via series_parent). The legacy dump's `children`/
+`siblings` fields have no equivalent here; use series_parent as the join
+key back to the series instead.
 
 NSFW/content-warning detection uses the sidebar's own 'Badges:' row (see
 _badges()) rather than a URL-path inference — pages under /sensitive/
@@ -107,7 +111,7 @@ def infer_namespace_from_url(url: str) -> str:
 # repair layer). parse_store compares this against a previously-stored
 # entries doc to decide whether a re-parse is warranted even when the
 # underlying DOM hasn't changed.
-PARSER_VERSION = "1.3.0"
+PARSER_VERSION = "1.5.0"
 
 # h2 id -> kind. Live pages give sections STABLE anchor ids, so this is the
 # primary classifier; the text alias table below is the fallback for older
@@ -451,9 +455,9 @@ def parse_entry(html: str, url: str | None = None,
     tags = _tags(soup)  # [] is valid now — gated by CorpusPolicy, not schema-required
 
     parent_el = soup.select_one("h5.parent a[href]")
-    parent = None
+    series_parent = None
     if parent_el and not parent_el.get_text(strip=True).startswith("["):
-        parent = _abs(parent_el["href"])
+        series_parent = _clean_url(_abs(parent_el["href"]))
 
     updated, added = _timestamps(soup)
     og_image = meta.get("og:image")
@@ -472,7 +476,7 @@ def parse_entry(html: str, url: str | None = None,
         "badges": _badges(soup),
         "template_image_url": og_image,
         "og_image": og_image,
-        "parent": parent,
+        "series_parent": series_parent,
         "additional_references": _additional_refs(soup),
         "external_references": _external_refs(soup),
         "sections": _sections(soup),
@@ -514,7 +518,7 @@ def run_sample(limit: int = 100,
             continue
         parsed += 1
         for name in ("year", "origin", "region", "entry_type", "aliases",
-                     "tags", "parent", "additional_references",
+                     "tags", "series_parent", "additional_references",
                      "external_references"):
             if getattr(entry, name):
                 field_hits[name] += 1

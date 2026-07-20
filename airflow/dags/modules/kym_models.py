@@ -161,7 +161,7 @@ class KYMEntryScrape(BaseModel):
     # --- details sidebar ---
     entry_type: list[str] = Field(default_factory=list)
     year: int | None = Field(
-        default=None,
+        default=None, ge=None, le=None,
         description="Loosened from an earlier ge=1500: non-meme categories "
                     "(culture/event/person) can have a genuinely pre-1500 "
                     "origin year (e.g. a painting, a historical event used "
@@ -179,7 +179,13 @@ class KYMEntryScrape(BaseModel):
     og_image: HttpUrl | None = None
 
     # --- relations ---
-    parent: HttpUrl | None = None
+    # KYM's own framing is "Part of a series on X" — series_parent names
+    # that relationship directly. related_entries/related_sub_entries
+    # (harvested from inline galleries) were tried and reverted: those
+    # galleries are truncated ("16 total" but ~12 rendered) and split
+    # across fragile desktop/mobile containers, for no information series_
+    # parent doesn't already give via a join back to the parent's own page.
+    series_parent: HttpUrl | None = None
 
     # --- references ---
     additional_references: list[NamedReference] = Field(default_factory=list)

@@ -39,7 +39,7 @@
     },
     "year": {
       "type": ["integer", "null"],
-      "description": "Origin year from the details sidebar. Source is a string or null; coerce to int, leave null if absent/non-numeric. Do NOT require it (~11% are null).",
+      "description": "Origin year from the details sidebar. Source is a string or null; coerce to int, leave null if absent/non-numeric. Do NOT require it (~11% are null). Lower bound loosened from 1500: culture/event/person entries can have a genuinely pre-1500 origin year."
     },
     "origin": {
       "type": "string",
@@ -79,10 +79,10 @@
       "format": "uri",
       "description": "Social card image (meta og:image). Provenance/thumbnail use."
     },
-    "parent": {
+    "series_parent": {
       "type": ["string", "null"],
       "format": "uri",
-      "description": "Parent entry URL if this is a sub-entry (covers the old 'parent_meme' intent, losslessly, as a link)."
+      "description": "Parent entry URL from the 'Part of a series on X' link — KYM's own framing for this relationship. Renamed from 'parent' for clarity. An inline-gallery approach to also harvesting 'Related Entries'/'Related Sub-entries' (the legacy dump's siblings/children) was tried and reverted: those galleries are truncated and split across fragile desktop/mobile containers, redundant with the join series_parent already gives back to the series."
     },
     "additional_references": {
       "type": "array",

@@ -60,9 +60,9 @@ class ParseDogeTests(unittest.TestCase):
         self.assertEqual(len(self.entry.tags), 22)
         self.assertEqual(len(self.entry.additional_references), 8)
 
-    def test_parent_series(self):
+    def test_series_parent(self):
         self.assertEqual(
-            str(self.entry.parent),
+            str(self.entry.series_parent),
             "https://knowyourmeme.com/memes/interior-monologue-captioning")
 
     def test_references(self):
@@ -111,14 +111,16 @@ class ParseDogeTests(unittest.TestCase):
         # _badges() degrades to [] rather than erroring or hallucinating.
         self.assertEqual(self.entry.badges, [])
 
-    def test_nsfw_and_children_fields_removed(self):
-        # nsfw (URL-inference), children, and siblings (never populated,
-        # need a separate fetch, redundant with parent) were removed from
-        # the schema — badges['Sensitive'] from the sidebar is now the
-        # authoritative content-warning signal instead.
-        self.assertNotIn("nsfw", type(self.entry).model_fields)
-        self.assertNotIn("children", type(self.entry).model_fields)
-        self.assertNotIn("siblings", type(self.entry).model_fields)
+    def test_relation_fields_reverted_to_series_parent_only(self):
+        # nsfw (URL-inference) stays removed — badges['Sensitive'] is the
+        # signal. related_entries/related_sub_entries (inline-gallery
+        # harvesting) was tried and reverted as unreliable + redundant with
+        # series_parent; children/siblings were removed earlier still.
+        fields = type(self.entry).model_fields
+        for gone in ("nsfw", "children", "siblings",
+                    "related_entries", "related_sub_entries"):
+            self.assertNotIn(gone, fields)
+        self.assertIn("series_parent", fields)
 
 
 class MalformedUrlRepairTests(unittest.TestCase):
