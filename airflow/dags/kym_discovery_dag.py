@@ -131,6 +131,16 @@ def kym_discovery():
             from pathlib import Path
             store.save_json(Path(snapshot), index)
         return summary
+    
+        # -- Phase 4: persist summary + render plots -----------------------------
+    @task(trigger_rule="none_failed")
+    def plot_summary(summary: dict, run_id: str | None = None) -> list[str]:
+        from modules import summary_plots, summary_store
+        summary_store.save_summary(stage="discovery", dag_id="kym_discovery",
+                                   run_id=run_id or "manual", summary=summary)
+        history = summary_store.load_history("scrape")
+        paths = summary_plots.render_all("discovery", summary, history)
+        return [str(p) for p in paths]
 
     sitemap_stats = discover_sitemaps()
     taxonomy = infer_taxonomy()
@@ -138,7 +148,9 @@ def kym_discovery():
     crawls = crawl_listing.partial(taxonomy=taxonomy).expand(listing=crawl_args)
 
     sitemap_stats >> taxonomy
-    crawls >> summarize()
+    summary = summarize()
+    crawls >> summary
+    plot_summary(summary)
 
 
 kym_discovery()

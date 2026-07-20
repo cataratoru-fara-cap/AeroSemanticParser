@@ -136,10 +136,21 @@ def kym_scrape():
         log.info("SCRAPE RUN COMPLETE — run=%s corpus=%s", run_totals, corpus)
         return {"run": run_totals, "corpus": corpus}
 
+    # -- Phase 4: persist summary + render plots -----------------------------
+    @task(trigger_rule="none_failed")
+    def plot_summary(summary: dict, run_id: str | None = None) -> list[str]:
+        from modules import summary_plots, summary_store
+        summary_store.save_summary(stage="scrape", dag_id="kym_scrape",
+                                   run_id=run_id or "manual", summary=summary)
+        history = summary_store.load_history("scrape")
+        paths = summary_plots.render_all("scrape", summary, history)
+        return [str(p) for p in paths]
+    
     urls = select_urls()
     chunks = chunk_urls(urls)
     stats = scrape_chunk.expand(chunk=chunks)
-    summarize(stats)
+    summarry = summarize(stats)
+    plot_summary(summarry)
 
 
 kym_scrape()
