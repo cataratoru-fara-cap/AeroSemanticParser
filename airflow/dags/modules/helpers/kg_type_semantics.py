@@ -12,6 +12,8 @@ and rerunnable without recomputation):
 
 No Mongo, no Airflow. Input is the census JSON; everything else is files.
 
+    export OPENWEBUI_API_KEY=sk-...   # from Open WebUI Settings -> Account -> API keys
+
     python -m modules.helpers.kg_type_semantics describe \
         --census kg_census_entry_type.json --out kg_type_definitions.json
     python -m modules.helpers.kg_type_semantics embed \
@@ -21,9 +23,17 @@ No Mongo, no Airflow. Input is the census JSON; everything else is files.
         --out kg_type_semantics_report.json
 
 Config (env):
-    PAGODA_OLLAMA_URL   default https://ollama-ui.pagoda.liris.cnrs.fr/
+    OPENWEBUI_BASE_URL  default https://pagoda.liris.cnrs.fr (no port — this
+                        is Open WebUI in front of Ollama, not raw Ollama)
+    OPENWEBUI_API_KEY   REQUIRED. Generate one in Open WebUI:
+                        Settings -> Account -> API keys -> Create new key.
     KG_CHAT_MODEL       default mistral-small3.2:24b
     KG_EMBED_MODEL      default qwen3-embedding:0.6b
+
+Endpoints used (from the instance's own OpenAPI spec):
+    POST /ollama/api/chat   -- forwards as-is to the Ollama backend
+    POST /ollama/api/embed  -- forwards as-is to the Ollama backend
+Both require `Authorization: Bearer <OPENWEBUI_API_KEY>`.
 
 `analyze` needs numpy + scipy:  pip install numpy scipy
 """
@@ -35,10 +45,18 @@ import os
 import sys
 import urllib.request
 
-PAGODA = os.getenv("PAGODA_OLLAMA_URL", "https://ollama-ui.pagoda.liris.cnrs.fr/")
+BASE_URL = os.getenv("OPENWEBUI_BASE_URL", "https://pagoda.liris.cnrs.fr").rstrip("/")
+API_KEY = os.getenv("OPENWEBUI_API_KEY")
 CHAT_MODEL = os.getenv("KG_CHAT_MODEL", "mistral-small3.2:24b")
 EMBED_MODEL = os.getenv("KG_EMBED_MODEL", "qwen3-embedding:0.6b")
 PROMPT_VERSION = "1"
+
+if not API_KEY:
+    raise SystemExit(
+        "OPENWEBUI_API_KEY is not set. Generate one in Open WebUI: "
+        "Settings -> Account -> API keys -> Create new key, then "
+        "export OPENWEBUI_API_KEY=... (or pass -e to docker compose exec)."
+    )
 
 SYSTEM_PROMPT = (
     "You are helping build a knowledge graph of internet memes based on "
@@ -58,12 +76,19 @@ USER_TMPL = (
 
 def _post(path: str, payload: dict) -> dict:
     req = urllib.request.Request(
-        PAGODA.rstrip("/") + path,
+        BASE_URL + path,
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {API_KEY}",
+        },
     )
-    with urllib.request.urlopen(req, timeout=300) as resp:
-        return json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        raise RuntimeError(f"{e.code} from {path}: {body[:500]}") from None
 
 
 # ---------------------------------------------------------------- describe ----
