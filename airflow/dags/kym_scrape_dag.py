@@ -37,6 +37,8 @@ import logging
 from datetime import timedelta
 
 from airflow.sdk import Param, dag, task
+from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
+
 
 from modules import dom_store
 from modules import scrapingant_client as sac
@@ -150,7 +152,13 @@ def kym_scrape():
     chunks = chunk_urls(urls)
     stats = scrape_chunk.expand(chunk=chunks)
     summarry = summarize(stats)
-    plot_summary(summarry)
+    trigger_parse = TriggerDagRunOperator(
+    task_id="trigger_kym_parse",
+    trigger_dag_id="kym_parse",
+    wait_for_completion=False,
+)
+
+    plot_summary(summarry) >> trigger_parse
 
 
 kym_scrape()

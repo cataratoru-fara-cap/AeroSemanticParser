@@ -30,6 +30,8 @@ import logging
 from datetime import timedelta
 
 from airflow.sdk import Param, dag, task
+from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
+
 
 from modules import kym_discover as kd
 from modules import kym_store as store
@@ -146,11 +148,16 @@ def kym_discovery():
     taxonomy = infer_taxonomy()
     crawl_args = build_crawl_args(taxonomy)
     crawls = crawl_listing.partial(taxonomy=taxonomy).expand(listing=crawl_args)
+    trigger_scrape = TriggerDagRunOperator(
+        task_id="trigger_kym_scrape",
+        trigger_dag_id="kym_scrape",
+        wait_for_completion=False,
+    )
 
     sitemap_stats >> taxonomy
     summary = summarize()
     crawls >> summary
-    plot_summary(summary)
+    plot_summary(summary) >> trigger_scrape
 
 
 kym_discovery()
