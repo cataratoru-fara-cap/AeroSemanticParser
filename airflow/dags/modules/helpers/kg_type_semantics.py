@@ -40,16 +40,18 @@ Both require `Authorization: Bearer <OPENWEBUI_API_KEY>`.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import sys
+import time
 import urllib.request
 
 BASE_URL = os.getenv("OPENWEBUI_BASE_URL", "https://pagoda.liris.cnrs.fr").rstrip("/")
 API_KEY = os.getenv("OPENWEBUI_API_KEY")
 CHAT_MODEL = os.getenv("KG_CHAT_MODEL", "mistral-small3.2:24b")
 EMBED_MODEL = os.getenv("KG_EMBED_MODEL", "qwen3-embedding:0.6b")
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "2"
 
 if not API_KEY:
     raise SystemExit(
@@ -65,7 +67,15 @@ SYSTEM_PROMPT = (
     "not their general English meaning. Example: on KYM, 'exploitable' means a "
     "base image or template deliberately edited and re-captioned by many users, "
     "NOT a security vulnerability. Do not define a word by repeating its own "
-    "words. Respond ONLY with JSON: {\"definition\": \"...\"}"
+    "words. Do NOT use generic filler like 'gained significant popularity/"
+    "recognition within internet culture' or 'often spawning memes and "
+    "trends' — nearly every KYM entry could truthfully claim that, so it "
+    "carries no distinguishing information and different entries end up with "
+    "near-identical definitions. Instead, name the SPECIFIC mechanism in the "
+    "first clause: is it a media format (song/video/image), a real-world "
+    "event category, a person's occupation, a rhetorical/textual device, a "
+    "platform or tool, or something else? Lead with that distinction. "
+    "Respond ONLY with JSON: {\"definition\": \"...\"}"
 )
 
 USER_TMPL = (
@@ -81,6 +91,8 @@ def _post(path: str, payload: dict) -> dict:
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {API_KEY}",
+            "User-Agent": "curl/8.5.0",
+            "Accept": "*/*",
         },
     )
     try:
@@ -89,6 +101,8 @@ def _post(path: str, payload: dict) -> dict:
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")
         raise RuntimeError(f"{e.code} from {path}: {body[:500]}") from None
+    except (urllib.error.URLError, http.client.HTTPException, ConnectionError) as e:
+        raise RuntimeError(f"connection failed for {path}: {e}") from None
 
 
 # ---------------------------------------------------------------- describe ----
@@ -107,17 +121,22 @@ def cmd_describe(args):
         if slug in cache and not args.force:
             continue
         definition = None
-        for attempt in range(2):
-            r = _post("/ollama/api/chat", {
-                "model": CHAT_MODEL,
-                "stream": False,
-                "format": "json",
-                "options": {"temperature": 0.2},
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": USER_TMPL.format(slug=slug)},
-                ],
-            })
+        for attempt in range(3):
+            try:
+                r = _post("/ollama/api/chat", {
+                    "model": CHAT_MODEL,
+                    "stream": False,
+                    "format": "json",
+                    "options": {"temperature": 0.2},
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": USER_TMPL.format(slug=slug)},
+                    ],
+                })
+            except RuntimeError as e:
+                print(f"  !! {slug}: attempt {attempt + 1} failed ({e}); retrying...")
+                time.sleep(2 * (attempt + 1))
+                continue
             try:
                 candidate = json.loads(r["message"]["content"])["definition"].strip()
             except (KeyError, json.JSONDecodeError):
