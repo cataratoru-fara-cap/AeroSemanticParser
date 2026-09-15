@@ -169,8 +169,8 @@ services:
   airflow-apiserver:
     <<: *airflow-common
     command: api-server
-    ports:
-      - "8080:8080"
+    # No host port: reached through the proxy on 8080. Other containers
+    # still use http://airflow-apiserver:8080 on the Docker network.
     environment:
       <<: *airflow-common-env
       AIRFLOW__API__WORKERS: '1'
@@ -408,7 +408,8 @@ services:
       MONGODB_PARSE_FAILURES_COLLECTION: parse_failures
       MONGODB_RUN_SUMMARIES_COLLECTION: run_summaries
     ports:
-      - "${DASHBOARD_PORT:-8501}:8501"
+      # Loopback only — the public route is http://<host>:8080/dashboard/.
+      - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"
     restart: always
     mem_limit: 512m
     mem_reservation: 256m
@@ -430,22 +431,53 @@ services:
       - Practice
     
   mongo-express:
-    image: mongo-express:latest
+    # Pinned: on `latest`, basic auth was only on because the image happened
+    # to default ME_CONFIG_BASICAUTH=true. An image update could have
+    # silently exposed full read-write database access.
+    image: mongo-express:1.0.2
     container_name: mongo_express_airflow
     restart: always
     ports:
-      - "8081:8081"
+      # Loopback only — the public route is http://<host>:8080/mongo/.
+      - "127.0.0.1:8081:8081"
     environment:
       ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_INITDB_ROOT_USERNAME}
       ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
       ME_CONFIG_MONGODB_URL: mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@mongo:27017/?authSource=admin
-      ME_CONFIG_BASICAUTH_USERNAME: "mongo"      # The username to log into the web UI
-      ME_CONFIG_BASICAUTH_PASSWORD: "mongo"   # The password to log into the web UI
+      # Web UI login. Set explicitly rather than relying on image defaults.
+      ME_CONFIG_BASICAUTH: "true"
+      ME_CONFIG_BASICAUTH_USERNAME: ${MONGO_EXPRESS_USER:?set MONGO_EXPRESS_USER in .env}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD:?set MONGO_EXPRESS_PASSWORD in .env}
+      ME_CONFIG_SITE_SESSIONSECRET: ${MONGO_EXPRESS_SESSION_SECRET:?set MONGO_EXPRESS_SESSION_SECRET in .env}
+      ME_CONFIG_SITE_BASEURL: /mongo/
     networks:
       - Practice
     depends_on:
       mongo:
         condition: service_healthy
+
+  # The only service reachable from the network. The campus firewall in
+  # front of this host drops most ports; 8080 gets through, so Airflow, the
+  # dashboard and mongo-express are all routed through it. See proxy/Caddyfile.
+  proxy:
+    image: caddy:2.10-alpine
+    container_name: kym_proxy
+    ports:
+      - "${PROXY_PORT:-8080}:8080"
+    volumes:
+      - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+    restart: always
+    mem_limit: 128m
+    mem_reservation: 32m
+    networks:
+      - Practice
+    depends_on:
+      airflow-apiserver:
+        condition: service_started
+      dashboard:
+        condition: service_started
+      mongo-express:
+        condition: service_started
 
 networks:
   Practice:

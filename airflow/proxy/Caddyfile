@@ -1,0 +1,38 @@
+# Single entry point for everything on this machine.
+#
+# Why this exists: the campus network in front of this host only lets a
+# few ports through, and 8080 is one of them. 8081 (mongo-express), 8501
+# (dashboard) and 5173 were all silently dropped upstream — the services
+# were up and listening, the packets just never arrived. Rather than ask
+# for more ports, everything is served through the one that already works.
+#
+#   http://<host>:8080/            -> Airflow
+#   http://<host>:8080/dashboard/  -> Streamlit dashboard
+#   http://<host>:8080/mongo/      -> mongo-express (basic auth)
+#
+# No path is stripped: Streamlit (server.baseUrlPath) and mongo-express
+# (ME_CONFIG_SITE_BASEURL) are each configured to expect their own prefix,
+# so the links and websocket URLs they generate already include it.
+
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	redir /dashboard /dashboard/ 308
+	handle /dashboard/* {
+		reverse_proxy dashboard:8501
+	}
+
+	redir /mongo /mongo/ 308
+	handle /mongo/* {
+		reverse_proxy mongo-express:8081
+	}
+
+	# Everything else is Airflow, which keeps the root so existing
+	# bookmarks and the API path (/api/v2/...) are unchanged.
+	handle {
+		reverse_proxy airflow-apiserver:8080
+	}
+}

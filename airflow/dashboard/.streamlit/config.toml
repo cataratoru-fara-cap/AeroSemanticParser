@@ -8,6 +8,9 @@
 
 [server]
 headless = true
+# Served behind the proxy at http://<host>:8080/dashboard/. Streamlit needs
+# to know its prefix so the asset and websocket URLs it emits include it.
+baseUrlPath = "dashboard"
 fileWatcherType = "none"
 # enableCORS=false would let any origin open a websocket to this app.
 # Streamlit warns loudly about it and it buys nothing here: the dashboard

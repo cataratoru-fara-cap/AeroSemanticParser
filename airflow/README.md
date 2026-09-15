@@ -24,13 +24,22 @@ docker compose build
 docker compose up -d
 ```
 
+Everything browser-facing goes through one reverse proxy on **port 8080**
+(`proxy/Caddyfile`). The network in front of this host drops most ports and
+8080 is one that gets through, so the other services are routed through it
+rather than published on ports of their own:
+
 | Service | URL | Notes |
 |---|---|---|
-| Airflow | http://localhost:8080 | DAG triggering and logs |
-| **Dashboard** | **http://localhost:8501** | corpus analytics (read-only) |
-| mongo-express | http://localhost:8081 | raw collection browser |
+| Airflow | http://&lt;host&gt;:8080/ | DAG triggering and logs |
+| **Dashboard** | **http://&lt;host&gt;:8080/dashboard/** | corpus analytics (read-only) |
+| mongo-express | http://&lt;host&gt;:8080/mongo/ | raw collection browser; login is `MONGO_EXPRESS_USER` / `MONGO_EXPRESS_PASSWORD` in `.env` |
 | pgAdmin | http://localhost:5050 | Airflow metadata DB |
 | Flower | http://localhost:5555 | `--profile flower` |
+
+The dashboard (8501) and mongo-express (8081) also listen on `127.0.0.1`
+only, for SSH tunnels and debugging — note the dashboard's prefix still
+applies there: `http://localhost:8501/dashboard/`.
 
 ## The three stages
 
@@ -103,7 +112,7 @@ container.
 
 ## Dashboard
 
-Read-only, its own small image, reachable on `:8501`. Two kinds of panel,
+Read-only, its own small image, served at `/dashboard/` through the proxy. Two kinds of panel,
 deliberately distinguished:
 
 - **current state** — aggregated live from `urls`/`doms`/`entries`/
