@@ -34,8 +34,8 @@ def _merge_discovery(old: dict | None, new: dict) -> dict:
 
     Rules:
       * Confirmed is monotonic: once True it stays True.
-      * last_scraped / page_template_type are owned by the scrape stage —
-        never clobber an existing value with the discovery default (None).
+      * last_scraped is owned by the scrape stage — never clobber an
+        existing value with the discovery default (None).
       * A confirmed lastmod is kept; otherwise the newer value wins.
     """
     if not old:
@@ -46,9 +46,8 @@ def _merge_discovery(old: dict | None, new: dict) -> dict:
 
     merged["Confirmed"] = bool(old.get("Confirmed")) or bool(new.get("Confirmed"))
 
-    for owned in ("last_scraped", "page_template_type"):
-        if old.get(owned) is not None:
-            merged[owned] = old[owned]
+    if old.get("last_scraped") is not None:
+        merged["last_scraped"] = old["last_scraped"]
 
     if not merged["Confirmed"]:
         merged["lastmod"] = None

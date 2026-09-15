@@ -311,8 +311,7 @@ def pending_urls(namespaces: Iterable[str] | None = None,
         if candidate_urls:
             # sha-only projection — selection must NEVER pull the html field:
             # decompressing every candidate DOM just to read its hash is what
-            # OOM-killed the first select_urls run (same failure class as the
-            # dom_cluster matrix buffers: materializing what should stream).
+            # OOM-killed the first select_urls run.
             candidate_shas = dom_store.content_shas(candidate_urls)
 
         return store.select_pending(

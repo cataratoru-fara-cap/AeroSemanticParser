@@ -23,8 +23,7 @@ Collection
     created_at    first write for this (stage, run_id); kept on retries
     updated_at    last write
     summary_json  the summary dict as a JSON string. A string, not a
-                  sub-document, for the same reason cluster_store stores
-                  tokens as JSON pairs: summary keys (namespace paths,
+                  sub-document, because summary keys (namespace paths,
                   error type names) are arbitrary strings, and Mongo
                   field names are not a safe home for arbitrary strings.
 

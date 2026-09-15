@@ -127,9 +127,9 @@ with an icon and a written label, and a data table behind every chart.
 
 ## Post-parse work
 
-`dags/modules/helpers/` (KG build, export, metrics, type semantics) and
-`dom_cluster`/`cluster_store` are **not wired into any DAG**. They are run
-by hand against `entries`. Treat them as staging for a future KG DAG.
+`dags/modules/helpers/` (KG build, export, metrics, type semantics) is
+**not wired into any DAG**. It is run by hand against `entries`. Treat it
+as staging for a future KG DAG.
 
 ## Conventions worth not breaking
 

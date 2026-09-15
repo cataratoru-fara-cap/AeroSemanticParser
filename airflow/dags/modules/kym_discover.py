@@ -263,7 +263,6 @@ def make_record(url: str, lastmod: str | None, existing_record: dict | None,
         "namespace": taxonomy.namespace_of(urlparse(url).path),
         "Confirmed": confirmed,
         "lastmod": lastmod,
-        "page_template_type": None,
         "last_scraped": existing_record.get("last_scraped") if existing_record else None,
     }
 
