@@ -4,13 +4,14 @@ kym_discovery_dag.py — Airflow DAG over the refactored kym_discover library
 State between tasks lives in MongoDB (via kym_store); XCom carries only
 small data: stats dicts and the serialised Taxonomy.
 
-Layout expectation:
+Layout:
     dags/
       kym_discovery_dag.py      <- this file
-      include/
+      modules/
         __init__.py
         kym_discover.py         <- pure discovery library + thin CLI
         kym_store.py            <- JSON + Mongo persistence
+        summary_store.py        <- run_summaries sink (read by the dashboard)
 
 Because the library no longer relies on module globals or in-place index
 mutation, every task simply: loads what it needs from Mongo, calls a pure
@@ -133,16 +134,17 @@ def kym_discovery():
             from pathlib import Path
             store.save_json(Path(snapshot), index)
         return summary
-    
-        # -- Phase 4: persist summary + render plots -----------------------------
+
+    # -- Phase 4: persist the summary for the dashboard ----------------------
     @task(trigger_rule="none_failed")
-    def plot_summary(summary: dict, run_id: str | None = None) -> list[str]:
-        from modules import summary_plots, summary_store
-        summary_store.save_summary(stage="discovery", dag_id="kym_discovery",
-                                   run_id=run_id or "manual", summary=summary)
-        history = summary_store.load_history("scrape")
-        paths = summary_plots.render_all("discovery", summary, history)
-        return [str(p) for p in paths]
+    def record_summary(summary: dict, run_id: str | None = None) -> str:
+        """Give this run's stats a durable, queryable home in
+        `run_summaries` — the collection the dashboard reads. summarize()
+        already logged them; logs rotate, this does not."""
+        from modules import summary_store
+        return summary_store.save_summary(
+            stage="discovery", dag_id="kym_discovery",
+            run_id=run_id or "manual", summary=summary)
 
     sitemap_stats = discover_sitemaps()
     taxonomy = infer_taxonomy()
@@ -157,7 +159,7 @@ def kym_discovery():
     sitemap_stats >> taxonomy
     summary = summarize()
     crawls >> summary
-    plot_summary(summary) >> trigger_scrape
+    record_summary(summary) >> trigger_scrape
 
 
 kym_discovery()

@@ -1,4 +1,12 @@
+# Airflow image dependencies.
+# Rebuild after editing:  docker compose build && docker compose up -d
+#
+# Pins are deliberate: Airflow's own dependency tree is tight, so anything
+# it ships with is pinned exactly and everything else is floored.
+
+# --- Airflow core + providers -----------------------------------------------
 apache-airflow-core==3.2.2
+apache-airflow-task-sdk==1.2.2
 apache-airflow-providers-celery>=3.8.3
 apache-airflow-providers-common-compat==1.15.0
 apache-airflow-providers-common-io==1.7.3
@@ -7,17 +15,23 @@ apache-airflow-providers-mongo>=4.2.2
 apache-airflow-providers-postgres==6.7.1
 apache-airflow-providers-redis>=4.0.0
 apache-airflow-providers-standard==1.14.0
-apache-airflow-task-sdk==1.2.2
-ipywidgets==8.1.2
-pandas==3.0.3
-pydantic >=2.0
-scikit-learn>=1.3
-matplotlib>=3.11.1
-pymongo>=4.0,<5.0
-mongomock>=4.3.0
+
+# --- Pipeline: discovery -> scrape -> parse ---------------------------------
+pymongo>=4.0,<5.0        # every stage store
+requests                 # kym_discover, scrapingant_client
+beautifulsoup4           # kym_discover, kym_parse
+lxml                     # BeautifulSoup's parser backend
+pydantic>=2.0            # kym_models: the entry schema
+
+# --- Post-parse (dom_cluster, kg_*): hand-run, not yet orchestrated ---------
+scikit-learn>=1.3        # dom_cluster: TF-IDF, SVD, KMeans/HDBSCAN
+numpy>=1.26              # was only ever present transitively
+
+# --- Tests ------------------------------------------------------------------
 pytest>=9.1.1
-scrapegraphai>=1.0.0
-playwright
-requests
-beautifulsoup4
-lxml
+mongomock>=4.3.0
+
+# Removed 2026-09-15 — declared here but imported nowhere in the repo:
+#   scrapegraphai (pulled in the whole langchain stack), playwright,
+#   ipywidgets, pandas, matplotlib (the last with summary_plots.py, whose
+#   static PNGs the dashboard replaced).

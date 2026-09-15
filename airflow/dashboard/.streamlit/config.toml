@@ -1,0 +1,22 @@
+# Chrome only. Chart colours live in lib/theme.py, where they can be
+# validated; duplicating them here would give two sources of truth.
+#
+# No [theme] base is pinned on purpose: the viewer picks light or dark in
+# menu → Settings → Appearance, and lib/theme.active_palette() reads that
+# choice so the charts follow. Dark is a palette stepped for the dark
+# surface, not an inversion of the light one.
+
+[server]
+headless = true
+fileWatcherType = "none"
+# enableCORS=false would let any origin open a websocket to this app.
+# Streamlit warns loudly about it and it buys nothing here: the dashboard
+# is reached directly on its published port, not embedded cross-origin.
+enableCORS = true
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"

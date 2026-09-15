@@ -53,27 +53,18 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
+from modules.mongo_base import (
+    UNKNOWN_NAMESPACE,
+    MongoStoreBase,
+    as_utc,
+    clean_namespaces,
+    now_utc,
+    url_doc_id,
+)
+
 log = logging.getLogger("dom_store")
 
 _ZLIB_LEVEL = 6
-
-
-def _url_doc_id(url: str) -> str:
-    """Stable _id from the URL; mirrors mongo_store._url_doc_id. The two
-    collections join on the ``url`` field, so divergence would be
-    cosmetic, but sharing the convention keeps cross-referencing easy."""
-    return hashlib.sha1(url.encode("utf-8")).hexdigest()
-
-
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _as_utc(dt: datetime | None) -> datetime | None:
-    """pymongo hands back naive datetimes (which are UTC) — normalise."""
-    if dt is None:
-        return None
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 def _parse_lastmod(lastmod: str | None) -> datetime | None:
@@ -85,27 +76,6 @@ def _parse_lastmod(lastmod: str | None) -> datetime | None:
     except ValueError:
         return None
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
-UNKNOWN_NAMESPACE = "unknown"
-
-# Junk that trigger forms and CLI quoting leak into a namespaces param.
-_NS_JUNK = " \t\r\n\"'/"
-
-def _clean_namespaces(raw: str | Iterable[str] | None) -> list[str] | None:
-    """Normalise a namespaces filter from any trigger source.
-
-    ``''`` / ``'"'`` / ``None``  -> None            (no filter: every namespace)
-    ``'memes, events'``          -> ['memes', 'events']
-    ``['/memes/']``              -> ['memes']
-
-    Returning None (never []) keeps the "no filter" case unrepresentable as a
-    truthy empty list, which is how a stray quote silently emptied the corpus.
-    """
-    if raw is None:
-        return None
-    tokens = raw.split(",") if isinstance(raw, str) else list(raw)
-    out = [t for t in (str(t).strip(_NS_JUNK) for t in tokens) if t]
-    return out or None
 
 def _encode_html(html: str, compression: str) -> tuple[Any, str]:
     if compression == "zlib":
@@ -128,22 +98,13 @@ def _decode_html(payload: Any, encoding: str | None) -> str:
 # Store
 # ---------------------------------------------------------------------------
 
-class DomStore:
-    """Minimal pymongo store; pymongo imported lazily like mongo_store."""
+class DomStore(MongoStoreBase):
+    """Owner of the ``doms`` collection; reads ``urls`` (discovery's) to
+    decide what to scrape, and writes back only ``last_scraped``."""
 
-    def __init__(self, uri: str | None = None, db_name: str | None = None):
-        try:
-            from pymongo import MongoClient
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "pymongo is not installed — it is in airflow/requirements.txt."
-            ) from exc
-
-        self.client = MongoClient(
-            uri or os.getenv("MONGODB_URI", "mongodb://localhost:27017"))
-        self.db = self.client[db_name or os.getenv("MONGODB_DB", "memes")]
-        self.urls = self.db[os.getenv("MONGODB_URLS_COLLECTION", "urls")]
-        self.doms = self.db[os.getenv("MONGODB_DOMS_COLLECTION", "doms")]
+    def _configure(self) -> None:
+        self.urls = self.collection("MONGODB_URLS_COLLECTION", "urls")
+        self.doms = self.collection("MONGODB_DOMS_COLLECTION", "doms")
         self.compression = os.getenv("DOM_COMPRESSION", "zlib").lower()
 
         self.doms.create_index("url", unique=True)
@@ -168,7 +129,7 @@ class DomStore:
         query: dict[str, Any] = {}
         if confirmed_only:
             query["Confirmed"] = True
-        ns = _clean_namespaces(namespaces)
+        ns = clean_namespaces(namespaces)
 
         if ns:
             query["namespace"] = {"$in": self._resolve_namespaces(ns)}
@@ -183,7 +144,7 @@ class DomStore:
 
         fresh_cutoff = None
         if refetch_older_than_days > 0:
-            fresh_cutoff = _now_utc() - timedelta(days=refetch_older_than_days)
+            fresh_cutoff = now_utc() - timedelta(days=refetch_older_than_days)
 
         never, retry, stale = [], [], []
         for rec in self.urls.find(query, {"_id": 0, "url": 1, "lastmod": 1}):
@@ -200,7 +161,7 @@ class DomStore:
                     retry.append(url)
                 continue
             if self._is_stale(rec.get("lastmod"),
-                              _as_utc(meta.get("fetched_at")), fresh_cutoff):
+                              as_utc(meta.get("fetched_at")), fresh_cutoff):
                 stale.append(url)
 
         pending = never + retry + stale
@@ -268,8 +229,8 @@ class DomStore:
                     error_kind: str | None = None, attempts_used: int = 1,
                     fetched_at: datetime | None = None) -> str:
         """Persist one fetch outcome. Returns 'ok' | 'failed' | 'kept_ok'."""
-        now = fetched_at or _now_utc()
-        doc_id = _url_doc_id(url)
+        now = fetched_at or now_utc()
+        doc_id = url_doc_id(url)
 
         if ok and html:
             payload, encoding = _encode_html(html, self.compression)
@@ -342,9 +303,6 @@ class DomStore:
                 {"scrape_status": "failed", "last_error_kind": "permanent"}),
         }
 
-    def close(self) -> None:
-        self.client.close()
-
 
 def get_store(uri: str | None = None, db_name: str | None = None) -> DomStore:
     return DomStore(uri=uri, db_name=db_name)
@@ -354,76 +312,50 @@ def get_store(uri: str | None = None, db_name: str | None = None) -> DomStore:
 # Facade functions — the only calls the scrape DAG makes (kym_store style)
 # ---------------------------------------------------------------------------
 
-def pending_urls(limit: int = 0, 
+def pending_urls(limit: int = 0,
                  namespaces: str | Iterable[str] | None = None,
                  confirmed_only: bool = True,
                  refetch_older_than_days: int = 0,
                  max_failed_attempts: int = 3) -> list[str]:
-    store = get_store()
-    try:
+    with get_store() as store:
         return store.select_pending(
             limit=limit, namespaces=namespaces, confirmed_only=confirmed_only,
             refetch_older_than_days=refetch_older_than_days,
             max_failed_attempts=max_failed_attempts)
-    finally:
-        store.close()
 
 
 def filter_unscraped(urls: list[str]) -> list[str]:
-    store = get_store()
-    try:
+    with get_store() as store:
         return store.filter_unscraped(urls)
-    finally:
-        store.close()
 
 
 def save_results(results: Iterable[dict[str, Any]]) -> dict[str, int]:
     """Persist an iterable of FetchResult.as_doc() dicts; returns tallies.
     Accepts an iterator so the DAG can stream results straight from
     iter_fetch — each page is durable the moment it lands."""
-    store = get_store()
     tallies = {"ok": 0, "failed": 0, "kept_ok": 0}
-    try:
+    with get_store() as store:
         for doc in results:
             tallies[store.save_result(**doc)] += 1
         return tallies
-    finally:
-        store.close()
 
 
 def load_dom(url: str) -> str | None:
-    store = get_store()
-    try:
+    with get_store() as store:
         return store.load_html(url)
-    finally:
-        store.close()
 
 
 def scrape_stats() -> dict[str, int]:
-    store = get_store()
-    try:
+    with get_store() as store:
         return store.stats()
-    finally:
-        store.close()
 
 def namespace_counts() -> dict[str, int]:
-    store = get_store()
-    try:
+    with get_store() as store:
         return store.namespace_counts()
-    finally:
-        store.close()
 
 # ---------------------------------------------------------------------------
-# writes to `doms` remain owned by the scrape stage. Verified against a
-# mongomock reconstruction of DomStore before shipping.
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# v2 — REPLACES the previously appended load_many/iter_ok_html block in
-# airflow/dags/modules/dom_store.py. Delete load_many if you pasted it (it
-# materializes every page's decompressed HTML at once — the OOM). Append
-# the three functions below instead. Read-only facades; all writes to
-# `doms` remain owned by the scrape stage.
+# Read-only facades for the parse stage. All writes to `doms` stay owned by
+# the scrape stage; these only ever project or stream.
 # ---------------------------------------------------------------------------
 
 def content_shas(urls: Iterable[str]) -> dict[str, str]:
@@ -433,9 +365,8 @@ def content_shas(urls: Iterable[str]) -> dict[str, str]:
     pulling html here decompresses the entire corpus into memory just to
     read a 64-byte hash — exactly what OOM-killed the first select_urls run.
     """
-    store = get_store()
-    try:
-        ids = {_url_doc_id(u): u for u in urls}
+    with get_store() as store:
+        ids = {url_doc_id(u): u for u in urls}
         if not ids:
             return {}
         out: dict[str, str] = {}
@@ -447,8 +378,6 @@ def content_shas(urls: Iterable[str]) -> dict[str, str]:
             if url is not None and doc.get("content_sha256"):
                 out[url] = doc["content_sha256"]
         return out
-    finally:
-        store.close()
 
 
 def iter_html_for(urls: Iterable[str]):
@@ -461,9 +390,8 @@ def iter_html_for(urls: Iterable[str]):
     Generator holds one connection for its lifetime and closes it when
     exhausted or garbage-collected.
     """
-    store = get_store()
-    try:
-        ids = {_url_doc_id(u): u for u in urls}
+    with get_store() as store:
+        ids = {url_doc_id(u): u for u in urls}
         if not ids:
             return
         cursor = store.doms.find(
@@ -476,8 +404,6 @@ def iter_html_for(urls: Iterable[str]):
             yield (url,
                    _decode_html(doc["html"], doc.get("encoding")),
                    doc.get("content_sha256"))
-    finally:
-        store.close()
 
 
 def iter_ok_html(limit: int = 0, namespaces: Iterable[str] | None = None,
@@ -485,14 +411,14 @@ def iter_ok_html(limit: int = 0, namespaces: Iterable[str] | None = None,
     """Yield (url, decompressed_html) for stored OK DOMs, joined against
     the discovery `urls` collection so callers can restrict to confirmed
     entries in given namespaces (e.g. ["memes"]). Used by
-    `kym_parse.py --sample` for one-off coverage sampling — for the DAG's
-    bulk parse task, prefer load_many() (batched, not one query per URL).
+    `kym_parse.py --sample` for one-off coverage sampling. It issues one
+    query per URL, so it is deliberately NOT what the parse DAG uses —
+    that path goes through iter_html_for(), a single cursor.
 
     Generator holds one connection for its lifetime and closes it when
     exhausted or garbage-collected.
     """
-    store = get_store()
-    try:
+    with get_store() as store:
         query: dict = {}
         if confirmed_only:
             query["Confirmed"] = True
@@ -510,5 +436,3 @@ def iter_ok_html(limit: int = 0, namespaces: Iterable[str] | None = None,
             yielded += 1
             if limit and yielded >= limit:
                 return
-    finally:
-        store.close()

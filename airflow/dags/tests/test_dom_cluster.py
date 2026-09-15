@@ -1,23 +1,13 @@
 """
 Unit tests for modules/dom_cluster.py — pure logic only, no Mongo.
 
-Run from the repo:  cd airflow && python -m pytest tests/test_dom_cluster.py
-(or from airflow/dags: python -m pytest ../tests/test_dom_cluster.py)
+Run from airflow/:  python -m pytest dags/tests/test_dom_cluster.py
+(sys.path comes from tests/conftest.py)
 """
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-
-# Make `modules` importable whether tests/ sits next to dags/ or inside it.
-_here = Path(__file__).resolve()
-for _cand in (_here.parents[1] / "dags", _here.parents[1]):
-    if (_cand / "modules").is_dir():
-        sys.path.insert(0, str(_cand))
-        break
 
 lxml = pytest.importorskip("lxml")
 

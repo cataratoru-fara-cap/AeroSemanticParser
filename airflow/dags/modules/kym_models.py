@@ -59,6 +59,14 @@ _TYPE_SLUG_RE = re.compile(r"/types/([a-z0-9-]+)")
 # Heuristic: a "heading" longer than this, or containing a trends embed call,
 # is DOM garbage the old scraper mistook for a section title.
 _MAX_HEADING_LEN = 120
+
+# Sanity bounds for `year`. Wide enough for a genuinely ancient origin
+# (the corpus has 8 pre-1500 entries, earliest 1000) and for next year's
+# pages, narrow enough that a parse landing on 0 or 3000 is caught rather
+# than silently stored. Static, not clock-derived: an entry that validated
+# once should not stop validating because time passed.
+MIN_YEAR = 1
+MAX_YEAR = 2100
 _EMBED_NOISE_RE = re.compile(r"renderexplorewidget|trends\.embed", re.IGNORECASE)
 
 
@@ -161,13 +169,15 @@ class KYMEntryScrape(BaseModel):
     # --- details sidebar ---
     entry_type: list[str] = Field(default_factory=list)
     year: int | None = Field(
-        default=None, ge=None, le=None,
-        description="Loosened from an earlier ge=1500: non-meme categories "
+        default=None, ge=MIN_YEAR, le=MAX_YEAR,
+        description="Widened from an earlier ge=1500: non-meme categories "
                     "(culture/event/person) can have a genuinely pre-1500 "
                     "origin year (e.g. a painting, a historical event used "
                     "as the meme's origin point), and that constraint was "
                     "rejecting the whole page — not just the field — since "
-                    "Field bounds apply to any non-None value.")
+                    "Field bounds apply to any non-None value. Widened, not "
+                    "removed: ge=None/le=None left no guard at all, so "
+                    "year=0 and year=3000 both validated.")
     origin: str = Field(..., min_length=1)  # required: 100% on confirmed memes
     region: list[str] = Field(default_factory=list)
     aliases: list[str] = Field(default_factory=list)

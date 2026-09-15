@@ -1,0 +1,33 @@
+# Minimal airflow.cfg template.
+#
+# The tracked file used to be the full 110KB `airflow config list` dump.
+# That was worse than useless: docker-compose sets AIRFLOW__* environment
+# variables, and env vars win over the file, so nearly every line in it was
+# dead — while three lines were actively misleading (auth_manager =
+# SimpleAuthManager, simple_auth_manager_users = admin:admin, load_examples
+# = True, none of which were in effect) and one was a committed secret (a
+# real fernet_key).
+#
+# Rule of thumb: if docker-compose.yml sets it, do NOT set it here. Only
+# put a setting in this file if it has no AIRFLOW__* equivalent you are
+# already using, or if you want a default the compose file can override.
+#
+# Usage:
+#   cp config/airflow.cfg.example config/airflow.cfg
+# config/airflow.cfg is gitignored — it is machine-local.
+
+[core]
+dags_folder = /opt/airflow/dags
+plugins_folder = /opt/airflow/plugins
+default_timezone = utc
+
+# Leave empty and let AIRFLOW__CORE__FERNET_KEY supply it, or generate one:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Never commit a real value.
+fernet_key =
+
+[logging]
+base_log_folder = /opt/airflow/logs
+
+[dag_processor]
+dag_dir_list_interval = 30

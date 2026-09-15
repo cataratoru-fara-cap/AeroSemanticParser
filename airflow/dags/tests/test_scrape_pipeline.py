@@ -1,14 +1,11 @@
-"""Smoke tests for scrapingant_client + dom_store (no network, no Mongo)."""
-import os
-import sys
+"""Smoke tests for scrapingant_client + dom_store (no network, no Mongo).
+
+sys.path and the DOM_COMPRESSION default come from tests/conftest.py.
+"""
 import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
-
-sys.path.insert(0, "/home/claude/AeroSemanticParser/airflow/dags")
-
-os.environ["DOM_COMPRESSION"] = "zlib"
 
 import mongomock
 

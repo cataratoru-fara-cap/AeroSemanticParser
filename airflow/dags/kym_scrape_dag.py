@@ -138,27 +138,28 @@ def kym_scrape():
         log.info("SCRAPE RUN COMPLETE — run=%s corpus=%s", run_totals, corpus)
         return {"run": run_totals, "corpus": corpus}
 
-    # -- Phase 4: persist summary + render plots -----------------------------
+    # -- Phase 4: persist the summary for the dashboard ----------------------
     @task(trigger_rule="none_failed")
-    def plot_summary(summary: dict, run_id: str | None = None) -> list[str]:
-        from modules import summary_plots, summary_store
-        summary_store.save_summary(stage="scrape", dag_id="kym_scrape",
-                                   run_id=run_id or "manual", summary=summary)
-        history = summary_store.load_history("scrape")
-        paths = summary_plots.render_all("scrape", summary, history)
-        return [str(p) for p in paths]
-    
+    def record_summary(summary: dict, run_id: str | None = None) -> str:
+        """Give this run's stats a durable, queryable home in
+        `run_summaries` — the collection the dashboard reads. summarize()
+        already logged them; logs rotate, this does not."""
+        from modules import summary_store
+        return summary_store.save_summary(
+            stage="scrape", dag_id="kym_scrape",
+            run_id=run_id or "manual", summary=summary)
+
+    trigger_parse = TriggerDagRunOperator(
+        task_id="trigger_kym_parse",
+        trigger_dag_id="kym_parse",
+        wait_for_completion=False,
+    )
+
     urls = select_urls()
     chunks = chunk_urls(urls)
     stats = scrape_chunk.expand(chunk=chunks)
-    summarry = summarize(stats)
-    trigger_parse = TriggerDagRunOperator(
-    task_id="trigger_kym_parse",
-    trigger_dag_id="kym_parse",
-    wait_for_completion=False,
-)
-
-    plot_summary(summarry) >> trigger_parse
+    summary = summarize(stats)
+    record_summary(summary) >> trigger_parse
 
 
 kym_scrape()

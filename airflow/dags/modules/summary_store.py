@@ -4,9 +4,9 @@ summary_store.py — MongoDB persistence for per-run DAG summaries
 Self-contained like dom_store.py, and the ONLY place any stage touches
 the ``run_summaries`` collection. Every summarize task already computes
 a small stats dict; this module gives that dict a durable home so the
-plot layer (summary_plots.py) can draw *trends across runs* instead of
-being limited to a single-run snapshot. XCom keeps carrying the same
-small dict — this is an additional sink, not a replacement.
+dashboard can draw *trends across runs* instead of being limited to a
+single-run snapshot. XCom keeps carrying the same small dict — this is
+an additional sink, not a replacement.
 
 Ownership note: three DAGs write here, but only through this module and
 each under its own ``stage`` value — the "one owner module per
@@ -39,41 +39,19 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-from datetime import datetime, timezone
 from typing import Any
+
+from modules.mongo_base import MongoStoreBase, as_utc, now_utc
 
 log = logging.getLogger("summary_store")
 
 
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+class SummaryStore(MongoStoreBase):
+    """Owner of the ``run_summaries`` collection."""
 
-
-def _as_utc(dt: datetime | None) -> datetime | None:
-    """pymongo hands back naive datetimes (which are UTC) — normalise."""
-    if dt is None:
-        return None
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-
-
-class SummaryStore:
-    """Minimal pymongo store; pymongo imported lazily like the others."""
-
-    def __init__(self, uri: str | None = None, db_name: str | None = None):
-        try:
-            from pymongo import MongoClient
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "pymongo is not installed — it is in airflow/requirements.txt."
-            ) from exc
-
-        self.client = MongoClient(
-            uri or os.getenv("MONGODB_URI", "mongodb://localhost:27017"))
-        self.db = self.client[db_name or os.getenv("MONGODB_DB", "memes")]
-        self.summaries = self.db[os.getenv(
-            "MONGODB_RUN_SUMMARIES_COLLECTION", "run_summaries")]
-
+    def _configure(self) -> None:
+        self.summaries = self.collection(
+            "MONGODB_RUN_SUMMARIES_COLLECTION", "run_summaries")
         self.summaries.create_index([("stage", 1), ("created_at", 1)])
 
     # -- writes -------------------------------------------------------------
@@ -82,7 +60,7 @@ class SummaryStore:
              summary: dict[str, Any]) -> str:
         """Upsert one summary document; returns its _id."""
         doc_id = f"{stage}:{run_id}"
-        now = _now_utc()
+        now = now_utc()
         self.summaries.update_one(
             {"_id": doc_id},
             {"$set": {
@@ -102,23 +80,25 @@ class SummaryStore:
         """
         The last ``limit`` summaries for a stage, oldest -> newest:
         [{"run_id", "created_at", "summary"}, ...]. Chronological order is
-        what the trend plots consume directly.
+        what the dashboard's trend charts consume directly.
+
+        ``_id`` is the tiebreaker because two runs can land in the same
+        millisecond (a backfill, or a retried summarize task): sorting on
+        created_at alone left their relative order up to Mongo, so the
+        same history could come back in a different order twice.
         """
         cur = (self.summaries
                .find({"stage": stage},
                      {"_id": 0, "run_id": 1, "created_at": 1,
                       "summary_json": 1})
-               .sort("created_at", -1)
+               .sort([("created_at", -1), ("_id", -1)])
                .limit(limit))
         rows = [{"run_id": d.get("run_id"),
-                 "created_at": _as_utc(d.get("created_at")),
+                 "created_at": as_utc(d.get("created_at")),
                  "summary": json.loads(d.get("summary_json") or "{}")}
                 for d in cur]
         rows.reverse()
         return rows
-
-    def close(self) -> None:
-        self.client.close()
 
 
 def get_store(uri: str | None = None,
@@ -132,21 +112,15 @@ def get_store(uri: str | None = None,
 
 def save_summary(stage: str, dag_id: str, run_id: str,
                  summary: dict[str, Any]) -> str:
-    store = get_store()
-    try:
+    with get_store() as store:
         doc_id = store.save(stage, dag_id, run_id, summary)
         log.info("Saved run summary %s", doc_id)
         return doc_id
-    finally:
-        store.close()
 
 
 def load_history(stage: str, limit: int = 300) -> list[dict[str, Any]]:
-    store = get_store()
-    try:
+    with get_store() as store:
         rows = store.history(stage, limit=limit)
         log.info("Loaded %d historical summaries for stage=%s",
                  len(rows), stage)
         return rows
-    finally:
-        store.close()

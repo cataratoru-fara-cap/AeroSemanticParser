@@ -68,56 +68,38 @@ variable names as dom_store/mongo_store:
 
 from __future__ import annotations
 
-import hashlib
 import logging
-import os
-from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from modules.kym_models import CorpusPolicy, KYMEntryScrape, corpus_ready
+from modules.mongo_base import (
+    MongoStoreBase,
+    clean_namespaces,
+    now_utc,
+    url_doc_id,
+)
 
 log = logging.getLogger("parse_store")
 
-
-def _url_doc_id(url: str) -> str:
-    """Stable _id from the URL; mirrors dom_store._url_doc_id / mongo_store's
-    convention so the three collections join cleanly on _id or url."""
-    return hashlib.sha1(url.encode("utf-8")).hexdigest()
-
-
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def clean_namespaces(raw):
-    """Reuse dom_store's helper rather than re-implement it — same '' | '"'
-    | 'a,b' | ['a'] -> None | ['a','b'] contract."""
-    from modules.dom_store import _clean_namespaces as _clean
-    return _clean(raw)
+__all__ = [
+    "ParseStore", "get_store", "clean_namespaces", "pending_urls",
+    "iter_html", "save_parsed", "namespaces_for", "save_failures",
+    "parse_stats",
+]
 
 
 # ---------------------------------------------------------------------------
 # Store
 # ---------------------------------------------------------------------------
 
-class ParseStore:
-    """Minimal pymongo store; pymongo imported lazily like dom_store."""
+class ParseStore(MongoStoreBase):
+    """Owner of ``entries`` and ``parse_failures``; reads ``urls``."""
 
-    def __init__(self, uri: str | None = None, db_name: str | None = None):
-        try:
-            from pymongo import MongoClient
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "pymongo is not installed — it is in airflow/requirements.txt."
-            ) from exc
-
-        self.client = MongoClient(
-            uri or os.getenv("MONGODB_URI", "mongodb://localhost:27017"))
-        self.db = self.client[db_name or os.getenv("MONGODB_DB", "memes")]
-        self.urls = self.db[os.getenv("MONGODB_URLS_COLLECTION", "urls")]
-        self.entries = self.db[os.getenv("MONGODB_ENTRIES_COLLECTION", "entries")]
-        self.failures = self.db[
-            os.getenv("MONGODB_PARSE_FAILURES_COLLECTION", "parse_failures")]
+    def _configure(self) -> None:
+        self.urls = self.collection("MONGODB_URLS_COLLECTION", "urls")
+        self.entries = self.collection("MONGODB_ENTRIES_COLLECTION", "entries")
+        self.failures = self.collection(
+            "MONGODB_PARSE_FAILURES_COLLECTION", "parse_failures")
 
         self.entries.create_index("url", unique=True)
         self.entries.create_index("corpus_status")
@@ -201,13 +183,13 @@ class ParseStore:
         page, mirroring FetchResult.as_doc() -> save_result(**doc)."""
         ready, missing = corpus_ready(entry, policy)
         doc = entry.model_dump(mode="json", exclude_none=True)
-        doc["_id"] = _url_doc_id(str(entry.url))
+        doc["_id"] = url_doc_id(str(entry.url))
         doc["corpus_status"] = "ready" if ready else "incomplete"
         doc["corpus_missing"] = missing
         doc["corpus_policy_version"] = policy_version
         doc["parser_version"] = parser_version
         doc["dom_content_sha256"] = dom_content_sha256
-        doc["parsed_at"] = _now_utc()
+        doc["parsed_at"] = now_utc()
         return doc
 
     def upsert_entries(self, docs: Iterable[dict]) -> dict[str, int]:
@@ -249,12 +231,12 @@ class ParseStore:
           * Self-cleaning — upsert_entries deletes the record when the url
             later parses successfully.
         """
-        now = _now_utc()
+        now = now_utc()
         n = 0
         for f in failures:
             url = f["url"]
             self.failures.update_one(
-                {"_id": _url_doc_id(url)},
+                {"_id": url_doc_id(url)},
                 {"$set": {
                     "url": url,
                     "namespace": f.get("namespace"),
@@ -297,9 +279,6 @@ class ParseStore:
             "missing_field_counts": by_missing,
         }
 
-    def close(self) -> None:
-        self.client.close()
-
 
 def get_store(uri: str | None = None, db_name: str | None = None) -> ParseStore:
     return ParseStore(uri=uri, db_name=db_name)
@@ -320,8 +299,7 @@ def pending_urls(namespaces: Iterable[str] | None = None,
 
     ns = clean_namespaces(namespaces)
     candidate_shas: dict[str, str] = {}
-    store = get_store()
-    try:
+    with get_store() as store:
         query: dict = {}
         if confirmed_only:
             query["Confirmed"] = True
@@ -340,14 +318,15 @@ def pending_urls(namespaces: Iterable[str] | None = None,
         return store.select_pending(
             candidate_shas, current_parser_version, current_policy_version,
             force_reparse=force_reparse, limit=limit)
-    finally:
-        store.close()
 
 
 def iter_html(urls: list[str]):
-    """Stream (url, html, dom_content_sha256) one page at a time — thin
-    re-export of dom_store.iter_html_for so DAG tasks only import
-    parse_store for this stage's reads. STREAMING is load-bearing here:
+    """Stream (url, html, dom_content_sha256) one page at a time.
+
+    A deliberate re-export of dom_store.iter_html_for: `doms` is the scrape
+    stage's collection, so the parse DAG reaches it through this module
+    rather than importing dom_store itself — one store import per stage.
+    STREAMING is load-bearing here:
     a KYM page is multi-MB decompressed and ~10x that inside BeautifulSoup,
     so materializing a whole chunk of pages at once OOMs the worker. Peak
     memory with this generator is one page + one soup, regardless of
@@ -362,14 +341,11 @@ def save_parsed(entries_with_meta: Iterable[tuple[KYMEntryScrape, str]],
     """``entries_with_meta`` is (KYMEntryScrape, dom_content_sha256) pairs.
     Builds + upserts in one pass so the DAG task body stays a loop + one
     call, mirroring dom_store.save_results()."""
-    store = get_store()
-    try:
+    with get_store() as store:
         docs = (store.build_entry_doc(entry, sha, policy, parser_version,
                                       policy_version)
                 for entry, sha in entries_with_meta)
         return store.upsert_entries(docs)
-    finally:
-        store.close()
 
 
 def namespaces_for(urls: Iterable[str]) -> dict[str, str]:
@@ -377,11 +353,8 @@ def namespaces_for(urls: Iterable[str]) -> dict[str, str]:
     url_list = list(urls)
     if not url_list:
         return {}
-    store = get_store()
-    try:
+    with get_store() as store:
         return store.namespaces_for(url_list)
-    finally:
-        store.close()
 
 
 def save_failures(failures: list[dict], parser_version: str,
@@ -390,16 +363,10 @@ def save_failures(failures: list[dict], parser_version: str,
     ``failures``: [{url, dom_content_sha256, error, error_type}, ...]"""
     if not failures:
         return 0
-    store = get_store()
-    try:
+    with get_store() as store:
         return store.save_failures(failures, parser_version, policy_version)
-    finally:
-        store.close()
 
 
 def parse_stats() -> dict[str, Any]:
-    store = get_store()
-    try:
+    with get_store() as store:
         return store.stats()
-    finally:
-        store.close()

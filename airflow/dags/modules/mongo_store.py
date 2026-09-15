@@ -2,7 +2,8 @@
 mongo_store.py — self-contained MongoDB store for the KYM pipeline
 ===================================================================
 Lives inside airflow/dags/modules/ so it is importable in the container with
-no PYTHONPATH tricks and no submodule. Replaces the abandoned src.db.mongo.
+no PYTHONPATH tricks and no submodule. Connection plumbing (client, db,
+_id convention) comes from mongo_base.MongoStoreBase.
 
 Provides exactly what kym_store.py needs:
     get_store()            -> MongoStore
@@ -22,14 +23,9 @@ Connection settings come from the environment (set in docker-compose):
 
 from __future__ import annotations
 
-import hashlib
-import os
 from typing import Any, Iterable
 
-
-def _url_doc_id(url: str) -> str:
-    """Stable _id from the URL so re-discovering the same URL upserts, not dupes."""
-    return hashlib.sha1(url.encode("utf-8")).hexdigest()
+from modules.mongo_base import MongoStoreBase, url_doc_id
 
 
 def _merge_discovery(old: dict | None, new: dict) -> dict:
@@ -59,22 +55,14 @@ def _merge_discovery(old: dict | None, new: dict) -> dict:
     return merged
 
 
-class MongoStore:
-    """Minimal pymongo store. pymongo imported lazily so import never fails."""
+class MongoStore(MongoStoreBase):
+    """Owner of the ``urls`` collection — the discovery stage's sink."""
 
-    def __init__(self, uri: str | None = None, db_name: str | None = None):
-        try:
-            from pymongo import MongoClient, UpdateOne
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "pymongo is not installed — add it to the Airflow image "
-                "(it is already in airflow/requirements.txt)."
-            ) from exc
+    def _configure(self) -> None:
+        from pymongo import UpdateOne
 
         self._UpdateOne = UpdateOne
-        self.client = MongoClient(uri or os.getenv("MONGODB_URI", "mongodb://localhost:27017"))
-        self.db = self.client[db_name or os.getenv("MONGODB_DB", "memes")]
-        self.urls = self.db[os.getenv("MONGODB_URLS_COLLECTION", "urls")]
+        self.urls = self.collection("MONGODB_URLS_COLLECTION", "urls")
         self.urls.create_index("url", unique=True)
         self.urls.create_index("namespace")
         self.urls.create_index("Confirmed")
@@ -85,7 +73,7 @@ class MongoStore:
         for rec in records:
             url = rec.get("url")
             if url:
-                new_by_id[_url_doc_id(url)] = rec
+                new_by_id[url_doc_id(url)] = rec
 
         if not new_by_id:
             return {"added": 0, "updated": 0}
@@ -108,9 +96,6 @@ class MongoStore:
 
     def count_urls(self) -> int:
         return self.urls.count_documents({})
-
-    def close(self) -> None:
-        self.client.close()
 
 
 def get_store(uri: str | None = None, db_name: str | None = None) -> MongoStore:

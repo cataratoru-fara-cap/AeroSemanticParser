@@ -1,6 +1,15 @@
-.venv
+# --- Python / tooling ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# --- Secrets & machine-local config ---
 .env*
-logs
-data
+!.env.example
+config/airflow.cfg
+
+# --- Runtime artefacts ---
+logs/
+data/
 lib64
-__pycache__

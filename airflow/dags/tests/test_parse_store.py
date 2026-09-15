@@ -10,8 +10,6 @@ Run inside the Airflow container:
 import os
 import unittest
 
-os.environ.setdefault("MONGODB_DB", "memes")
-
 import mongomock
 
 from modules import parse_store as ps

@@ -391,6 +391,33 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+  # Read-only analytics UI over the pipeline's own collections. Separate
+  # image from Airflow on purpose: different lifecycle, much smaller
+  # dependency set, and it must never be able to write or create indexes.
+  dashboard:
+    build: ./dashboard
+    container_name: kym_dashboard
+    environment:
+      MONGODB_URI: mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@mongo:27017/?authSource=admin
+      MONGODB_DB: ${MONGO_INITDB_DATABASE:-memes}
+      # Same collection-name variables the stores use, so names stay
+      # single-sourced here rather than duplicated in the dashboard code.
+      MONGODB_URLS_COLLECTION: urls
+      MONGODB_DOMS_COLLECTION: doms
+      MONGODB_ENTRIES_COLLECTION: entries
+      MONGODB_PARSE_FAILURES_COLLECTION: parse_failures
+      MONGODB_RUN_SUMMARIES_COLLECTION: run_summaries
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    restart: always
+    mem_limit: 512m
+    mem_reservation: 256m
+    networks:
+      - Practice
+    depends_on:
+      mongo:
+        condition: service_healthy
+
   pgadmin:
     container_name: pgadmin_airflow
     image: elestio/pgadmin

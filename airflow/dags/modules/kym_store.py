@@ -4,7 +4,7 @@ kym_store.py — persistence for the KYM discovery index
 All storage lives here; kym_discover only discovers. Two backends:
 
   * JSON file  — the standalone-script sink ({ "metadata": ..., "urls": [...] })
-  * MongoDB    — the pipeline sink, delegating to src.db.mongo.get_store()
+  * MongoDB    — the pipeline sink, delegating to mongo_store.get_store()
                  (upsert preserves last_scraped and never downgrades Confirmed)
 
 The three mongo_* functions are the ONLY place the Airflow DAG touches the
@@ -69,9 +69,10 @@ def _iter_mongo_records(store, projection: dict):
     """
     Yield raw url records from the store.
 
-    NOTE: adjust this ONE function if your src.db.mongo store exposes its own
-    read API (e.g. store.iter_urls()). The {"_id": 0} projection keeps
-    records JSON-clean so they can go straight into save_json / XCom.
+    The single read path into `urls`: adjust this ONE function if MongoStore
+    grows its own read API (e.g. store.iter_urls()). The {"_id": 0}
+    projection keeps records JSON-clean so they can go straight into
+    save_json / XCom.
     """
     return store.urls.find({}, projection)
 
@@ -79,37 +80,28 @@ def _iter_mongo_records(store, projection: dict):
 def mongo_load_index() -> dict[str, dict]:
     """Load the full {url: record} index from MongoDB."""
     from modules.mongo_store import get_store
-    store = get_store()
-    try:
+    with get_store() as store:
         index = {r["url"]: r for r in _iter_mongo_records(store, {"_id": 0})
                  if "url" in r}
         log.info("Loaded %d records from MongoDB", len(index))
         return index
-    finally:
-        store.close()
 
 
 def mongo_known_urls() -> set[str]:
     """Load just the URL set — enough for dedup / taxonomy inference."""
     from modules.mongo_store import get_store
-    store = get_store()
-    try:
+    with get_store() as store:
         urls = {r["url"] for r in
                 _iter_mongo_records(store, {"_id": 0, "url": 1}) if "url" in r}
         log.info("Loaded %d known URLs from MongoDB", len(urls))
         return urls
-    finally:
-        store.close()
 
 
 def mongo_upsert(records: Iterable[dict]) -> dict:
     """Upsert records, preserving last_scraped / monotonic Confirmed."""
     from modules.mongo_store import get_store
-    store = get_store()
-    try:
+    with get_store() as store:
         stats = store.upsert_urls(records)
         log.info("MongoDB upsert — added=%d updated=%d (total in db=%d)",
                  stats["added"], stats["updated"], store.count_urls())
         return stats
-    finally:
-        store.close()

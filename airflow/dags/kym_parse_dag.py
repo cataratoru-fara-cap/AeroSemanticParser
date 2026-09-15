@@ -178,21 +178,22 @@ def kym_parse_dag():
         log.info("PARSE RUN COMPLETE — run=%s corpus=%s", run_totals, corpus)
         return {"run": run_totals, "corpus": corpus}
     
-    # -- Phase 4: persist summary + render plots -----------------------------
+    # -- Phase 4: persist the summary for the dashboard ----------------------
     @task(trigger_rule="none_failed")
-    def plot_summary(summary: dict, run_id: str | None = None) -> list[str]:
-        from modules import summary_plots, summary_store
-        summary_store.save_summary(stage="parse", dag_id="kym_parse",
-                                   run_id=run_id or "manual", summary=summary)
-        history = summary_store.load_history("scrape")
-        paths = summary_plots.render_all("parse", summary, history)
-        return [str(p) for p in paths]
+    def record_summary(summary: dict, run_id: str | None = None) -> str:
+        """Give this run's stats a durable, queryable home in
+        `run_summaries` — the collection the dashboard reads. summarize()
+        already logged them; logs rotate, this does not."""
+        from modules import summary_store
+        return summary_store.save_summary(
+            stage="parse", dag_id="kym_parse",
+            run_id=run_id or "manual", summary=summary)
 
     urls = select_urls()
     chunks = chunk_urls(urls)
     stats = parse_chunk.expand(chunk=chunks)
-    summarry = summarize(stats)
-    plot_summary(summarry)
+    summary = summarize(stats)
+    record_summary(summary)
 
 
 kym_parse_dag()
