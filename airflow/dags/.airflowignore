@@ -1,0 +1,13 @@
+# Paths the DAG processor should not scan as potential DAG files.
+#
+# Without this, Airflow parses every .py file under dags/ on every refresh
+# and writes a daily log per file. Only the three kym_*_dag.py files define
+# DAGs; everything below is imported by them, not scanned for DAGs.
+# Ignoring a directory here does NOT stop the DAGs from importing from it —
+# `from modules import ...` goes through sys.path, not the scanner.
+
+# Libraries and stores imported by the DAGs
+modules/
+
+# pytest suite — never contains DAGs
+tests/

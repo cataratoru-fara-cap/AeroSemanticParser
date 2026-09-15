@@ -34,11 +34,11 @@ rather than published on ports of their own:
 | Airflow | http://&lt;host&gt;:8080/ | DAG triggering and logs |
 | **Dashboard** | **http://&lt;host&gt;:8080/dashboard/** | corpus analytics (read-only) |
 | mongo-express | http://&lt;host&gt;:8080/mongo/ | raw collection browser; login is `MONGO_EXPRESS_USER` / `MONGO_EXPRESS_PASSWORD` in `.env` |
-| pgAdmin | http://localhost:5050 | Airflow metadata DB |
+| pgAdmin | http://&lt;host&gt;:8080/pgadmin/ | Airflow metadata DB; login is `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD` in `.env` |
 | Flower | http://localhost:5555 | `--profile flower` |
 
-The dashboard (8501) and mongo-express (8081) also listen on `127.0.0.1`
-only, for SSH tunnels and debugging — note the dashboard's prefix still
+The dashboard (8501), mongo-express (8081) and pgAdmin (5050) also listen
+on `127.0.0.1` only, for SSH tunnels and debugging — note the dashboard's prefix still
 applies there: `http://localhost:8501/dashboard/`.
 
 ## The three stages

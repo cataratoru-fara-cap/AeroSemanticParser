@@ -9,11 +9,11 @@
 #   http://<host>:8080/            -> Airflow
 #   http://<host>:8080/dashboard/  -> Streamlit dashboard
 #   http://<host>:8080/mongo/      -> mongo-express (basic auth)
+#   http://<host>:8080/pgadmin/    -> pgAdmin (its own login)
 #
-# No path is stripped: Streamlit (server.baseUrlPath) and mongo-express
-# (ME_CONFIG_SITE_BASEURL) are each configured to expect their own prefix,
-# so the links and websocket URLs they generate already include it.
-
+# No path is stripped: Streamlit (server.baseUrlPath), mongo-express
+# (ME_CONFIG_SITE_BASEURL) and pgAdmin (SCRIPT_NAME) are each configured to
+# expect their own prefix, so the links they generate already include it.
 {
 	admin off
 	auto_https off
@@ -28,6 +28,11 @@
 	redir /mongo /mongo/ 308
 	handle /mongo/* {
 		reverse_proxy mongo-express:8081
+	}
+
+	redir /pgadmin /pgadmin/ 308
+	handle /pgadmin/* {
+		reverse_proxy pgadmin:80
 	}
 
 	# Everything else is Airflow, which keeps the root so existing
