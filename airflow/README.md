@@ -90,7 +90,10 @@ dags/
     scrapingant_client.py pure fetch library + CLI       (no Mongo, no Airflow)
     kym_parse.py         pure HTML → model + CLI         (no Mongo, no Airflow)
     kym_models.py        the entry schema and CorpusPolicy
-    helpers/             post-parse KG work — hand-run, NOT orchestrated
+    kg/                  pure KG libraries — build, census, metrics,
+                         semantics  (no Mongo, no Airflow)
+  kg_config/             curated KG inputs, tracked: the entry-type taxonomy,
+                         the YARRRML mapping, the morph-kgc ini template
   tests/                 pytest; conftest.py puts dags/ on sys.path
 dashboard/               Streamlit app, its own image
 ```
@@ -103,7 +106,7 @@ so a schema change has one place to edit.
 ## Tests
 
 ```bash
-python -m pytest            # from airflow/ — 90 tests, no network, no real Mongo
+python -m pytest            # from airflow/ — 74 tests, no network, no real Mongo
 ```
 
 Mongo is faked with `mongomock`; HTTP is faked with stub sessions. `pytest.ini`
@@ -127,9 +130,21 @@ with an icon and a written label, and a data table behind every chart.
 
 ## Post-parse work
 
-`dags/modules/helpers/` (KG build, export, metrics, type semantics) is
-**not wired into any DAG**. It is run by hand against `entries`. Treat it
-as staging for a future KG DAG.
+`dags/modules/kg/` (build, census, metrics, semantics) holds the pure KG
+libraries. It was called `helpers/`, which named *how* it ran rather than
+what it did. The modules are **still hand-run against `entries`** — the
+`kym_kg` DAG that orchestrates them is in progress — but they now obey the
+same layering rule as the rest of the tree, so a library here imports
+neither Mongo nor Airflow.
+
+Four modules are explicitly transitional and named so you can tell:
+`census_tags.py` folds into `census.py`, `export_pg.py` and `export_rml.py`
+fold into a single `serialize.py`, and `_legacy_store.py` is replaced by a
+conventional `modules/kg_store.py`.
+
+Curated inputs live in `dags/kg_config/` and are tracked in git. They used
+to sit in `data/`, which is gitignored — which is how a reviewed 104-line
+taxonomy ended up retyped by hand into a Python constant.
 
 ## Conventions worth not breaking
 

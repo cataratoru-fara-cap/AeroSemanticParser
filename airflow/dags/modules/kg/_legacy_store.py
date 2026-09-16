@@ -1,5 +1,5 @@
 """
-kg_store.py — MongoDB I/O for the KG build stage (owns kg_nodes/kg_edges)
+kg/_legacy_store.py — MongoDB I/O for the KG build stage (owns kg_nodes/kg_edges)
 ============================================================================
 Reads:  `entries`              (owned by the parse stage, read-only here)
 Writes: `kg_nodes`, `kg_edges` (owned by this module)
@@ -13,7 +13,7 @@ rerun if the shape needs to change; nothing here is hand-edited state.
 
 Run inside the Airflow container:
     docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
-        python -m modules.kg_store --limit 0 --sample-neighborhood https://knowyourmeme.com/memes/doge
+        python -m modules.kg._legacy_store --limit 0 --sample-neighborhood https://knowyourmeme.com/memes/doge
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def upsert_nodes_and_edges(nodes: Iterable[dict], edges: Iterable[dict]) -> dict
 
 
 def main():
-    from modules.helpers import kg_build
+    from modules.kg import build as kg_build
 
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--limit", type=int, default=0, help="Only process this many entries (0 = all)")

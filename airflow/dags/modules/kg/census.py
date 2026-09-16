@@ -1,18 +1,48 @@
 """
-kg_census.py — entry_type frequency + co-occurrence census for the KG taxonomy build
-=======================================================================================
-Read-only, no Airflow imports. Streams `entries.entry_type` from MongoDB and
-emits the raw counts needed to hand-derive an entry-type hierarchy: per-type
-frequency, the per-entry type-count distribution, and pairwise co-occurrence
-counts. Does NOT compute containment/PMI itself — those derivations happen
-from this output, by hand, so every threshold choice stays visible and
-reviewable instead of hidden in a script default.
+kg/census.py — frequency + co-occurrence census over one corpus field
+========================================================================
+Pure: no Mongo, no Airflow. Takes an iterable of `entries` docs and emits
+the raw counts needed to derive a hierarchy over a multi-valued field —
+per-value frequency, the per-entry value-count distribution, and pairwise
+co-occurrence. Deliberately does NOT compute containment/PMI: those
+derivations happen from this output so every threshold choice stays
+visible and reviewable instead of hidden in a script default.
+
+One implementation, two fields
+------------------------------
+This replaces two near-identical modules (``kg_census.py`` for
+``entry_type`` and ``kg_census_tags.py`` for ``tags``) that emitted
+*structurally parallel JSON under different key names*:
+
+    entry_type              tags
+    ----------------------  ---------------------
+    type_counts             top_tag_counts
+    entries_with_entry_type entries_with_tags
+    distinct_types          distinct_tags_total
+
+Nothing consumed the tag census as a result — `semantics.py` hardcodes the
+entry_type spellings, so the tag output was structurally incapable of
+feeding the same describe -> embed -> analyze pipeline despite being the
+same kind of data. Both now emit ONE key set (``value_counts``,
+``entries_with_value``, ``distinct_values``, …) with a ``field`` stamp
+saying which field was censused.
+
+``load_census`` reads either shape, so the definitions and embeddings
+already computed against the legacy entry_type file stay valid.
+
+Memory
+------
+With ``top_k = 0`` this is a single streaming pass. With ``top_k > 0`` the
+top-K set cannot be known until every document has been seen, so per-entry
+value lists are buffered for the co-occurrence pass — bounded by the
+corpus, not the vocabulary (~24k entries x ~10 tags on the current corpus).
+Frequency counts are always uncapped; that part is cheap regardless.
 
 Run inside the Airflow container:
     docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
-        python -m modules.kg_census --min-pair-count 3 --output /opt/airflow/dags/kg_census_entry_type.json
+        python -m modules.kg.census --field tags --output /opt/airflow/data/kg_census_tags.json
 
-Connection settings mirror parse_store.py's env vars:
+Connection settings (CLI only — the library itself never touches Mongo):
     MONGODB_URI                 (default: mongodb://localhost:27017)
     MONGODB_DB                  (default: memes)
     MONGODB_ENTRIES_COLLECTION  (default: entries)
@@ -22,54 +52,115 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
-import os
 from collections import Counter
+from dataclasses import dataclass
+from typing import Callable, Iterable
+
+__all__ = ["FieldSpec", "FIELDS", "run_census", "load_census", "CENSUS_VERSION"]
+
+# Bumped when the emitted key set changes, so a stale census on disk is
+# detectable rather than silently mismatched against new code.
+CENSUS_VERSION = "2"
 
 
-def _get_collection():
-    from pymongo import MongoClient
-    uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-    db_name = os.getenv("MONGODB_DB", "memes")
-    coll_name = os.getenv("MONGODB_ENTRIES_COLLECTION", "entries")
-    client = MongoClient(uri)
-    return client[db_name][coll_name]
+def _lower_strip(value: str) -> str:
+    return value.strip().lower()
 
 
-def run_census(min_pair_count: int = 3) -> dict:
-    entries = _get_collection()
+@dataclass(frozen=True)
+class FieldSpec:
+    """How one corpus field is censused.
+
+    ``normalize`` is the difference that actually mattered between the two
+    original modules: tags are a folksonomy and were lowercased/stripped,
+    entry_type slugs are a controlled vocabulary and were taken verbatim.
+    Encoding it here keeps that distinction visible instead of implicit in
+    which file you happened to run.
+    """
+    normalize: Callable[[str], str] | None = None
+    default_top_k: int = 0
+    default_min_pair_count: int = 3
+
+
+FIELDS: dict[str, FieldSpec] = {
+    # Controlled vocabulary, 119 values — no normalization, no top-K needed.
+    "entry_type": FieldSpec(normalize=None, default_top_k=0,
+                            default_min_pair_count=3),
+    # Folksonomy, 100k+ values with heavy singular/plural duplication. A full
+    # pairwise matrix would be statistically noisy (83k tags occur exactly
+    # once) and impractically large to review, hence the top-K restriction.
+    "tags": FieldSpec(normalize=_lower_strip, default_top_k=300,
+                      default_min_pair_count=5),
+}
+
+
+def run_census(docs: Iterable[dict], field: str, *,
+               top_k: int | None = None,
+               min_pair_count: int | None = None) -> dict:
+    """Census one multi-valued field across ``docs``.
+
+    ``docs`` is any iterable of `entries` documents — a Mongo cursor, a
+    list, a generator. The caller owns the connection; this stays pure.
+    """
+    try:
+        spec = FIELDS[field]
+    except KeyError:
+        raise ValueError(
+            f"unknown census field {field!r}; known: {sorted(FIELDS)}") from None
+
+    top_k = spec.default_top_k if top_k is None else top_k
+    min_pair_count = (spec.default_min_pair_count if min_pair_count is None
+                      else min_pair_count)
 
     corpus_size = 0
-    with_types = 0
-    type_counts: Counter[str] = Counter()
-    types_per_entry: Counter[int] = Counter()
+    with_value = 0
+    value_counts: Counter[str] = Counter()
+    values_per_entry: Counter[int] = Counter()
     pair_counts: Counter[tuple[str, str]] = Counter()
+    buffered: list[list[str]] = []   # only populated when top_k > 0
 
-    cursor = entries.find({}, {"_id": 0, "entry_type": 1})
-    for doc in cursor:
+    for doc in docs:
         corpus_size += 1
-        types = sorted(set(doc.get("entry_type") or []))
-        if not types:
-            types_per_entry[0] += 1
+        raw = doc.get(field) or []
+        if spec.normalize is not None:
+            values = sorted({v for v in (spec.normalize(x) for x in raw) if v})
+        else:
+            values = sorted(set(raw))
+        if not values:
+            values_per_entry[0] += 1
             continue
-        with_types += 1
-        types_per_entry[len(types)] += 1
-        type_counts.update(types)
-        for a, b in itertools.combinations(types, 2):
-            pair_counts[(a, b)] += 1
+        with_value += 1
+        values_per_entry[len(values)] += 1
+        value_counts.update(values)
+        if top_k:
+            buffered.append(values)
+        else:
+            for a, b in itertools.combinations(values, 2):
+                pair_counts[(a, b)] += 1
 
-    pairs = [
-        {"a": a, "b": b, "count": c}
-        for (a, b), c in pair_counts.items()
-        if c >= min_pair_count
-    ]
-    pairs.sort(key=lambda r: r["count"], reverse=True)
+    if top_k:
+        allowed = {v for v, _ in value_counts.most_common(top_k)}
+        for values in buffered:
+            restricted = [v for v in values if v in allowed]
+            for a, b in itertools.combinations(restricted, 2):
+                pair_counts[(a, b)] += 1
+
+    pairs = [{"a": a, "b": b, "count": c}
+             for (a, b), c in pair_counts.items() if c >= min_pair_count]
+    pairs.sort(key=lambda r: (-r["count"], r["a"], r["b"]))
+
+    reported = (dict(value_counts.most_common(top_k)) if top_k
+                else dict(value_counts.most_common()))
 
     return {
+        "census_version": CENSUS_VERSION,
+        "field": field,
         "corpus_size": corpus_size,
-        "entries_with_entry_type": with_types,
-        "distinct_types": len(type_counts),
-        "type_counts": dict(type_counts.most_common()),
-        "types_per_entry_distribution": dict(sorted(types_per_entry.items())),
+        "entries_with_value": with_value,
+        "distinct_values": len(value_counts),
+        "value_counts": reported,
+        "values_per_entry_distribution": dict(sorted(values_per_entry.items())),
+        "top_k_used_for_cooccurrence": top_k,
         "pair_cooccurrence": pairs,
         "pair_count_min_filter": min_pair_count,
         "total_pairs_seen": len(pair_counts),
@@ -77,27 +168,103 @@ def run_census(min_pair_count: int = 3) -> dict:
     }
 
 
-def main():
+# Legacy key -> unified key, for censuses written before the unification.
+_LEGACY_KEYS = {
+    "type_counts": "value_counts",
+    "top_tag_counts": "value_counts",
+    "entries_with_entry_type": "entries_with_value",
+    "entries_with_tags": "entries_with_value",
+    "distinct_types": "distinct_values",
+    "distinct_tags_total": "distinct_values",
+    "types_per_entry_distribution": "values_per_entry_distribution",
+    "tags_per_entry_distribution": "values_per_entry_distribution",
+}
+
+
+def load_census(path: str) -> dict:
+    """Read a census file in either the unified or the legacy shape.
+
+    This shim is what lets the 119 entry-type definitions and their
+    1024-dim embeddings — real GPU time on a shared lab server — keep
+    working against the new key names without being regenerated.
+    """
+    with open(path) as fh:
+        raw = json.load(fh)
+
+    if raw.get("census_version") == CENSUS_VERSION and "value_counts" in raw:
+        # Still normalise: JSON stringifies the integer distribution keys
+        # whatever the census version, so the current shape needs this too.
+        return _restore_int_keys(dict(raw))
+
+    out = dict(raw)
+    for legacy, unified in _LEGACY_KEYS.items():
+        if legacy in out and unified not in out:
+            out[unified] = out.pop(legacy)
+    out.setdefault("field", "tags" if "top_k_used_for_cooccurrence" in raw
+                   else "entry_type")
+    out.setdefault("census_version", "1")
+    return _restore_int_keys(out)
+
+
+def _restore_int_keys(census: dict) -> dict:
+    """Undo JSON's string-only object keys.
+
+    ``values_per_entry_distribution`` is keyed by a COUNT, so its keys are
+    integers in memory — but JSON has no integer keys, and json.dump
+    silently stringifies them. Without this, the same census has int keys
+    fresh from run_census() and str keys after a save/load round trip, so
+    a consumer indexing it works in one path and KeyErrors in the other.
+    Normalising here keeps load_census(dump(x)) == x.
+    """
+    dist = census.get("values_per_entry_distribution")
+    if isinstance(dist, dict):
+        census["values_per_entry_distribution"] = {
+            int(k): v for k, v in dist.items()}
+    return census
+
+
+def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--min-pair-count", type=int, default=3,
-                     help="Only include type pairs co-occurring at least this many times (default 3).")
+    ap.add_argument("--field", choices=sorted(FIELDS), default="entry_type",
+                    help="Which corpus field to census (default entry_type).")
+    ap.add_argument("--top-k", type=int, default=None,
+                    help="Restrict co-occurrence to the N most frequent values "
+                         "(0 = no restriction). Default: per-field.")
+    ap.add_argument("--min-pair-count", type=int, default=None,
+                    help="Drop pairs co-occurring fewer than this many times. "
+                         "Default: per-field.")
     ap.add_argument("--output", type=str, default=None,
-                     help="If set, write full JSON here in addition to a summary on stdout.")
+                    help="Write full JSON here; otherwise dump to stdout.")
     args = ap.parse_args()
 
-    result = run_census(min_pair_count=args.min_pair_count)
+    # Mongo is reached only here, in the CLI — importing this module never
+    # requires a driver, and the DAG feeds run_census() from kg_store instead.
+    import os
+    from pymongo import MongoClient
+
+    client = MongoClient(os.getenv("MONGODB_URI", "mongodb://localhost:27017"))
+    try:
+        coll = (client[os.getenv("MONGODB_DB", "memes")]
+                [os.getenv("MONGODB_ENTRIES_COLLECTION", "entries")])
+        cursor = coll.find({}, {"_id": 0, args.field: 1})
+        result = run_census(cursor, args.field, top_k=args.top_k,
+                            min_pair_count=args.min_pair_count)
+    finally:
+        client.close()
 
     if args.output:
-        with open(args.output, "w") as f:
-            json.dump(result, f, indent=2)
+        with open(args.output, "w") as fh:
+            json.dump(result, fh, indent=2)
         print(f"Wrote full census to {args.output}")
-        print(f"corpus_size={result['corpus_size']} "
-              f"entries_with_entry_type={result['entries_with_entry_type']} "
-              f"distinct_types={result['distinct_types']} "
-              f"total_pairs_seen={result['total_pairs_seen']} "
-              f"total_pairs_returned={result['total_pairs_returned']}")
     else:
         print(json.dumps(result, indent=2))
+
+    print(f"field={result['field']} "
+          f"corpus_size={result['corpus_size']} "
+          f"entries_with_value={result['entries_with_value']} "
+          f"distinct_values={result['distinct_values']} "
+          f"total_pairs_seen={result['total_pairs_seen']} "
+          f"total_pairs_returned={result['total_pairs_returned']}")
 
 
 if __name__ == "__main__":

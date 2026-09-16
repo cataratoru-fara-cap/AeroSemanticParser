@@ -1,5 +1,5 @@
 """
-kg_export_rml.py — entries collection -> clean CSVs for the RML/YARRRML mapping
+kg/export_rml.py — entries collection -> clean CSVs for the RML/YARRRML mapping
 ==================================================================================
 Reads `entries` directly (not kg_nodes/kg_edges) — the raw arrays there are
 already clean (no "type:"/"tag:" id prefixes to strip), which keeps every
@@ -14,7 +14,7 @@ Writes eight homogeneous CSVs, one per RML mapping rule:
     entry_type_edges.csv   url,slug
     broader_edges.csv      narrower,broader            (curated, hardcoded below —
                                                           keep in sync with
-                                                          kg_entry_type_semantic_edges.yaml)
+                                                          dags/kg_config/entry_type_taxonomy.yaml)
     tag_edges.csv          url,tag
     series_edges.csv       url,parent_url
     relates_edges.csv      url,target_url
@@ -22,7 +22,7 @@ Writes eight homogeneous CSVs, one per RML mapping rule:
 
 Run inside the Airflow container:
     docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
-        python -m modules.helpers.kg_export_rml --out-dir /opt/airflow/dags/rml_data
+        python -m modules.kg.export_rml --out-dir /opt/airflow/dags/rml_data
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ import csv
 import os
 
 # Curated narrower/broader pairs, resolved and reviewed — see
-# kg_entry_type_semantic_edges.yaml `broader_confirmed` + `broader_semantic_only`
+# dags/kg_config/entry_type_taxonomy.yaml `broader_confirmed` + `broader_semantic_only`
 # (minus anything still in `contested`). Keep this list in sync by hand;
 # it's small and deliberately not auto-derived from the census.
 CURATED_BROADER_EDGES: tuple[tuple[str, str], ...] = (
@@ -60,7 +60,7 @@ def _get_db():
 
 
 def export(out_dir: str) -> dict:
-    from modules.helpers.kg_build import _iter_link_urls, _is_kym_url  # single source of truth
+    from modules.kg.build import _iter_link_urls, _is_kym_url  # single source of truth
 
     os.makedirs(out_dir, exist_ok=True)
     db = _get_db()

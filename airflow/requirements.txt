@@ -23,8 +23,16 @@ beautifulsoup4           # kym_discover, kym_parse
 lxml                     # BeautifulSoup's parser backend
 pydantic>=2.0            # kym_models: the entry schema
 
-# --- Post-parse (kg_*): hand-run, not yet orchestrated ----------------------
-numpy>=1.26              # kg_metrics, kg_type_semantics
+# --- Post-parse KG (modules/kg/) --------------------------------------------
+# Attribution matters here: the previous comment credited numpy to kg_metrics,
+# which opens by stating it is pure stdlib. Both numpy and scipy are used by
+# kg/semantics.py alone, and scipy was imported without ever being declared —
+# so `analyze` could not run in the built image.
+numpy>=1.26              # kg/semantics.py: cosine similarity matrix
+scipy>=1.11              # kg/semantics.py: linkage / fcluster / squareform
+PyYAML>=6.0              # kg/taxonomy.py, and the YARRRML vocabulary invariant
+                         # test. Present transitively via Airflow; declared
+                         # explicitly per this project's own rule.
 
 # --- Tests ------------------------------------------------------------------
 pytest>=9.1.1

@@ -1,5 +1,5 @@
 """
-kg_metrics.py — IMKG-comparable graph statistics + data-quality checks
+kg/metrics.py — IMKG-comparable graph statistics + data-quality checks
 =======================================================================
 Replicates the Section 5 analysis of Tommasini, Ilievski & Wijesiriwardene,
 "IMKG: The Internet Meme Knowledge Graph" (ESWC 2023), over the MemeAtlas
@@ -26,7 +26,7 @@ five minutes before a meeting.
 
 Run inside the Airflow container:
     docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
-        python -m modules.kg_metrics --out /opt/airflow/data/kg_metrics.json
+        python -m modules.kg.metrics --out /opt/airflow/data/kg_metrics.json
 
 Or against exported CSVs:
     python kg_metrics.py --from-csv --nodes kg_view_nodes.csv \
@@ -149,20 +149,49 @@ def pagerank(out_adj: dict[str, list[str]], all_ids: list[str],
 
 def _longest_chain(out_adj: dict[str, list[str]],
                    roots: list[str]) -> tuple[int, list[str]]:
-    """Longest path length + one witness path. Iterative, cycle-safe."""
-    best_len, best_path = 0, []
+    """Longest path length + one witness path, over a DAG. O(V + E).
+
+    Memoised, not enumerated. The previous version pushed
+    ``(child, path + [child], seen | {child})`` for every child of every
+    partial path — a full simple-path enumeration, exponential in branching
+    factor. It survived only because ``partOfSeries`` happens to be
+    near-tree-shaped (19,158 edges, max depth 7). A single popular series
+    parent with many children that themselves chain would have hung the
+    whole report, and nothing in the data model prevents that.
+
+    Acyclicity is the caller's guarantee: compute_metrics runs _find_cycles
+    first and reports an undefined depth while cyclic. That is what lets
+    this drop the per-path ``seen`` set and settle each node exactly once.
+    """
+    best_from: dict[str, tuple[int, list[str]]] = {}
+
     for root in roots:
-        stack = [(root, [root], {root})]
+        # Iterative post-order: a node is settled only once every child is.
+        stack: list[tuple[str, bool]] = [(root, False)]
         while stack:
-            node, path, seen = stack.pop()
-            children = [c for c in out_adj.get(node, []) if c not in seen]
-            if not children:
-                if len(path) - 1 > best_len:
-                    best_len, best_path = len(path) - 1, path
+            node, expanded = stack.pop()
+            if node in best_from:
                 continue
-            for c in children:
-                stack.append((c, path + [c], seen | {c}))
-    return best_len, best_path
+            children = out_adj.get(node, ())
+            if not expanded:
+                pending = [c for c in children if c not in best_from]
+                if pending:
+                    stack.append((node, True))
+                    stack.extend((c, False) for c in pending)
+                    continue
+            if children:
+                length, tail = max((best_from[c] for c in children),
+                                   key=lambda lt: lt[0])
+                best_from[node] = (length + 1, [node] + tail)
+            else:
+                best_from[node] = (0, [node])
+
+    if not best_from:
+        return 0, []
+    # Every settled node is reachable from a root, and a path starting at an
+    # interior node is a suffix of one starting at a root — so the max over
+    # all settled nodes equals the max over roots.
+    return max(best_from.values(), key=lambda lt: lt[0])
 
 
 def _find_cycles(out_adj: dict[str, list[str]], nodes: list[str],
@@ -310,8 +339,12 @@ def compute_metrics(nodes: dict, edges: list, triple_equivalent: bool = False,
     series_nodes = series_children | series_parents
     # series tops: never a child of anything
     series_roots = [n for n in series_nodes if n not in series_children]
-    # traversal starts at leaves (nothing points at them) and walks up
-    leaves = sorted(series_nodes - series_parents) or sorted(series_nodes)
+    # traversal starts at leaves (nothing points at them) and walks up.
+    # No `or sorted(series_nodes)` fallback: that branch was unreachable.
+    # An empty difference means every node is a parent, which in a finite
+    # graph requires a cycle — and the cycle check below already diverts
+    # those to an undefined depth before _longest_chain is ever called.
+    leaves = sorted(series_nodes - series_parents)
     cycles = _find_cycles(series_adj, sorted(series_nodes))
     if cycles:
         chain_depth, chain_witness = -1, []      # undefined while cyclic
@@ -319,8 +352,22 @@ def compute_metrics(nodes: dict, edges: list, triple_equivalent: bool = False,
         chain_depth, chain_witness = _longest_chain(dict(series_adj), leaves)
 
     # -- centrality ---------------------------------------------------------
+    # PageRank runs over the node set only. Both ends must be filtered, not
+    # just the source: `nxt` is keyed by all_ids, so an edge pointing at a
+    # target with no node raised KeyError and took the whole report down —
+    # in a function that also reports `dangling_edge_targets`, so it could
+    # only count dangling targets on a graph that had none. Live data hid it
+    # because the old writer upserted a node for every edge endpoint.
+    #
+    # Sources left with no surviving target are dropped rather than kept
+    # with an empty list: `share = rank[src] / len(dsts)` divides before the
+    # inner loop. Dropping them is also correct — pagerank treats a source
+    # absent from out_adj as dangling and redistributes its mass.
     all_ids = list(nodes)
-    pr = pagerank({k: v for k, v in out_adj.items() if k in nodes}, all_ids)
+    reachable = {src: [d for d in dsts if d in nodes]
+                 for src, dsts in out_adj.items() if src in nodes}
+    pr = pagerank({src: dsts for src, dsts in reachable.items() if dsts},
+                  all_ids)
 
     def _label(nid: str) -> str:
         return (nodes.get(nid, {}).get("label") or nid)[:60]

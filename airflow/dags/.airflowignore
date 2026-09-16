@@ -11,3 +11,8 @@ modules/
 
 # pytest suite — never contains DAGs
 tests/
+
+# Curated, hand-authored KG inputs (taxonomy YAML, YARRRML mapping, morph-kgc
+# ini template). Data, not code — they live under dags/ rather than data/
+# because data/ is gitignored and these are source that must be versioned.
+kg_config/

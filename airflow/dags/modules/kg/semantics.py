@@ -1,5 +1,5 @@
 """
-kg_type_semantics.py — approach 1: definition-embedding analysis of entry types
+kg/semantics.py — approach 1: definition-embedding analysis of entry types
 =================================================================================
 Three subcommands forming a pipeline (each stage caches, so all are resumable
 and rerunnable without recomputation):
@@ -14,11 +14,11 @@ No Mongo, no Airflow. Input is the census JSON; everything else is files.
 
     export OPENWEBUI_API_KEY=sk-...   # from Open WebUI Settings -> Account -> API keys
 
-    python -m modules.helpers.kg_type_semantics describe \
+    python -m modules.kg.semantics describe \
         --census kg_census_entry_type.json --out kg_type_definitions.json
-    python -m modules.helpers.kg_type_semantics embed \
+    python -m modules.kg.semantics embed \
         --definitions kg_type_definitions.json --out kg_type_embeddings.json
-    python -m modules.helpers.kg_type_semantics analyze \
+    python -m modules.kg.semantics analyze \
         --embeddings kg_type_embeddings.json --census kg_census_entry_type.json \
         --out kg_type_semantics_report.json
 
@@ -53,12 +53,24 @@ CHAT_MODEL = os.getenv("KG_CHAT_MODEL", "mistral-small3.2:24b")
 EMBED_MODEL = os.getenv("KG_EMBED_MODEL", "qwen3-embedding:0.6b")
 PROMPT_VERSION = "2"
 
-if not API_KEY:
-    raise SystemExit(
-        "OPENWEBUI_API_KEY is not set. Generate one in Open WebUI: "
-        "Settings -> Account -> API keys -> Create new key, then "
-        "export OPENWEBUI_API_KEY=... (or pass -e to docker compose exec)."
-    )
+def _require_api_key() -> str:
+    """Validate the key at call time, never at import time.
+
+    This was a module-level ``raise SystemExit``, so *importing* this module
+    on a machine without the key killed the interpreter outright — which
+    took pydoc, `from modules.kg import semantics`, and any pytest
+    collection down with it. Configuration is checked where it is used.
+
+    Phase 4 replaces this whole transport with modules/openwebui_client.py,
+    whose LLMConfig.from_env() carries the same rule.
+    """
+    if not API_KEY:
+        raise SystemExit(
+            "OPENWEBUI_API_KEY is not set. Generate one in Open WebUI: "
+            "Settings -> Account -> API keys -> Create new key, then "
+            "export OPENWEBUI_API_KEY=... (or pass -e to docker compose exec)."
+        )
+    return API_KEY
 
 SYSTEM_PROMPT = (
     "You are helping build a knowledge graph of internet memes based on "
@@ -289,6 +301,7 @@ def main():
     a.set_defaults(fn=cmd_analyze)
 
     args = ap.parse_args()
+    _require_api_key()   # every subcommand below talks to the model server
     args.fn(args)
 
 

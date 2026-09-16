@@ -1,5 +1,5 @@
 """
-kg_export.py — dump kg_nodes/kg_edges to CSV for visualization
+kg/export_pg.py — dump kg_nodes/kg_edges to CSV for visualization
 ================================================================
 Zero-dependency export (csv module only) producing two files that both
 Cosmograph (drag & drop in the browser) and Gephi (File > Import
@@ -16,8 +16,8 @@ Filters (composable):
 Edges touching an excluded node are dropped with it.
 
 Run inside the Airflow container:
-    docker compose exec -e PYTHONPATH=/opt/airflow/dag airflow-dag-processor \
-        python -m modules.kg_export --exclude-kinds frame_stub --top-tags 500 \
+    docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
+        python -m modules.kg.export_pg --exclude-kinds frame_stub --top-tags 500 \
         --out-dir /opt/airflow/data
 
 Connection settings mirror parse_store.py's env vars (MONGODB_URI, MONGODB_DB).

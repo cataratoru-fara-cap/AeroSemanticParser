@@ -1,5 +1,5 @@
 """
-kg_build.py — KYMEntryScrape doc -> KG nodes/edges (pure transform, no Mongo)
+kg/build.py — KYMEntryScrape doc -> KG nodes/edges (pure transform, no Mongo)
 ==============================================================================
 Instance-level graph only: a frame connected to its entry_type concepts,
 tag concepts, series parent, and now its outbound links. Concept-to-concept
@@ -33,6 +33,25 @@ from urllib.parse import urlparse
 
 _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 
+# Bumped when the emitted node/edge shape changes. Stamped on every build so
+# a graph on disk or in Mongo says which builder produced it, and the
+# staleness gate can tell "the builder moved on" from "the corpus moved on".
+KG_BUILD_VERSION = "2.0.0"
+
+# The vocabulary, exported rather than implied. Both projections — the
+# property graph and the RDF serialization — are generated from these, and
+# tests/test_kg_vocabulary.py asserts that EDGE_TYPES (plus the taxonomy's
+# CONCEPT_EDGE_TYPES) are exactly the predicate local names in
+# kg_config/kg_mapping.yarrrml. The YARRRML file already documents that the
+# property-graph edge type IS the RDF predicate local name; this makes it a
+# checked invariant instead of a comment two files away.
+NODE_KINDS: tuple[str, ...] = (
+    "frame", "frame_stub", "entry_type_concept", "tag_concept", "external_ref",
+)
+EDGE_TYPES: tuple[str, ...] = (
+    "hasEntryType", "hasTag", "partOfSeries", "relatesToMeme", "citesExternal",
+)
+
 # Coarse URL-path -> category guess for stub nodes we haven't scraped yet.
 # Mirrors kym_parse.py's own small, dependency-free namespace-pattern table
 # rather than importing it, per this project's established module-boundary
@@ -62,6 +81,24 @@ def _guess_category(url: str) -> str | None:
         if path.startswith(prefix):
             return cat
     return None
+
+
+def guess_stub_node(url: str) -> dict:
+    """The placeholder node for a KYM url this pass has not scraped yet.
+
+    Public because the store needs it: rather than every mapped task
+    emitting stubs and racing to avoid overwriting a real frame with one,
+    the store drops stubs on write and materialises them once per build for
+    edge targets that ended up with no node. That makes "never downgrade a
+    frame to a stub" structurally impossible instead of defended by a
+    per-node read-before-write.
+
+    Note the `category` key is the same one real frame nodes use, not a
+    separate `kymCategory` — same information by a cheaper heuristic route,
+    valid only until the real frame replaces the stub.
+    """
+    return {"id": url, "kind": "frame_stub", "label": None,
+            "category": _guess_category(url), "status": None}
 
 
 def _iter_link_urls(entry: dict):
@@ -112,8 +149,7 @@ def build_nodes_and_edges(entry: dict) -> tuple[list[dict], list[dict]]:
 
     sp = entry.get("series_parent")
     if sp:
-        nodes.append({"id": sp, "kind": "frame_stub", "label": None,
-                       "category": _guess_category(sp), "status": None})
+        nodes.append(guess_stub_node(sp))
         edges.append({"src": url, "dst": sp, "type": "partOfSeries"})
 
     seen_internal: set[str] = {sp} if sp else set()
@@ -125,8 +161,7 @@ def build_nodes_and_edges(entry: dict) -> tuple[list[dict], list[dict]]:
             if link_url in seen_internal:
                 continue
             seen_internal.add(link_url)
-            nodes.append({"id": link_url, "kind": "frame_stub", "label": None,
-                           "category": _guess_category(link_url), "status": None})
+            nodes.append(guess_stub_node(link_url))
             edges.append({"src": url, "dst": link_url, "type": "relatesToMeme"})
         else:
             if link_url in seen_external:
