@@ -81,6 +81,25 @@ x-airflow-common:
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
     MONGODB_URI: mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@mongo:27017/?authSource=admin
     SCRAPINGANT_API_KEY: ${SCRAPINGANT_API_KEY:-}
+    # --- KG stage (kym_kg, kym_kg_validate) ---
+    # Collection names single-sourced here; the dashboard block repeats them.
+    MONGODB_KG_NODES_COLLECTION: ${MONGODB_KG_NODES_COLLECTION:-kg_nodes}
+    MONGODB_KG_EDGES_COLLECTION: ${MONGODB_KG_EDGES_COLLECTION:-kg_edges}
+    MONGODB_KG_BUILDS_COLLECTION: ${MONGODB_KG_BUILDS_COLLECTION:-kg_builds}
+    # Build directories (data/ is bind-mounted) and the tracked curated inputs.
+    KG_DATA_DIR: /opt/airflow/data/kg
+    KG_CONFIG_DIR: /opt/airflow/dags/kg_config
+    # Graph stores the build is published into. A follower whose password is
+    # unset is skipped, so the stage degrades to Mongo + files rather than
+    # failing when a store is absent.
+    NEO4J_URI: bolt://neo4j:7687
+    NEO4J_USER: neo4j
+    NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+    FUSEKI_URL: http://fuseki:3030
+    FUSEKI_DATASET: kg
+    FUSEKI_USER: admin
+    FUSEKI_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-}
+    # --- Model server (kg/semantics.py; replaced by openwebui_client in Phase 4) ---
     PAGODA_OLLAMA_URL: ${PAGODA_OLLAMA_URL:-}
     OPENWEBUI_API_KEY: ${OPENWEBUI_API_KEY:-}
     KG_CHAT_MODEL: ${KG_CHAT_MODEL:-}
@@ -144,8 +163,19 @@ services:
     networks:
       - Practice
   
+  # STANDALONE — no replica set, so no multi-document transactions. The KG
+  # stage (kg_store.py) is designed around that: generational build_id
+  # namespaces plus one single-document pointer write, which is atomic even
+  # here. Converting to a single-node replica set would not help, because the
+  # atomicity problem also spans the filesystem and (Phase 3b) Neo4j/Fuseki.
   mongo:
     image: mongo:7.0
+    # Explicit cache sizing rather than inferred. Mongo is cgroup-aware and
+    # sizes WiredTiger's cache to ~50% of the limit minus 1 GB, floored at
+    # 256 MB — so under the old 1 GB cap it ran a 256 MB cache. A full KG
+    # build writes ~1M documents across two retained generations and builds
+    # six compound indexes, which thrashes that.
+    command: ["--wiredTigerCacheSizeGB", "1"]
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
@@ -161,8 +191,8 @@ services:
       retries: 5
       start_period: 20s
     restart: always
-    mem_limit: 1024m
-    mem_reservation: 512m
+    mem_limit: 2048m
+    mem_reservation: 1024m
     networks:
       - Practice
 
@@ -212,8 +242,14 @@ services:
   airflow-dag-processor:
     <<: *airflow-common
     command: dag-processor
+    # --local, not --hostname "$HOSTNAME". Airflow 3 registers the job under
+    # whatever `hostname_callable` returns — in Docker that is the container
+    # IP (172.18.0.x), not the container id that $HOSTNAME holds — so the
+    # hostname probe matched nothing and this service showed unhealthy for
+    # weeks while the job heartbeated normally. --local resolves the name
+    # through the same callable the job used, so they agree by construction.
     healthcheck:
-      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      test: ["CMD-SHELL", "airflow jobs check --job-type DagProcessorJob --local"]
       interval: 60s
       timeout: 30s
       retries: 3
@@ -407,6 +443,9 @@ services:
       MONGODB_ENTRIES_COLLECTION: entries
       MONGODB_PARSE_FAILURES_COLLECTION: parse_failures
       MONGODB_RUN_SUMMARIES_COLLECTION: run_summaries
+      MONGODB_KG_NODES_COLLECTION: ${MONGODB_KG_NODES_COLLECTION:-kg_nodes}
+      MONGODB_KG_EDGES_COLLECTION: ${MONGODB_KG_EDGES_COLLECTION:-kg_edges}
+      MONGODB_KG_BUILDS_COLLECTION: ${MONGODB_KG_BUILDS_COLLECTION:-kg_builds}
     ports:
       # Loopback only — the public route is http://<host>:8080/dashboard/.
       - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"
@@ -471,9 +510,79 @@ services:
       mongo:
         condition: service_healthy
 
+  # --- KG graph stores -----------------------------------------------------
+  # kym_kg publishes every build into both, generationally (see kg_store.py
+  # and kg/loaders.py): a build is loaded under its build_id, then one
+  # pointer write makes it current. Both are explicitly memory-capped; the
+  # JVM defaults would size themselves off the host's 31 GB.
+
+  # Neo4j Community: exactly one user database and no node-key constraints,
+  # which is why the loader uses a build_id property plus a synthetic uid
+  # rather than per-build databases. Bolt/Browser are loopback-only — the
+  # campus firewall drops them anyway; tunnel BOTH ports to use the Browser.
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: kym_neo4j
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512m
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    volumes:
+      - neo4j-data-volume:/data
+      - neo4j-logs-volume:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: always
+    mem_limit: 2048m
+    mem_reservation: 1024m
+    networks:
+      - Practice
+
+  # Fuseki (TDB2): the RDF store. FUSEKI_DATASET_1 creates the `kg` dataset
+  # at first start. Writes are password-protected and only ever arrive over
+  # the Docker network from the DAG; the public route (/sparql/ via Caddy)
+  # refuses the admin and update paths outright.
+  fuseki:
+    image: stain/jena-fuseki:5.1.0
+    container_name: kym_fuseki
+    environment:
+      ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:?set FUSEKI_ADMIN_PASSWORD in .env}
+      FUSEKI_DATASET_1: kg
+      # TDB2, not the image's TDB1 default: transactional, and what the
+      # PUT-replaces-graph publish pattern in kg/loaders.py relies on. Must be
+      # set before the FIRST start — the dataset persists in the volume and
+      # the entrypoint skips creation once it exists, so it cannot be
+      # converted later by changing this.
+      TDB: "2"
+      JVM_ARGS: -Xmx1500m -Xms512m
+    ports:
+      - "127.0.0.1:3030:3030"
+    volumes:
+      - fuseki-data-volume:/fuseki
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3030/$$/ping >/dev/null || wget -qO- http://localhost:3030/$$/ping >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: always
+    mem_limit: 2048m
+    mem_reservation: 1024m
+    networks:
+      - Practice
+
   # The only service reachable from the network. The campus firewall in
   # front of this host drops most ports; 8080 gets through, so Airflow, the
-  # dashboard and mongo-express are all routed through it. See proxy/Caddyfile.
+  # dashboard, mongo-express and the SPARQL endpoint are all routed through
+  # it. See proxy/Caddyfile.
   proxy:
     image: caddy:2.10-alpine
     container_name: kym_proxy
@@ -495,6 +604,8 @@ services:
         condition: service_started
       pgadmin:
         condition: service_started
+      fuseki:
+        condition: service_started
 
 networks:
   Practice:
@@ -505,3 +616,6 @@ volumes:
   redis-data-volume:
   mongo-data-volume:
   pgadmin-data:
+  neo4j-data-volume:
+  neo4j-logs-volume:
+  fuseki-data-volume:

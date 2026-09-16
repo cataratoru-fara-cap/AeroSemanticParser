@@ -42,7 +42,7 @@ KG_BUILD_VERSION = "2.0.0"
 # property graph and the RDF serialization — are generated from these, and
 # tests/test_kg_vocabulary.py asserts that EDGE_TYPES (plus the taxonomy's
 # CONCEPT_EDGE_TYPES) are exactly the predicate local names in
-# kg_config/kg_mapping.yarrrml. The YARRRML file already documents that the
+# kg_config/kg_mapping.yarrrml.yml. The YARRRML file already documents that the
 # property-graph edge type IS the RDF predicate local name; this makes it a
 # checked invariant instead of a comment two files away.
 NODE_KINDS: tuple[str, ...] = (

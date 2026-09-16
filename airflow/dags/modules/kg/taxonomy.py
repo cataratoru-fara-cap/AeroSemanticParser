@@ -16,10 +16,15 @@ things went wrong, both silently:
   1. The YAML did not parse (flow style + unquoted prose), so even someone
      who wanted to automate the sync could not. See the header in the YAML.
   2. The hand-typed constant included ``model -> influencer``, which the
-     YAML files under ``contested`` — "is a model a KIND of influencer or a
+     YAML filed under ``contested`` — "is a model a KIND of influencer or a
      co-occurring career? ... sample before promoting" — and which the
      exporter's own docstring says to exclude. It shipped anyway, as an
      asserted ``skos:broader`` triple in the published graph.
+
+     That pair has since been sampled and promoted to ``broader_confirmed``
+     by curator decision, so the edge itself was right. The defect was
+     never the edge: it was that a transcribed constant could contradict
+     the reviewed record for months with nothing able to notice.
 
 So ``check_consistency`` below makes that class of error impossible:
 a pair that appears in an encodable bucket *and* in ``contested`` (or in

@@ -34,6 +34,7 @@ st.caption("discovery → scrape → parse · live corpus state and per-run hist
 disc = data.discovery_state()
 scr = data.scrape_state()
 prs = data.parse_state()
+kg = data.kg_state()
 
 # ---------------------------------------------------------------------------
 # Hero + KPI row — single values, so tiles and a figure, not charts
@@ -77,6 +78,11 @@ stages = [
     ("Parsed", prs["entries_total"]),
     ("Corpus-ready", prs["entries_ready"]),
 ]
+if kg["build_id"]:
+    # Frames in the PUBLISHED graph. The KG stage does not discard incomplete
+    # entries, so this normally equals "Parsed" — a gap means the published
+    # build predates the latest parse and the staleness gate will pick it up.
+    stages.append(("In the graph", kg["frames"]))
 st.plotly_chart(charts.funnel(stages, pal), config=PLOTLY_CONFIG,
                 width="stretch")
 

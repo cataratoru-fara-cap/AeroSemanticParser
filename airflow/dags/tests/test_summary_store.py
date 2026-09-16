@@ -42,6 +42,62 @@ PARSE = {
     },
 }
 
+# kym_kg's summarize(). Figures are the real September corpus, so the fixture
+# is not invented; the dashboard's KG page is written against this shape.
+KG = {
+    "run": {"entries": 23882, "nodes_written": 136107, "edges_written": 712796,
+            "stubs_deferred": 9525, "chunks": 48, "stubs_materialized": 9523},
+    "build": {"build_id": "kg_20260916T102231Z_manual", "published": True,
+              # every store, read back after the flip — all four must agree
+              "pointers": {"files": "kg_20260916T102231Z_manual",
+                           "fuseki": "kg_20260916T102231Z_manual",
+                           "neo4j": "kg_20260916T102231Z_manual",
+                           "mongo": "kg_20260916T102231Z_manual"},
+              "kg_build_version": "2.0.0",
+              "taxonomy_version": "f8317bfc137e70d8c96b4bcc6698a5aa205d093e",
+              "entries_count": 23882, "parser_versions": ["1.5.0"],
+              "corpus_policy_versions": ["2026-07-16-tags-gated-not-required"],
+              "max_parsed_at": "2026-09-15T15:15:55+00:00",
+              "snapshot_at": "2026-09-16T10:22:31+00:00", "ready_only": False},
+    "graph": {"nodes": 348751, "edges": 712796, "frames": 23882, "rel_types": 6,
+              "avg_degree": 4.09,
+              "nodes_by_kind": {"external_ref": 212644, "tag_concept": 102583,
+                                "frame": 23882, "frame_stub": 9523,
+                                "entry_type_concept": 119},
+              "edges_by_type": {"citesExternal": 223273, "hasTag": 223012,
+                                "relatesToMeme": 214456, "hasEntryType": 32884,
+                                "partOfSeries": 19158, "broader": 13}},
+    "integrity": {"unresolved_series_parents": 9523,
+                  "frames_without_entry_type": 4507, "isolated_nodes": 0,
+                  "dangling_edge_targets": 0, "duplicate_edges": 0,
+                  "series_cycles_found": 0, "series_chain_max_depth": 7},
+    "taxonomy": {"taxonomy_version": "f8317bfc137e70d8c96b4bcc6698a5aa205d093e",
+                 "broader_edges": 13, "edges_encoded": 13,
+                 "slugs_missing_from_census": [], "withheld_pairs": 10,
+                 "buckets": {"broader_confirmed": 5, "broader_semantic_only": 8,
+                             "contested": 2, "demoted": 3,
+                             "do_not_encode_as_broader": 5,
+                             "crosscutting_qualifiers": 3, "missing_umbrellas": 4}},
+    "stores": {"fuseki": {"triples": 808687,
+                          "graph": "urn:memeatlas:build:kg_20260916T102231Z_manual"},
+               "neo4j": {"nodes": 348751, "edges": 712796}},
+    "exports": {"dir": "/opt/airflow/data/kg/builds/kg_20260916T102231Z_manual",
+                "triples": 808685,
+                "view_filters": {"exclude_kinds": [], "top_tags": 0},
+                "files": {"graph.nt": {"triples": 808685, "sha256": "c1ad8e76ef17ac68"},
+                          "relates_edges.csv": {"rows": 214456, "sha256": "0a"}}},
+}
+
+# The same DAG when the staleness gate short-circuits: everything downstream
+# is skipped, summarize() still records why.
+KG_SKIPPED = {
+    "skipped": True,
+    "reason": "nothing changed since the published build",
+    "build": {"build_id": None,
+              "stamps": {"kg_build_version": "2.0.0", "entries_count": 23882,
+                         "max_parsed_at": "2026-09-15T15:15:55+00:00"}},
+}
+
 
 @pytest.fixture()
 def mock_store(monkeypatch):
@@ -78,7 +134,8 @@ def test_store_stages_are_isolated(mock_store):
 
 
 @pytest.mark.parametrize("stage,summary", [
-    ("discovery", DISCOVERY), ("scrape", SCRAPE), ("parse", PARSE)])
+    ("discovery", DISCOVERY), ("scrape", SCRAPE), ("parse", PARSE),
+    ("kg", KG), ("kg", KG_SKIPPED)])
 def test_real_summary_shapes_survive_the_json_round_trip(mock_store, stage,
                                                          summary):
     """Summaries are stored as a JSON string, not a sub-document, because

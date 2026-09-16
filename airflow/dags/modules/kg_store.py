@@ -69,8 +69,9 @@ __all__ = [
     "KGStore", "get_store", "CURRENT", "BULK_BATCH",
     "snapshot", "published_stamps", "begin_build", "save_graph",
     "materialize_stubs", "save_concept_edges", "iter_entries", "iter_field",
-    "graph_counts", "publish_build", "current_build", "prune_builds",
-    "fail_build",
+    "iter_nodes", "iter_edges", "graph_counts", "publish_build",
+    "current_build", "current_build_id", "prune_builds", "fail_build",
+    "mark_verified", "record_validation",
 ]
 
 # The pointer document's _id. A build_id can never collide with it because
@@ -102,7 +103,18 @@ class KGStore(MongoStoreBase):
         self.builds = self.collection("MONGODB_KG_BUILDS_COLLECTION", "kg_builds")
 
         # Every index leads on build_id — see the module docstring.
-        self.nodes.create_index([("build_id", 1), ("node_id", 1)], unique=True)
+        #
+        # PARTIAL, not plain, unique: the live kg_nodes/kg_edges still hold
+        # the previous implementation's documents (348,753 + 712,785), none
+        # of which carry build_id or node_id. Mongo indexes a missing field
+        # as null, so a plain unique index over them fails to build with a
+        # DuplicateKeyError and the store could never connect. Restricting
+        # the constraint to documents that HAVE a build_id lets the legacy
+        # rows sit harmlessly — invisible to every build-scoped query here —
+        # while uniqueness is still enforced on every generational document.
+        self.nodes.create_index(
+            [("build_id", 1), ("node_id", 1)], unique=True,
+            partialFilterExpression={"build_id": {"$exists": True}})
         self.nodes.create_index([("build_id", 1), ("kind", 1)])
         self.edges.create_index([("build_id", 1), ("type", 1)])
         self.edges.create_index([("build_id", 1), ("dst", 1)])
@@ -137,19 +149,24 @@ class KGStore(MongoStoreBase):
             query["corpus_status"] = "ready"
 
         cursor = self.entries.find(query, {"_id": 1, "parser_version": 1,
-                                           "corpus_policy_version": 1})
+                                           "corpus_policy_version": 1,
+                                           "parsed_at": 1})
         if limit:
             cursor = cursor.limit(limit)
 
         entry_ids: list[str] = []
         parser_versions: set[str] = set()
         policy_versions: set[str] = set()
+        max_parsed_at = None
         for doc in cursor:
             entry_ids.append(doc["_id"])
             if doc.get("parser_version"):
                 parser_versions.add(doc["parser_version"])
             if doc.get("corpus_policy_version"):
                 policy_versions.add(doc["corpus_policy_version"])
+            parsed = doc.get("parsed_at")
+            if parsed is not None and (max_parsed_at is None or parsed > max_parsed_at):
+                max_parsed_at = parsed
 
         return {
             "snapshot_at": snapshot_at,
@@ -157,6 +174,8 @@ class KGStore(MongoStoreBase):
             "entries_count": len(entry_ids),
             "parser_versions": sorted(parser_versions),
             "corpus_policy_versions": sorted(policy_versions),
+            # The newest parse in the snapshot: if it moved, the corpus did.
+            "max_parsed_at": as_utc(max_parsed_at),
             "ready_only": ready_only,
         }
 
@@ -223,6 +242,27 @@ class KGStore(MongoStoreBase):
             {"$set": {"state": "failed", "failed_reason": str(reason)[:2000],
                       "updated_at": now_utc()}})
         log.warning("KG build %s failed: %s", build_id, reason)
+
+    def mark_verified(self, build_id: str) -> None:
+        """verify() passed. Tells a build that is complete but deliberately
+        unpublished (publish=False) apart from one still being written —
+        without this, both read as "building"."""
+        now = now_utc()
+        self.builds.update_one(
+            {"_id": build_id},
+            {"$set": {"state": "verified", "verified_at": now, "updated_at": now}})
+
+    def record_validation(self, build_id: str, result: dict[str, Any]) -> None:
+        """Attach the RDF diff gate's verdict to a build.
+
+        Never touches ``state`` or the pointer: a published graph that later
+        fails validation is FLAGGED, not yanked. The in-process path is the
+        product; retroactively un-publishing it would be worse than showing
+        red on the dashboard. The dashboard reads ``validation.equal``.
+        """
+        self.builds.update_one(
+            {"_id": build_id},
+            {"$set": {"validation": result, "updated_at": now_utc()}})
 
     # -- writes -------------------------------------------------------------
 
@@ -457,6 +497,18 @@ def iter_field(field: str, snapshot_at):
         yield from store.iter_field(field, snapshot_at)
 
 
+def iter_nodes(build_id: str):
+    """Stream one build's nodes. kg/serialize.py calls this several times
+    through a factory — one fresh cursor per pass, nothing buffered."""
+    with get_store() as store:
+        yield from store.iter_nodes(build_id)
+
+
+def iter_edges(build_id: str):
+    with get_store() as store:
+        yield from store.iter_edges(build_id)
+
+
 def graph_counts(build_id: str) -> dict:
     with get_store() as store:
         return store.counts(build_id)
@@ -472,6 +524,11 @@ def current_build() -> dict | None:
         return store.current_build()
 
 
+def current_build_id() -> str | None:
+    with get_store() as store:
+        return store.current_build_id()
+
+
 def prune_builds(keep: int = 2) -> dict[str, int]:
     with get_store() as store:
         return store.prune(keep=keep)
@@ -480,3 +537,13 @@ def prune_builds(keep: int = 2) -> dict[str, int]:
 def fail_build(build_id: str, reason: str) -> None:
     with get_store() as store:
         store.fail_build(build_id, reason)
+
+
+def mark_verified(build_id: str) -> None:
+    with get_store() as store:
+        store.mark_verified(build_id)
+
+
+def record_validation(build_id: str, result: dict) -> None:
+    with get_store() as store:
+        store.record_validation(build_id, result)

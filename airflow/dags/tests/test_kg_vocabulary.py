@@ -1,6 +1,6 @@
 """The vocabulary invariant: one edge type set, two representations.
 
-kg_config/kg_mapping.yarrrml states, in a comment, that the RDF predicate
+kg_config/kg_mapping.yarrrml.yml states, in a comment, that the RDF predicate
 local names are deliberately identical to kg/build.py's edge ``type``
 strings — "one vocabulary, two exports, no separate name to keep in sync by
 hand". That was true when written and enforced by nothing.
@@ -19,7 +19,9 @@ from pathlib import Path
 
 from modules.kg import build, taxonomy
 
-MAPPING = Path(__file__).resolve().parents[1] / "kg_config" / "kg_mapping.yarrrml"
+# .yarrrml.yml, not .yarrrml: yatter refuses any extension but .yml/.yaml,
+# and this is also the name the file's own header gives it.
+MAPPING = Path(__file__).resolve().parents[1] / "kg_config" / "kg_mapping.yarrrml.yml"
 
 # Predicates that describe a node rather than relate two nodes. These are
 # attributes and class membership, not graph edges, so they are outside the

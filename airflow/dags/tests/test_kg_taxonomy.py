@@ -3,11 +3,13 @@
 Two of these pin findings rather than behaviour, and should not be deleted
 as redundant:
 
-  * ``test_contested_pair_is_not_encoded`` — ``model -> influencer`` shipped
-    as a skos:broader triple in kg_output.nt while the curated file listed
-    it under ``contested`` ("sample before promoting"). Sampling the live
-    corpus later showed 23 of 44 ``model`` entries are not influencers, so
-    subsumption fails on its own terms.
+  * ``ConsistencyGuardTests`` — ``model -> influencer`` was encoded as a
+    skos:broader triple in kg_output.nt while the curated file listed it
+    under ``contested`` ("sample before promoting"). The entries were
+    sampled and the pair was then promoted by curator decision, so the
+    record and the graph now agree. The guard is what stops them silently
+    disagreeing again: the defect was never the edge itself, it was that a
+    hand-typed constant could contradict the reviewed record unnoticed.
   * ``test_rationales_are_not_truncated`` — the file was flow-style YAML
     with unquoted prose, so a comma inside parentheses silently split a
     value in two and turned the remainder into a bogus key. Three
@@ -26,15 +28,18 @@ from modules.kg import taxonomy as tx
 
 CURATED = Path(__file__).resolve().parents[1] / "kg_config" / "entry_type_taxonomy.yaml"
 
-# The edges the graph is expected to assert. Transcribed from the curated
-# file's two encodable buckets — NOT from the old hand-typed Python
-# constant, which also contained ("model", "influencer").
+# The edges the graph is expected to assert, transcribed from the curated
+# file's two encodable buckets. ("model", "influencer") is here because the
+# curator resolved it there — not because the old hand-typed constant had
+# it. The distinction matters: the constant is gone, and this set is now
+# derived from the reviewed record, which is the only source of truth.
 EXPECTED_EDGES = {
     ("streamer", "creator"), ("fan-art", "fan-labor"), ("vlogger", "creator"),
     ("generator", "application"), ("ai-influencer", "influencer"),
     ("company", "organization"), ("song", "music"), ("album", "music"),
     ("flash-mob", "performance"), ("blockchain", "technology"),
     ("snowclone", "catchphrase"), ("creepypasta", "copypasta"),
+    ("model", "influencer"),
 }
 
 
@@ -54,19 +59,26 @@ class LoadCuratedFileTests(unittest.TestCase):
     def test_encodes_exactly_the_reviewed_edges(self):
         self.assertEqual({e.pair for e in self.tax.edges}, EXPECTED_EDGES)
 
-    def test_contested_pair_is_not_encoded(self):
+    def test_resolved_pair_is_encoded(self):
+        # Promoted out of `contested` by curator decision after sampling.
         pairs = {tuple(sorted(e.pair)) for e in self.tax.edges}
-        self.assertNotIn(("influencer", "model"), pairs)
+        self.assertIn(("influencer", "model"), pairs)
+
+    def test_still_contested_pairs_are_not_encoded(self):
+        pairs = {tuple(sorted(e.pair)) for e in self.tax.edges}
+        self.assertNotIn(("controversy", "viral-debate"), pairs)
+        self.assertNotIn(("animal", "fauna"), pairs)
 
     def test_all_seven_buckets_are_parsed(self):
         self.assertEqual(set(self.tax.bucket_counts), set(tx.BUCKETS))
-        self.assertEqual(self.tax.bucket_counts["contested"], 3)
+        self.assertEqual(self.tax.bucket_counts["broader_confirmed"], 5)
+        self.assertEqual(self.tax.bucket_counts["contested"], 2)
         self.assertEqual(self.tax.bucket_counts["demoted"], 3)
 
     def test_withheld_pairs_are_carried_not_dropped(self):
-        # contested(3) + demoted(3) + do_not_encode(5) = 11 pairs that exist
+        # contested(2) + demoted(3) + do_not_encode(5) = 10 pairs that exist
         # in the record but must never reach the graph.
-        self.assertEqual(len(self.tax.withheld), 11)
+        self.assertEqual(len(self.tax.withheld), 10)
 
     def test_rationales_are_not_truncated(self):
         for e in self.tax.edges:
@@ -123,15 +135,17 @@ class ConsistencyGuardTests(unittest.TestCase):
 
     def test_encoding_a_withheld_pair_is_rejected(self):
         bad = replace(self.tax, edges=self.tax.edges + (
-            tx.BroaderEdge("model", "influencer", "broader_semantic_only"),))
+            tx.BroaderEdge("viral-debate", "controversy",
+                           "broader_semantic_only"),))
         with self.assertRaises(tx.TaxonomyError) as ctx:
             tx.check_consistency(bad)
         self.assertIn("contested", str(ctx.exception))
 
     def test_guard_is_order_insensitive(self):
-        # contested lists [influencer, model]; the edge is model -> influencer
+        # contested lists [controversy, viral-debate]; encoding it the other
+        # way round must still be caught.
         bad = replace(self.tax, edges=(
-            tx.BroaderEdge("influencer", "model", "broader_confirmed"),))
+            tx.BroaderEdge("controversy", "viral-debate", "broader_confirmed"),))
         with self.assertRaises(tx.TaxonomyError):
             tx.check_consistency(bad)
 
@@ -221,7 +235,7 @@ class ValidateAgainstCensusTests(unittest.TestCase):
         census = {"value_counts": {s: 1 for s in self.tax.slugs()}}
         report = tx.validate(self.tax, census)
         self.assertEqual(report["slugs_missing_from_census"], [])
-        self.assertEqual(report["edges_encoded"], 12)
+        self.assertEqual(report["edges_encoded"], 13)
         self.assertEqual(report["edges_dropped"], [])
 
     def test_encodable_edges_filters_to_the_corpus(self):
@@ -232,8 +246,8 @@ class ValidateAgainstCensusTests(unittest.TestCase):
 
     def test_summary_shape_for_the_run_record(self):
         summary = self.tax.summary()
-        self.assertEqual(summary["broader_edges"], 12)
-        self.assertEqual(summary["withheld_pairs"], 11)
+        self.assertEqual(summary["broader_edges"], 13)
+        self.assertEqual(summary["withheld_pairs"], 10)
         self.assertEqual(summary["taxonomy_version"], self.tax.version)
 
 

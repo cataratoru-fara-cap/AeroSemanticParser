@@ -71,6 +71,42 @@ broader_confirmed:            # semantics + stats agree — safest to encode fir
     pmi_bits: 5.1
     rationale: "meme generators are web applications; weakest of this group"
 
+  # Promoted from `contested` by curator decision, 2026-09-16. The original
+  # entry asked for entries to be sampled before promoting; they were, and
+  # the outcome is recorded under `sampled` below — including the evidence
+  # that cuts against this edge, and why it was discounted.
+  - broader: influencer
+    narrower: model
+    evidence: agree
+    cooccur: 21
+    containment: 0.48
+    pmi_bits: 5.7
+    rationale: >-
+      a model is a kind of influencer. A model who becomes part of a meme
+      influences public opinion through it, memes being a vehicle for that;
+      and professional and amateur models alike derive monetary benefit
+      from selling their body image, a product used in most cases to
+      influence public opinion.
+    sampled:
+      date: 2026-09-16
+      corpus_size: 23882
+      entries_with_model: 44
+      entries_with_influencer: 165
+      cooccur: 21
+      containment: 0.48
+      counterexamples: 23        # `model` entries carrying no `influencer`
+      co_occurring_roles: >-
+        creator 30%, musician 16%, actor 11%, vlogger 11%, streamer 9%,
+        athlete 7%, artist 7% — all of category=person
+      weighed: >-
+        23 of 44 `model` entries carry no `influencer` label. Read as
+        incomplete tagging rather than counter-evidence: KYM editors tag the
+        specific role, not the umbrella — the same reasoning that confirmed
+        `fan-art -> fan-labor` at containment 0.12, a quarter of the 0.48
+        measured here. The sample is small and the tagging dirty, so it is
+        recorded as supporting context, not as the basis of the decision,
+        which rests on the meaning argument in `rationale`.
+
 broader_semantic_only:        # the edges co-occurrence could never have found
   - broader: influencer
     narrower: ai-influencer
@@ -140,45 +176,6 @@ contested:                    # stats and semantics disagree — read entries fi
       your proposed fauna > animal is plausible, but so is the reverse
       (animal as everyday umbrella, fauna for species entries) and so is
       near-synonymy. 15 fauna entries — read all of them, it is one coffee
-
-  - pair: [influencer, model]
-    evidence: stats-say-yes-semantics-hesitate
-    cooccur: 18
-    containment: 0.44
-    pmi_bits: 5.7
-    question: >-
-      strong association, but is a model a KIND of influencer or a
-      co-occurring career? Likely KYM-specific usage (internet models) —
-      sample before promoting
-    # The sampling this entry asked for was done on 2026-09-16 against the
-    # live corpus (23,882 entries). It argues AGAINST promotion; the pair
-    # stays withheld. Figures differ from those above because the corpus
-    # grew since the original review.
-    sampled:
-      date: 2026-09-16
-      corpus_size: 23882
-      entries_with_model: 44
-      entries_with_influencer: 165
-      cooccur: 21
-      containment: 0.48
-      counterexamples: 23        # model entries that are NOT influencers
-      co_occurring_roles: >-
-        creator 30%, musician 16%, actor 11%, vlogger 11%, streamer 9%,
-        athlete 7%, artist 7% — all of category=person
-      finding: >-
-        52% of `model` entries are not tagged `influencer`, so subsumption
-        fails on its own terms: a majority of the narrower class would sit
-        outside the broader one. The spread across creator/musician/actor/
-        vlogger/streamer/athlete/artist is the signature of a combining
-        occupational role, matching `crosscutting_qualifiers`, not a
-        subclass. Recommend reclassifying to `demoted` (or to
-        `crosscutting_qualifiers`) at the next curation pass — a curatorial
-        call, so left in `contested` here. Either way it is not encoded.
-      note: >-
-        NB this pair was nonetheless present in the hand-typed
-        CURATED_BROADER_EDGES and shipped as a skos:broader triple in
-        kg_output.nt. modules/kg/taxonomy.py now rejects that contradiction
-        rather than letting it through silently.
 
 demoted:                      # earlier stats-suggested edges rejected on meaning
   - pair: [anime, manga]

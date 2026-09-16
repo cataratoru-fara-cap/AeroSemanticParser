@@ -34,6 +34,19 @@ PyYAML>=6.0              # kg/taxonomy.py, and the YARRRML vocabulary invariant
                          # test. Present transitively via Airflow; declared
                          # explicitly per this project's own rule.
 
+# RML validation path only (kym_kg_validate). The product RDF is serialized
+# in-process by kg/rdf.py with no dependency at all; these two exist to
+# re-derive the same graph independently through the YARRRML mapping and
+# diff the two. Heavier than anything else here — morph-kgc pulls pandas,
+# duckdb and pyoxigraph, ~60 MB with native wheels — which is why the gate
+# is its own DAG rather than a task inside every build.
+yatter>=2.0              # compiles kg_config/kg_mapping.yarrrml.yml -> .rml.ttl per run
+morph-kgc>=2.10          # materialises that mapping over rml_data/*.csv
+
+# Graph stores the KG stage publishes into (kg/loaders.py). Fuseki is plain
+# HTTP (requests, above); Neo4j needs its Bolt driver.
+neo4j>=5.0               # kg/loaders.py: batched UNWIND/MERGE loads, pointer node
+
 # --- Tests ------------------------------------------------------------------
 pytest>=9.1.1
 mongomock>=4.3.0

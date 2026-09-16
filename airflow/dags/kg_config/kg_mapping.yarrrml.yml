@@ -50,6 +50,21 @@ mappings:
       - [skos:inScheme, mk:EntryTypeScheme~iri]
       - [skos:prefLabel, $(label)]
 
+  # The scheme the concepts above declare themselves in. An skos:inScheme
+  # pointing at an undeclared resource is incomplete SKOS. These two triples
+  # were present in the published kg_output.nt but derivable from NOTHING in
+  # the repository — not this file, not the committed .ttl — so the artifact
+  # could not be reproduced from source. scheme.csv is one row, written by
+  # kg/serialize.py; deriving the declaration through the mapping like every
+  # other triple keeps this file the complete description of the RDF graph.
+  entry_type_scheme:
+    sources:
+      - [rml_data/scheme.csv~csv]
+    subjects: $(iri)
+    po:
+      - [a, skos:ConceptScheme]
+      - [rdfs:label, $(label)]
+
   entry_type_broader:
     sources:
       - [rml_data/broader_edges.csv~csv]

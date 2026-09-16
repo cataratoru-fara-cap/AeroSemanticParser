@@ -10,10 +10,19 @@
 #   http://<host>:8080/dashboard/  -> Streamlit dashboard
 #   http://<host>:8080/mongo/      -> mongo-express (basic auth)
 #   http://<host>:8080/pgadmin/    -> pgAdmin (its own login)
+#   http://<host>:8080/sparql/     -> Fuseki, READ-ONLY (the KG's RDF store)
 #
 # No path is stripped: Streamlit (server.baseUrlPath), mongo-express
 # (ME_CONFIG_SITE_BASEURL) and pgAdmin (SCRIPT_NAME) are each configured to
 # expect their own prefix, so the links they generate already include it.
+# The ONE exception is /sparql/ — Fuseki has no base-path setting, so that
+# route uses handle_path, which strips the prefix. See the note at the route.
+#
+# Neo4j (the KG's property graph) is deliberately NOT routed here: its
+# Browser on 7474 opens its own Bolt connection to 7687 from the client, so
+# proxying 7474 alone yields a UI that loads and cannot connect. Both ports
+# are bound to 127.0.0.1; tunnel both:
+#   ssh -L 7474:localhost:7474 -L 7687:localhost:7687 <host>
 {
 	admin off
 	auto_https off
@@ -33,6 +42,22 @@
 	redir /pgadmin /pgadmin/ 308
 	handle /pgadmin/* {
 		reverse_proxy pgadmin:80
+	}
+
+	# EXCEPTION to the no-strip rule in the header: Fuseki cannot be told
+	# it lives under a prefix, so handle_path strips /sparql before proxying.
+	#
+	# Read-only by construction. An unauthenticated SPARQL endpoint that also
+	# exposed /$/ would let anyone on the network DROP the dataset, and
+	# /kg/update would let them rewrite the graph. Those paths are refused
+	# here; the kym_kg DAG writes to fuseki:3030 directly over the Docker
+	# network, never through this route. Query at /sparql/kg/query (or
+	# /sparql/kg with ?query=).
+	redir /sparql /sparql/ 308
+	handle_path /sparql/* {
+		@writes path /$/* /kg/update* /kg/data* /kg/upload*
+		respond @writes "read-only SPARQL endpoint" 403
+		reverse_proxy fuseki:3030
 	}
 
 	# Everything else is Airflow, which keeps the root so existing

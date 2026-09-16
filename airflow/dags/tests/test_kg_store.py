@@ -192,6 +192,16 @@ class PointerTests(unittest.TestCase):
         self.assertEqual(
             self.store.builds.find_one({"_id": BUILD})["state"], "published")
 
+    def test_verified_is_distinct_from_building_and_published(self):
+        # publish=False on the DAG: the build is complete and checked but the
+        # pointer was deliberately left alone. The first live run showed
+        # such a build still reading "building".
+        self.store.mark_verified(BUILD)
+        doc = self.store.builds.find_one({"_id": BUILD})
+        self.assertEqual(doc["state"], "verified")
+        self.assertIn("verified_at", doc)
+        self.assertIsNone(self.store.current_build_id())
+
     def test_failed_build_leaves_the_pointer_untouched(self):
         self.store.publish(BUILD)
         self.store.begin_build(OTHER_BUILD, {})
@@ -308,6 +318,115 @@ class CountsAndPruneTests(unittest.TestCase):
         self.assertEqual(got["pruned"], 2)
         self.assertEqual(self.store.nodes.count_documents({}), 1)
         self.assertEqual(self.store.edges.count_documents({}), 1)
+
+
+class FacadeContractTests(unittest.TestCase):
+    """The DAGs call module-level facades, never methods on a store.
+
+    Twice now a live run has failed with AttributeError because a DAG
+    called ``kg_store.<name>(...)`` and the module had only the METHOD on
+    KGStore: ``iter_nodes`` on the first run, ``current_build_id`` after the
+    Phase 3b rewrite — the second one slipping past a hand-maintained list
+    of names in this very test. So the list is no longer hand-maintained:
+    the names are read out of the DAG sources, and every one of them must
+    exist on the module and be exported.
+    """
+
+    DAG_FILES = ("kym_kg_dag.py", "kym_kg_validate_dag.py")
+
+    @classmethod
+    def facades_used_by_the_dags(cls) -> set[str]:
+        import re
+        from pathlib import Path
+        dags_dir = Path(__file__).resolve().parents[1]
+        names: set[str] = set()
+        for f in cls.DAG_FILES:
+            src = (dags_dir / f).read_text(encoding="utf-8")
+            # `store.<name>(` — a call on the module. `store.KGStore.x(` and
+            # `store.CURRENT` do not match, and are fine.
+            names |= set(re.findall(r"\bstore\.([A-Za-z_]\w*)\(", src))
+        return names
+
+    def test_the_dags_actually_use_the_module(self):
+        names = self.facades_used_by_the_dags()
+        self.assertGreater(len(names), 10, names)
+        self.assertIn("publish_build", names)
+        self.assertIn("current_build_id", names)      # the one that slipped
+
+    def test_every_facade_the_dags_call_exists_and_is_exported(self):
+        for name in sorted(self.facades_used_by_the_dags()):
+            self.assertTrue(callable(getattr(ks, name, None)),
+                            f"kym_kg calls kg_store.{name}() but the module has "
+                            f"no such facade — only KGStore has it?")
+            self.assertIn(name, ks.__all__, name)
+
+    def test_iter_facades_are_generators_over_one_build(self):
+        import mongomock
+        import pymongo
+        from unittest import mock
+        with mock.patch.object(pymongo, "MongoClient", mongomock.MongoClient):
+            with ks.get_store(uri="mongodb://mock", db_name="t") as s:
+                s.save_graph(BUILD, [frame_node()],
+                             [edge(FRAME, "hasTag", "tag:doge")])
+                s.save_graph(OTHER_BUILD, [frame_node()], [])
+            # Note: mongomock clients do not share state across instances,
+            # so exercise the facade against the same client via the store.
+            nodes = list(s.iter_nodes(BUILD))
+            edges = list(s.iter_edges(BUILD))
+        self.assertEqual(len(nodes), 1)
+        self.assertEqual(len(edges), 1)
+        self.assertNotIn("build_id", nodes[0])      # projection strips it
+        self.assertEqual(nodes[0]["id"], FRAME)
+
+
+class ValidationRecordTests(unittest.TestCase):
+    """The RDF diff gate's verdict: a flag on the build, never a veto."""
+
+    def setUp(self):
+        self.store = fresh_store()
+        self.store.begin_build(BUILD, {})
+        self.store.publish(BUILD)
+
+    def test_verdict_is_attached_without_touching_state_or_pointer(self):
+        self.store.record_validation(
+            BUILD, {"equal": False, "content_divergence": ["hasTag"]})
+        doc = self.store.builds.find_one({"_id": BUILD})
+        self.assertFalse(doc["validation"]["equal"])
+        self.assertEqual(doc["state"], "published")       # flagged, not yanked
+        self.assertEqual(self.store.current_build_id(), BUILD)
+
+    def test_a_later_verdict_replaces_the_earlier(self):
+        self.store.record_validation(BUILD, {"equal": False})
+        self.store.record_validation(BUILD, {"equal": True})
+        self.assertTrue(self.store.builds.find_one({"_id": BUILD})
+                        ["validation"]["equal"])
+
+
+class LegacyCoexistenceTests(unittest.TestCase):
+    """The live collections hold ~1M documents from the previous
+    implementation, none with a build_id. The store must connect over them
+    and never count them."""
+
+    def test_legacy_documents_are_invisible_to_build_scoped_reads(self):
+        store = fresh_store()
+        store.nodes.insert_many([{"_id": "legacy-1", "kind": "frame"},
+                                 {"_id": "legacy-2", "kind": "frame"}])
+        store.save_graph(BUILD, [frame_node()], [])
+        self.assertEqual(store.counts(BUILD)["nodes"], 1)
+        self.assertEqual(len(list(store.iter_nodes(BUILD))), 1)
+
+    def test_snapshot_reports_the_newest_parse_as_a_stamp(self):
+        store = fresh_store()
+        newest = now_utc() - timedelta(minutes=1)
+        store.entries.insert_many([
+            {"_id": "a", "url": FRAME, "parsed_at": newest - timedelta(days=1)},
+            {"_id": "b", "url": PARENT, "parsed_at": newest},
+        ])
+        snap = store.snapshot()
+        self.assertIsNotNone(snap["max_parsed_at"])
+        self.assertIsNotNone(snap["max_parsed_at"].tzinfo)
+        self.assertEqual(snap["max_parsed_at"].replace(microsecond=0),
+                         newest.replace(microsecond=0))
 
 
 if __name__ == "__main__":

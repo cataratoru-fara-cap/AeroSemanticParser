@@ -197,6 +197,86 @@ def failure_samples(limit: int = 50) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Knowledge graph (kg_builds / kg_nodes / kg_edges) — build-scoped reads only
+# ---------------------------------------------------------------------------
+# The KG collections are GENERATIONAL: several builds coexist, each tagged
+# with a build_id, and ``kg_builds/{_id:"current"}`` says which one is
+# published. No read against kg_nodes/kg_edges is meaningful without a
+# build_id filter, so everything here resolves the pointer first. The two
+# other stores (Neo4j, Fuseki) are deliberately NOT read from the dashboard —
+# it would need two more drivers — their agreement is recorded in the run
+# summary at publish time and shown from there.
+
+def _kg_group(coll, build_id: str, field: str) -> dict[str, int]:
+    return {(d["_id"] or "(none)"): d["n"] for d in coll.aggregate([
+        {"$match": {"build_id": build_id}},
+        {"$group": {"_id": f"${field}", "n": {"$sum": 1}}},
+        {"$sort": {"n": -1}},
+    ])}
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def kg_state() -> dict[str, Any]:
+    nodes = _coll("MONGODB_KG_NODES_COLLECTION", "kg_nodes")
+    edges = _coll("MONGODB_KG_EDGES_COLLECTION", "kg_edges")
+    builds = _coll("MONGODB_KG_BUILDS_COLLECTION", "kg_builds")
+
+    pointer = builds.find_one({"_id": "current"}) or {}
+    bid = pointer.get("build_id")
+    out: dict[str, Any] = {
+        "build_id": bid,
+        "published_at": _as_utc(pointer.get("published_at")),
+        "state": None, "stamps": {}, "manifest_counts": {}, "validation": None,
+        "nodes": 0, "edges": 0, "frames": 0,
+        "nodes_by_kind": {}, "edges_by_type": {},
+        # Documents from the previous, non-generational implementation carry
+        # no build_id. They are invisible to every build-scoped read and are
+        # never pruned — shown so their dead weight is a known quantity.
+        "legacy_docs": (
+            nodes.estimated_document_count()
+            - nodes.count_documents({"build_id": {"$exists": True}})
+            + edges.estimated_document_count()
+            - edges.count_documents({"build_id": {"$exists": True}})),
+        "generations": builds.count_documents({"_id": {"$ne": "current"}}),
+    }
+    if not bid:
+        return out
+    doc = builds.find_one({"_id": bid}) or {}
+    out["state"] = doc.get("state")
+    out["stamps"] = doc.get("stamps") or {}
+    out["manifest_counts"] = (doc.get("manifest") or {}).get("counts") or {}
+    out["validation"] = doc.get("validation")
+    out["nodes_by_kind"] = _kg_group(nodes, bid, "kind")
+    out["edges_by_type"] = _kg_group(edges, bid, "type")
+    out["nodes"] = sum(out["nodes_by_kind"].values())
+    out["edges"] = sum(out["edges_by_type"].values())
+    out["frames"] = out["nodes_by_kind"].get("frame", 0)
+    return out
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def kg_builds() -> list[dict[str, Any]]:
+    """Every retained generation, newest first — the drill-down behind the
+    pointer. ``current`` marks the published one."""
+    builds = _coll("MONGODB_KG_BUILDS_COLLECTION", "kg_builds")
+    current = (builds.find_one({"_id": "current"}) or {}).get("build_id")
+    rows = []
+    for d in builds.find({"_id": {"$ne": "current"}}).sort("created_at", -1):
+        val = d.get("validation") or {}
+        rows.append({
+            "build_id": d["_id"],
+            "state": d.get("state"),
+            "published": d["_id"] == current,
+            "created_at": _as_utc(d.get("created_at")),
+            "triples": ((d.get("manifest") or {}).get("counts") or {}).get("triples"),
+            "rdf_diff": (None if not val else
+                         ("agrees" if val.get("equal") else
+                          f"DIVERGES: {', '.join(val.get('content_divergence') or [])}")),
+        })
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # History (run_summaries) — the only source of trend
 # ---------------------------------------------------------------------------
 

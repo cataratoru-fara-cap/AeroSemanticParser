@@ -8,20 +8,25 @@ import Mongo or Airflow. Persistence belongs to `modules/kg_store.py`;
 orchestration to `dags/kym_kg_dag.py`.
 
     build.py       one `entries` doc -> (nodes, edges). The ONLY producer;
-                   both the RDF and property-graph projections derive from
-                   it, so the two representations cannot drift.
+                   every representation below is a projection of its output,
+                   so the representations cannot disagree about which edges
+                   exist.
+    taxonomy.py    the curated entry_type taxonomy (kg_config/*.yaml), loaded,
+                   validated, and turned into skos:broader concept edges.
     census.py      frequency + co-occurrence census over a corpus field.
+    serialize.py   one build's (nodes, edges) -> graph.nt + the RML CSVs +
+                   the property-graph view CSVs + a manifest, atomically.
+    rdf.py         (nodes, edges) -> canonical N-Triples. The product path.
+    ntdiff.py      memory-bounded set diff of two N-Triples files. Powers
+                   the gate that checks the RML path against rdf.py.
     metrics.py     IMKG-comparable graph statistics. Pure stdlib by design
                    — no numpy, deliberately (see its module docstring).
     semantics.py   definition-embedding analysis of entry types (LLM).
 
-Transitional, absorbed by later phases — named honestly so nobody mistakes
-them for the destination:
-
-    census_tags.py    -> folds into census.py (same shape, different keys)
-    export_pg.py      -> folds into serialize.py
-    export_rml.py     -> folds into serialize.py
-    _legacy_store.py  -> replaced by modules/kg_store.py
+Retired here, with their behaviour verified equivalent on the live corpus
+before removal: kg_census_tags.py (into census.py), kg_export.py and
+kg_export_rml.py (into serialize.py), and the original kg_store.py (replaced
+by modules/kg_store.py, which owns the collections properly).
 
 Curated inputs these read live in `dags/kg_config/`, tracked in git.
 They used to live in `data/`, which is gitignored — which is exactly how a

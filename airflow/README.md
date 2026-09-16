@@ -5,9 +5,14 @@ structured corpus, orchestrated by Airflow, with a Streamlit dashboard
 over the results.
 
 ```
-kym_discovery  ──▶  kym_scrape  ──▶  kym_parse        (each triggers the next)
-   urls              doms             entries
-                                      parse_failures
+kym_discovery ──▶ kym_scrape ──▶ kym_parse ──▶ kym_kg        (each triggers the next)
+   urls            doms           entries        kg_nodes / kg_edges / kg_builds
+                                  parse_failures data/kg/builds/<build_id>/
+                                                     graph.nt  rml_data/*.csv
+                                                     kg_view_*.csv  manifest.json
+                                                        ▲
+                                     kym_kg_validate ───┘  (weekly: re-derive the
+                                                            RDF via RML, diff it)
 
                      run_summaries  ◀── every stage records its run
                             │
@@ -35,6 +40,8 @@ rather than published on ports of their own:
 | **Dashboard** | **http://&lt;host&gt;:8080/dashboard/** | corpus analytics (read-only) |
 | mongo-express | http://&lt;host&gt;:8080/mongo/ | raw collection browser; login is `MONGO_EXPRESS_USER` / `MONGO_EXPRESS_PASSWORD` in `.env` |
 | pgAdmin | http://&lt;host&gt;:8080/pgadmin/ | Airflow metadata DB; login is `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD` in `.env` |
+| **SPARQL** | **http://&lt;host&gt;:8080/sparql/kg/query** | the KG's RDF store (Fuseki), **read-only** through the proxy — admin and update paths are refused there; `?query=SELECT…` |
+| Neo4j Browser | http://localhost:7474 (tunnel) | the KG's property graph; not proxied — the Browser opens its own Bolt connection, so tunnel **both** ports: `ssh -L 7474:localhost:7474 -L 7687:localhost:7687 <host>`, user `neo4j` / `NEO4J_PASSWORD` |
 | Flower | http://localhost:5555 | `--profile flower` |
 
 The dashboard (8501), mongo-express (8081) and pgAdmin (5050) also listen
@@ -79,19 +86,28 @@ saying so are warnings, not trivia.
 
 ```
 dags/
-  kym_{discovery,scrape,parse}_dag.py   orchestration only — no logic
+  kym_{discovery,scrape,parse,kg}_dag.py   orchestration only — no logic
+  kym_kg_validate_dag.py                   the RDF diff gate, its own DAG
   modules/
     mongo_base.py        shared client/_id/UTC plumbing for the stores
     mongo_store.py       owns `urls`      ← kym_store.py is its facade
     dom_store.py         owns `doms`
     parse_store.py       owns `entries`, `parse_failures`
+    kg_store.py          owns `kg_nodes`, `kg_edges`, `kg_builds` (generational)
     summary_store.py     owns `run_summaries`
     kym_discover.py      pure discovery library + CLI   (no Mongo, no Airflow)
     scrapingant_client.py pure fetch library + CLI       (no Mongo, no Airflow)
     kym_parse.py         pure HTML → model + CLI         (no Mongo, no Airflow)
     kym_models.py        the entry schema and CorpusPolicy
-    kg/                  pure KG libraries — build, census, metrics,
-                         semantics  (no Mongo, no Airflow)
+    kg/                  pure KG libraries (no Mongo, no Airflow):
+      build.py             one entry → nodes/edges — the only producer
+      taxonomy.py          the curated entry-type taxonomy, validated
+      census.py            frequency + co-occurrence over a corpus field
+      serialize.py         one stream → graph.nt + RML CSVs + view CSVs
+      rdf.py               canonical N-Triples serializer
+      ntdiff.py            memory-bounded set diff of two .nt files
+      metrics.py           IMKG-comparable graph statistics (pure stdlib)
+      semantics.py         LLM definition-embedding analysis of types
   kg_config/             curated KG inputs, tracked: the entry-type taxonomy,
                          the YARRRML mapping, the morph-kgc ini template
   tests/                 pytest; conftest.py puts dags/ on sys.path
@@ -106,7 +122,7 @@ so a schema change has one place to edit.
 ## Tests
 
 ```bash
-python -m pytest            # from airflow/ — 74 tests, no network, no real Mongo
+python -m pytest            # from airflow/ — no network, no real Mongo
 ```
 
 Mongo is faked with `mongomock`; HTTP is faked with stub sessions. `pytest.ini`
@@ -123,28 +139,76 @@ deliberately distinguished:
 - **trend** — read from `run_summaries`, because the live collections know
   what is true now, not what was true in July.
 
+The **Knowledge graph** page leads with a third question: is the graph that
+is live the graph we think it is. It reads the published build through
+`kg_builds/current` — every KG query is build-scoped, so nothing there can
+show a mixture of generations — and reports whether the four stores point at
+the same build and whether the last RDF gate agreed. It deliberately does
+**not** connect to Neo4j or Fuseki: that would put two more drivers in this
+image for data the DAG already recorded in the run summary at publish time.
+
 Its colours are a validated palette (see `dashboard/lib/theme.py`), not a
 taste call: categorical hues in fixed order and never cycled, magnitude
 bars on a single sequential hue, reserved status colours that always ship
 with an icon and a written label, and a data table behind every chart.
 
-## Post-parse work
+## The KG stage
 
-`dags/modules/kg/` (build, census, metrics, semantics) holds the pure KG
-libraries. It was called `helpers/`, which named *how* it ran rather than
-what it did. The modules are **still hand-run against `entries`** — the
-`kym_kg` DAG that orchestrates them is in progress — but they now obey the
-same layering rule as the rest of the tree, so a library here imports
-neither Mongo nor Airflow.
+**`kym_kg`** (triggered by parse) — lifts `entries` into a knowledge graph
+and publishes it in every representation at once:
 
-Four modules are explicitly transitional and named so you can tell:
-`census_tags.py` folds into `census.py`, `export_pg.py` and `export_rml.py`
-fold into a single `serialize.py`, and `_legacy_store.py` is replaced by a
-conventional `modules/kg_store.py`.
+- **Neo4j** — the property graph: typed nodes (`Frame`, `TagConcept`, …)
+  and relationships whose types are the edge vocabulary verbatim
+  (`hasTag`, `partOfSeries`, `broader`, …);
+- **Fuseki** — the RDF graph, queryable over SPARQL at `/sparql/`;
+- **files** under `data/kg/builds/<build_id>/` — `graph.nt`, the CSVs the
+  RML mapping reads, Cosmograph/Gephi view CSVs, and a `manifest.json` of
+  per-file hashes; `data/kg/current` points at the published build;
+- **Mongo** `kg_nodes`/`kg_edges`/`kg_builds` — the working copy and the
+  **authority**: `kg_builds/current` is the one pointer the others follow.
 
-Curated inputs live in `dags/kg_config/` and are tracked in git. They used
-to sit in `data/`, which is gitignored — which is how a reviewed 104-line
-taxonomy ended up retyped by hand into a Python constant.
+A store whose password is not configured is skipped, so the stage degrades
+to Mongo + files rather than failing.
+
+Every file is a projection of **one** node/edge stream from `kg/build.py`,
+so the representations cannot disagree about which edges exist. They used
+to: the RDF was derived by a second copy of the loop and carried 14,563
+`relatesToMeme` triples the property graph did not, for two months, and
+nothing compared them.
+
+**`kym_kg_validate`** (weekly, or by hand) is the comparison. It re-derives
+the RDF through an independent path — the YARRRML mapping in
+`dags/kg_config/`, compiled by yatter, materialised by morph-kgc — and
+diffs it against `graph.nt`. Steady state is *equal modulo four provenance
+predicates*; one content triple either way is a failure. It flags the
+build; it does not un-publish it.
+
+### The KG stage publishes atomically
+
+Mongo here is standalone, so there are no multi-document transactions.
+Instead every build writes only into its own `build_id` namespace and
+never touches the published generation — a reader cannot see a half-built
+graph because it lives where nobody is reading. Publishing is: files
+pointer first, then one single-document write to `kg_builds/current`,
+which is atomic even standalone. Authority moves last, so once it says
+"published" everything else already is. Re-running `publish` converges.
+
+No query against `kg_nodes`/`kg_edges` is valid without a `build_id`
+filter; every index leads on it so an unfiltered scan is visibly wrong.
+
+To get the current graph: Mongo readers take `kg_builds.findOne({_id:
+"current"}).build_id` and filter on it; file consumers follow
+`data/kg/current` (or read `data/kg/CURRENT`) to a self-describing
+`manifest.json`.
+
+### Curated inputs are tracked
+
+`dags/kg_config/` holds the reviewed entry-type taxonomy, the YARRRML
+mapping and the morph-kgc ini template. They used to sit in `data/`, which
+is gitignored — which is how a 104-line reviewed taxonomy ended up retyped
+by hand into a Python constant, and how that constant came to include an
+edge the taxonomy had marked "sample before promoting". `kg/taxonomy.py`
+now refuses a file that contradicts itself.
 
 ## Conventions worth not breaking
 

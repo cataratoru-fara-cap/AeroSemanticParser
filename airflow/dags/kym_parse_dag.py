@@ -42,6 +42,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
+from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.sdk import Param, dag, task
 from pydantic import ValidationError
 
@@ -189,11 +190,17 @@ def kym_parse_dag():
             stage="parse", dag_id="kym_parse",
             run_id=run_id or "manual", summary=summary)
 
+    trigger_kg = TriggerDagRunOperator(
+        task_id="trigger_kym_kg",
+        trigger_dag_id="kym_kg",
+        wait_for_completion=False,
+    )
+
     urls = select_urls()
     chunks = chunk_urls(urls)
     stats = parse_chunk.expand(chunk=chunks)
     summary = summarize(stats)
-    record_summary(summary)
+    record_summary(summary) >> trigger_kg
 
 
 kym_parse_dag()
