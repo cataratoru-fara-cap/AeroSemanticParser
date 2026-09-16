@@ -1,0 +1,105 @@
+# Semantic edge proposals for entry_type (approach 2: meaning-first, stats as audit)
+# Companion to kg_entry_type_facets.yaml. Every edge is a PROPOSAL for review —
+# nothing here should be auto-applied. Evidence key:
+#   agree      — stats and semantics point the same way
+#   invisible  — semantically clear, statistically unmeasurable (expected chance
+#                co-occurrence < ~1, so absence of pairs is uninformative)
+#   anti       — meaningful anti-co-occurrence (expected >> observed): the
+#                substitution signal that supports synonym/subclass readings
+#   contested  — stats and semantics disagree; sample real entries before deciding
+
+broader_confirmed:            # semantics + stats agree — safest to encode first
+  - {broader: creator, narrower: streamer,
+     evidence: agree, cooccur: 23, containment: 0.58, pmi_bits: 6.0,
+     rationale: streamers are one kind of content creator}
+  - {broader: fan-labor, narrower: fan-art,
+     evidence: agree, cooccur: 46, containment: 0.12, pmi_bits: 3.6,
+     rationale: fan labor is the umbrella for fan-made works; art is one form.
+       Low containment is expected — editors usually tag only the specific label}
+  - {broader: creator, narrower: vlogger,
+     evidence: agree, cooccur: 24, containment: 0.11, pmi_bits: 3.7,
+     rationale: same umbrella logic as streamer}
+  - {broader: application, narrower: generator,
+     evidence: agree, cooccur: 8, containment: 0.16, pmi_bits: 5.1,
+     rationale: meme generators are web applications; weakest of this group}
+
+broader_semantic_only:        # the edges co-occurrence could never have found
+  - {broader: influencer, narrower: ai-influencer,
+     evidence: invisible, note: only 3 entries — definitionally certain though,
+     rationale: an AI influencer is an influencer by construction}
+  - {broader: organization, narrower: company,
+     evidence: invisible,
+     rationale: a company is a kind of organization; expected chance co-occurrence 0.06}
+  - {broader: music, narrower: song,
+     evidence: invisible-or-anti, note: music used only 19 times vs song 878 —
+       classic underused umbrella term,
+     rationale: a song is a musical work}
+  - {broader: music, narrower: album,
+     evidence: invisible, rationale: same umbrella}
+  - {broader: performance, narrower: flash-mob,
+     evidence: invisible,
+     rationale: a flash mob is a form of public performance}
+  - {broader: technology, narrower: blockchain,
+     evidence: invisible, rationale: definitional}
+  - {broader: catchphrase, narrower: snowclone,
+     evidence: weak-agree, cooccur: 181, containment: 0.26, pmi_bits: 1.0,
+     rationale: a snowclone is a fill-in-the-blank catchphrase template;
+       semantics say yes, stats say only weakly — keep, but flag at review}
+  - {broader: copypasta, narrower: creepypasta,
+     evidence: invisible, cooccur: 5,
+     rationale: creepypasta originated as horror copypasta; NOTE the genre has
+       drifted toward standalone horror fiction — confidence medium, sample entries}
+
+contested:                    # stats and semantics disagree — read entries first
+  - {pair: [controversy, viral-debate],
+     evidence: anti, expected_cooccur: ~18, observed: "<=2",
+     question: is viral-debate a NARROWER kind of controversy (substitution
+       explains the anti-signal) or a deliberately DISJOINT sibling
+       (lighthearted mass disagreement vs serious dispute)? Sample 10 entries}
+  - {pair: [animal, fauna],
+     evidence: uninformative, expected_cooccur: 0.26,
+     question: your proposed fauna > animal is plausible, but so is the reverse
+       (animal as everyday umbrella, fauna for species entries) and so is
+       near-synonymy. 15 fauna entries — read all of them, it is one coffee}
+  - {pair: [influencer, model],
+     evidence: stats-say-yes-semantics-hesitate, cooccur: 18, containment: 0.44,
+     pmi_bits: 5.7,
+     question: strong association, but is a model a KIND of influencer or a
+       co-occurring career? Likely KYM-specific usage (internet models) —
+       sample before promoting}
+
+demoted:                      # earlier stats-suggested edges rejected on meaning
+  - {pair: [anime, manga],
+     was: near-synonym candidate (containment 0.94/0.77, pmi 7.0),
+     now: relatedTo — adaptation pair, not synonyms; franchises span both media,
+       which is why they co-occur so strongly. Keep as two concepts}
+  - {pair: [cartoon, tv-show],
+     was: broader candidate (containment 0.56, pmi 5.7),
+     now: relatedTo — cartoon is an animation medium, tv-show a distribution
+       channel; web and film cartoons exist. Overlap is not subsumption}
+  - {pair: [exploitable, image-macro],
+     was: top co-occurring pair (789),
+     now: relatedTo — workflow complements (template in, captioned image out),
+       two orthogonal format facets, neither contains the other}
+
+do_not_encode_as_broader:     # real relations, wrong relation type (not is-a)
+  - {pair: [crime, trial], relation: sequential/causal — a trial follows a crime}
+  - {pair: [hack, leak], relation: sequential/causal}
+  - {pair: [gaffe, controversy], relation: causal — gaffes trigger controversies}
+  - {pair: [protest, movement], relation: part-of (mereology) — protests are
+       events within movements; partonomy and taxonomy must not be mixed}
+  - {pair: [song, album], relation: part-of — songs are contained in albums;
+       both are narrower than music as CLASSES, but song is not a kind of album}
+
+crosscutting_qualifiers:      # act as adjectives, combine with anything — no parents
+  - {type: ai-generated, note: production method, orthogonal to every format}
+  - {type: historical-figure, note: temporal qualifier over person roles}
+  - {type: shock-media, note: affect qualifier over formats}
+
+missing_umbrellas:            # true parents that do not exist as types
+  - {children: [comic-book, webcomic, manga], missing: comics}
+  - {children: [video-game, tabletop-games], missing: game}
+  - {children: [film, tv-show, web-series], missing: screen-media}
+  - note: do NOT force an existing sibling to play parent. The facet concepts
+      from kg_entry_type_facets.yaml (format, medium, person_role, ...) can be
+      minted as first-class concepts and serve as the broader target instead.

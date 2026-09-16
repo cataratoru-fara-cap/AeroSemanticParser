@@ -1,0 +1,93 @@
+# kg_mapping.yarrrml.yml — MemeAtlas RDF mapping (Phase 5)
+# ============================================================================
+# Consumes the clean CSVs from kg_export_rml.py. Run through yarrrml-parser
+# to compile to RML, then Morph-KGC (or the RMLMapper) to execute against
+# the CSVs and emit N-Triples. See run commands below the mapping.
+#
+# Design choices, so the "why" isn't buried in triple syntax:
+#   - Predicate local names deliberately match kg_build.py's own edge
+#     "type" strings (hasEntryType, hasTag, partOfSeries, relatesToMeme,
+#     citesExternal) — the property-graph edge type IS the RDF predicate
+#     local name. One vocabulary, two exports, no separate name to keep in
+#     sync by hand.
+#   - entry_type gets full SKOS treatment (skos:Concept, skos:inScheme,
+#     skos:broader for the curated pairs) since it's small (119) and
+#     curated. tags stay plain string literals via mk:hasTag for now —
+#     102k distinct tags with heavy singular/plural duplication aren't
+#     clean enough to mint as SKOS concepts yet (see the normalization
+#     note from the tag-census review). Revisit once normalized.
+#   - No blank nodes anywhere. Frame IRIs are the live KYM URL, doubling
+#     as the Mongo join key (IMKG convention, kept deliberately even
+#     though strict byte-compat with IMKG is no longer a goal).
+#   - Namespace `mk:` is a placeholder — same open question flagged in
+#     kg_eventkg_schema.yaml (mk:kym/<slug> vs. URL-as-IRI). Using the
+#     live URL as subject here regardless of how that question resolves,
+#     since it's already the established convention for the frame layer.
+
+prefixes:
+  mk: "https://meme4.science/atlas/"
+  skos: "http://www.w3.org/2004/02/skos/core#"
+  rdfs: "http://www.w3.org/2000/01/rdf-schema#"
+
+mappings:
+
+  frame:
+    sources:
+      - [rml_data/frames.csv~csv]
+    subjects: $(url)
+    po:
+      - [a, mk:MemeFrame]
+      - [rdfs:label, $(title)]
+      - [mk:category, $(category)]
+      - [mk:status, $(status)]
+
+  entry_type_concept:
+    sources:
+      - [rml_data/types.csv~csv]
+    subjects: https://knowyourmeme.com/types/$(slug)
+    po:
+      - [a, skos:Concept]
+      - [skos:inScheme, mk:EntryTypeScheme~iri]
+      - [skos:prefLabel, $(label)]
+
+  entry_type_broader:
+    sources:
+      - [rml_data/broader_edges.csv~csv]
+    subjects: https://knowyourmeme.com/types/$(narrower)
+    po:
+      - [skos:broader, https://knowyourmeme.com/types/$(broader)~iri]
+
+  has_entry_type:
+    sources:
+      - [rml_data/entry_type_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:hasEntryType, https://knowyourmeme.com/types/$(slug)~iri]
+
+  has_tag:
+    sources:
+      - [rml_data/tag_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:hasTag, $(tag)]
+
+  part_of_series:
+    sources:
+      - [rml_data/series_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:partOfSeries, $(parent_url)~iri]
+
+  relates_to_meme:
+    sources:
+      - [rml_data/relates_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:relatesToMeme, $(target_url)~iri]
+
+  cites_external:
+    sources:
+      - [rml_data/cites_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:citesExternal, $(target_url)~iri]
