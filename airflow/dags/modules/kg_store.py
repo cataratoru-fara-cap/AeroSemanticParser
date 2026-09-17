@@ -82,14 +82,16 @@ CURRENT = "current"
 # small enough that a failure loses little and memory stays flat.
 BULK_BATCH = 1000
 
-# Fields kg/build.py actually reads. Projecting only these matters: an
-# entries doc carries the full section text and image lists, which are the
-# bulk of its size and which the graph builder never looks at. The OOM
-# warnings in parse_store.py are about exactly this class of mistake.
+# Since KG build 3.0.0 the graph carries the whole parsed record (section
+# text, images, references), so the projection EXCLUDES instead of listing
+# what to include: a field the parser adds reaches kg/build.py without an
+# edit here. What is excluded is pipeline bookkeeping kg/build.py
+# deliberately does not model. Streaming still matters — a chunk of full
+# entries is several MB, which is why iter_entries yields rather than lists
+# (the OOM warnings in parse_store.py).
 ENTRY_PROJECTION = {
-    "_id": 0, "url": 1, "title": 1, "category": 1, "status": 1,
-    "entry_type": 1, "tags": 1, "series_parent": 1,
-    "sections.links": 1, "additional_references": 1, "external_references": 1,
+    "_id": 0, "dom_content_sha256": 0, "corpus_policy_version": 0,
+    "schema_version": 0,
 }
 
 
@@ -273,13 +275,20 @@ class KGStore(MongoStoreBase):
         ``frame_stub`` nodes are dropped: materialize_stubs creates them
         once, afterwards, for edge targets that have no node. See the
         module docstring.
-        """
-        from pymongo import ReplaceOne
 
-        node_ops: list[Any] = []
+        Nodes are MERGED, not replaced. One node id can be emitted several
+        times with different properties — the same image file is an entry's
+        og:image (with its size) on one page and a captioned section image
+        on another — so each write ``$set``s only the values it has, within
+        a chunk and across chunks. On a real conflict (two captions for one
+        file) the later write wins, which is still one value per property,
+        and every store is fed from this one merged document.
+        """
+        from pymongo import ReplaceOne, UpdateOne
+
         edge_ops: list[Any] = []
         written = {"nodes_written": 0, "edges_written": 0, "stubs_deferred": 0}
-        seen_nodes: set[str] = set()
+        merged: dict[str, dict] = {}
         seen_edges: set[str] = set()
 
         def flush(coll, ops, key):
@@ -288,17 +297,23 @@ class KGStore(MongoStoreBase):
                 written[key] += len(ops)
                 ops.clear()
 
+        # A chunk's distinct nodes are bounded by the chunk size (hundreds of
+        # entries), so merging them in memory first is cheap.
         for node in nodes:
             if node.get("kind") == "frame_stub":
                 written["stubs_deferred"] += 1
                 continue
-            node_id = node["id"]
-            if node_id in seen_nodes:
-                continue
-            seen_nodes.add(node_id)
-            doc = {**node, "_id": self.node_key(build_id, node_id),
-                   "build_id": build_id, "node_id": node_id}
-            node_ops.append(ReplaceOne({"_id": doc["_id"]}, doc, upsert=True))
+            into = merged.setdefault(node["id"], {})
+            into.update({k: v for k, v in node.items()
+                         if v not in (None, "", [])})
+
+        node_ops: list[Any] = []
+        for node_id, node in merged.items():
+            key = self.node_key(build_id, node_id)
+            node_ops.append(UpdateOne(
+                {"_id": key},
+                {"$set": {**node, "build_id": build_id, "node_id": node_id}},
+                upsert=True))
             if len(node_ops) >= BULK_BATCH:
                 flush(self.nodes, node_ops, "nodes_written")
 
@@ -337,7 +352,8 @@ class KGStore(MongoStoreBase):
         missing = sorted(wanted - have)
         ops = []
         for node_id in missing:
-            if node_id.startswith(("type:", "tag:")) or not _is_kym_url(node_id):
+            if (node_id.startswith(("type:", "tag:", "region:", "image:"))
+                    or not _is_kym_url(node_id)):
                 # Not a KYM page: a concept or an outbound citation target.
                 node = {"id": node_id, "kind": "external_ref", "label": None}
             else:
@@ -354,19 +370,35 @@ class KGStore(MongoStoreBase):
 
     def save_concept_edges(self, build_id: str,
                            edges: Iterable[dict]) -> dict[str, int]:
-        """Concept-to-concept edges (skos:broader) from the taxonomy."""
+        """Concept-to-concept edges (subTypeOf -> rdfs:subClassOf)."""
         return {"concept_edges_written":
                 self.save_graph(build_id, (), edges)["edges_written"]}
 
     # -- reads --------------------------------------------------------------
 
-    def iter_nodes(self, build_id: str) -> Iterator[dict]:
-        yield from self.nodes.find({"build_id": build_id},
-                                   {"_id": 0, "build_id": 0})
+    def iter_nodes(self, build_id: str, kinds: Iterable[str] | None = None,
+                   fields: Iterable[str] | None = None) -> Iterator[dict]:
+        """One build's nodes, optionally only some kinds and some fields.
 
-    def iter_edges(self, build_id: str) -> Iterator[dict]:
-        yield from self.edges.find({"build_id": build_id},
-                                   {"_id": 0, "build_id": 0})
+        ``fields`` matters for consumers that need the graph's shape but not
+        its text (metrics): section text and about narratives are most of a
+        node document's bytes. ``id`` and ``kind`` are always returned.
+        """
+        query: dict[str, Any] = {"build_id": build_id}
+        if kinds is not None:
+            query["kind"] = {"$in": list(kinds)}
+        if fields is None:
+            projection: dict[str, int] = {"_id": 0, "build_id": 0, "node_id": 0}
+        else:
+            projection = {"_id": 0, "id": 1, "kind": 1, **{f: 1 for f in fields}}
+        yield from self.nodes.find(query, projection)
+
+    def iter_edges(self, build_id: str,
+                   types: Iterable[str] | None = None) -> Iterator[dict]:
+        query: dict[str, Any] = {"build_id": build_id}
+        if types is not None:
+            query["type"] = {"$in": list(types)}
+        yield from self.edges.find(query, {"_id": 0, "src": 1, "dst": 1, "type": 1})
 
     def counts(self, build_id: str) -> dict[str, Any]:
         """Per-kind and per-type counts, aggregated server-side."""
@@ -497,16 +529,16 @@ def iter_field(field: str, snapshot_at):
         yield from store.iter_field(field, snapshot_at)
 
 
-def iter_nodes(build_id: str):
+def iter_nodes(build_id: str, kinds=None, fields=None):
     """Stream one build's nodes. kg/serialize.py calls this several times
     through a factory — one fresh cursor per pass, nothing buffered."""
     with get_store() as store:
-        yield from store.iter_nodes(build_id)
+        yield from store.iter_nodes(build_id, kinds=kinds, fields=fields)
 
 
-def iter_edges(build_id: str):
+def iter_edges(build_id: str, types=None):
     with get_store() as store:
-        yield from store.iter_edges(build_id)
+        yield from store.iter_edges(build_id, types=types)
 
 
 def graph_counts(build_id: str) -> dict:

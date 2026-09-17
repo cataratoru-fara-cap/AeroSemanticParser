@@ -34,7 +34,7 @@ gets to disagree with it quietly.
 
 Buckets
 -------
-Encoded as ``skos:broader``:
+Encoded as ``subTypeOf`` edges (RDF: ``rdfs:subClassOf``):
     broader_confirmed          semantics and statistics agree
     broader_semantic_only      semantically clear, statistically invisible
 
@@ -46,11 +46,16 @@ rather than becoming folklore:
     crosscutting_qualifiers    adjectival facets that have no parent
     missing_umbrellas          true parents that do not exist as types yet
 
-Edge direction is ``narrower --broader--> broader``, matching SKOS (a
-narrower concept has a broader one) and the ``narrower,broader`` header of
-the RML CSV. The edge type string is ``"broader"`` because that is the
-local name of ``skos:broader`` — the vocabulary invariant test in
-tests/test_kg_vocabulary.py pins that.
+Edge direction is ``narrower --subTypeOf--> broader``, matching the
+``narrower,broader`` header of the RML CSV. The bucket names keep the
+curators' word "broader"; the EDGE is ``subTypeOf``.
+
+Why not ``skos:broader``: MemeAtlas extends IMKG, and IMKG already uses
+``skos:broader`` between MEDIA FRAMES for "Part of a series on". Entry types
+in IMKG are classes (a frame is ``rdf:type kymt:<slug>``; the paper calls
+them "subclasses of Image macro"), so a curated "a streamer is a kind of
+creator" is ``rdfs:subClassOf`` between those classes. Using ``skos:broader``
+here as well would have given one predicate two meanings in the same graph.
 """
 from __future__ import annotations
 
@@ -63,9 +68,10 @@ __all__ = [
     "BroaderEdge", "Taxonomy", "TaxonomyError", "load", "validate",
 ]
 
-# The local name of skos:broader. Kept as a tuple to sit alongside
-# build.EDGE_TYPES in the vocabulary invariant.
-CONCEPT_EDGE_TYPES: tuple[str, ...] = ("broader",)
+# Kept as a tuple to sit alongside build.EDGE_TYPES in the vocabulary
+# invariant. Maps to rdfs:subClassOf in kg/rdf.py — see the module docstring.
+CONCEPT_EDGE_TYPE = "subTypeOf"
+CONCEPT_EDGE_TYPES: tuple[str, ...] = (CONCEPT_EDGE_TYPE,)
 
 ENCODED_BUCKETS: tuple[str, ...] = ("broader_confirmed", "broader_semantic_only")
 
@@ -125,7 +131,7 @@ class Taxonomy:
         """
         return [{"src": f"type:{e.narrower}",
                  "dst": f"type:{e.broader}",
-                 "type": "broader"}
+                 "type": CONCEPT_EDGE_TYPE}
                 for e in self.edges]
 
     def slugs(self) -> set[str]:
@@ -270,7 +276,7 @@ def check_consistency(tax: Taxonomy) -> None:
                 f"The curated record must not contradict itself — resolve it "
                 f"in the YAML, not downstream.")
 
-    # A cycle in skos:broader is not a taxonomy.
+    # A cycle in the subtype hierarchy is not a taxonomy.
     parents = {e.narrower: e.broader for e in tax.edges}
     for start in parents:
         slow, fast = start, parents.get(start)
@@ -312,5 +318,5 @@ def encodable_edges(tax: Taxonomy, census: dict) -> list[dict[str, str]]:
     """concept_edges(), restricted to slugs the corpus actually uses."""
     known = set(census.get("value_counts") or {})
     return [{"src": f"type:{e.narrower}", "dst": f"type:{e.broader}",
-             "type": "broader"}
+             "type": CONCEPT_EDGE_TYPE}
             for e in tax.edges if e.narrower in known and e.broader in known]

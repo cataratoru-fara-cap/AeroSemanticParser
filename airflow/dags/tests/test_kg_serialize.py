@@ -26,10 +26,17 @@ F1 = "https://knowyourmeme.com/memes/doge"
 F2 = "https://knowyourmeme.com/memes/cheems"
 STUB = "https://knowyourmeme.com/memes/shiba-inu"
 EXT = "https://en.wikipedia.org/wiki/Doge"
+IMG = "https://i.kym-cdn.com/photos/images/original/000/1.jpg"
+SEC = "https://meme4.science/atlas/entry/abc/section/2"
+LNK = SEC + "/link/0"
+REF = "https://meme4.science/atlas/entry/abc/reference/0"
+AREF = "https://meme4.science/atlas/entry/abc/additional-reference/0"
 
 NODES = [
     {"id": F1, "kind": "frame", "label": 'Doge "the" dog', "category": "meme",
-     "status": "confirmed"},
+     "status": "confirmed", "year": 2013, "from": "Tumblr",
+     "about": "line one\n\nline\ttwo", "added": "2011-03-13T07:06:40Z",
+     "badges": ["Sensitive"], "corpus_missing": ["region", "tags"]},
     {"id": F2, "kind": "frame", "label": "Cheems", "category": "meme",
      "status": "confirmed"},
     {"id": STUB, "kind": "frame_stub", "label": None, "category": "meme",
@@ -39,6 +46,16 @@ NODES = [
     {"id": "tag:doge", "kind": "tag_concept", "label": "doge"},
     {"id": "tag:dog", "kind": "tag_concept", "label": "dog"},
     {"id": EXT, "kind": "external_ref", "label": None},
+    {"id": "region:Japan", "kind": "region_concept", "label": "Japan"},
+    {"id": SEC, "kind": "section", "section_kind": "other", "heading": "Notes",
+     "position": 2, "level": 2, "text": "p1\n\np2"},
+    {"id": LNK, "kind": "link", "anchor_text": "Cheems"},
+    {"id": REF, "kind": "reference", "ref_class": "ExternalReference",
+     "index": 1, "citation_text": "Wikipedia"},
+    {"id": AREF, "kind": "reference", "ref_class": "AdditionalReference",
+     "site_name": "Wikipedia"},
+    {"id": "image:" + IMG, "kind": "image", "width": 600, "height": 400,
+     "caption": "wow"},
 ]
 EDGES = [
     {"src": F1, "type": "hasEntryType", "dst": "type:image-macro"},
@@ -48,8 +65,21 @@ EDGES = [
     {"src": F1, "type": "partOfSeries", "dst": STUB},
     {"src": F1, "type": "relatesToMeme", "dst": F2},
     {"src": F1, "type": "citesExternal", "dst": EXT},
-    {"src": "type:image-macro", "type": "broader", "dst": "type:meme"},
+    {"src": "type:image-macro", "type": "subTypeOf", "dst": "type:meme"},
+    {"src": F1, "type": "hasRegion", "dst": "region:Japan"},
+    {"src": F1, "type": "hasSection", "dst": SEC},
+    {"src": SEC, "type": "hasLink", "dst": LNK},
+    {"src": LNK, "type": "linksTo", "dst": F2},
+    {"src": F1, "type": "hasReference", "dst": REF},
+    {"src": F1, "type": "hasReference", "dst": AREF},
+    {"src": REF, "type": "refersTo", "dst": EXT},
+    {"src": AREF, "type": "refersTo", "dst": EXT},
+    {"src": F1, "type": "hasImage", "dst": "image:" + IMG},
+    {"src": SEC, "type": "hasImage", "dst": "image:" + IMG},
 ]
+
+
+ONTOLOGY = str(Path(__file__).resolve().parents[1] / "kg_config" / "memeatlas.ttl")
 
 
 def read_csv(path):
@@ -66,7 +96,8 @@ class Built(unittest.TestCase):
         cls.out = cls._tmp.name
         cls.manifest = serialize.write_build(
             lambda: iter(NODES), lambda: iter(EDGES), cls.out,
-            build_id="kg_test", stamps={"kg_build_version": "2.0.0"})
+            build_id="kg_test", stamps={"kg_build_version": "2.0.0"},
+            ontology_path=ONTOLOGY)
 
     @classmethod
     def tearDownClass(cls):
@@ -79,12 +110,12 @@ class Built(unittest.TestCase):
 class LayoutTests(Built):
     def test_every_expected_file_exists(self):
         for name in ("graph.nt", "kg_view_nodes.csv", "kg_view_edges.csv",
-                     "manifest.json"):
+                     "manifest.json", "ontology.ttl"):
             self.assertTrue(Path(self.out, name).is_file(), name)
         for name, _ in serialize.EDGE_TYPE_TO_RML_FILE.values():
             self.assertTrue(Path(self.out, serialize.RML_DIR, name).is_file(), name)
-        for name in serialize.RML_NODE_FILES:
-            self.assertTrue(Path(self.out, serialize.RML_DIR, name).is_file(), name)
+        written = {p.name for p in Path(self.out, serialize.RML_DIR).iterdir()}
+        self.assertEqual(written, serialize.all_rml_files())
 
     def test_no_tmp_files_remain(self):
         leftovers = [p for p in Path(self.out).rglob("*.tmp")]
@@ -111,7 +142,32 @@ class RmlValueMappingTests(Built):
     def test_frames_are_real_frames_only(self):
         rows = self.rml("frames.csv")
         self.assertEqual({r["url"] for r in rows}, {F1, F2})
-        self.assertEqual(list(rows[0]), ["url", "title", "category", "status"])
+        self.assertEqual(list(rows[0]), [c for c, _ in serialize.RML_NODE_FILES["frames.csv"][1]])
+
+    def test_frame_row_carries_imkg_fields_and_leaves_absent_ones_empty(self):
+        rows = {r["url"]: r for r in self.rml("frames.csv")}
+        self.assertEqual(rows[F1]["category_class"], "Meme")
+        self.assertEqual(rows[F1]["year"], "2013")
+        self.assertEqual(rows[F1]["about"], "line one\n\nline\ttwo")
+        self.assertEqual(rows[F2]["year"], "")
+
+    def test_list_properties_get_one_row_per_value(self):
+        self.assertEqual(self.rml("frame_badges.csv"), [{"url": F1, "badge": "Sensitive"}])
+        self.assertEqual({r["missing"] for r in self.rml("frame_corpus_missing.csv")},
+                         {"region", "tags"})
+        self.assertEqual(self.rml("frame_aliases.csv"), [])
+
+    def test_body_rows_use_iris(self):
+        self.assertEqual(self.rml("sections.csv")[0]["iri"], SEC)
+        self.assertEqual(self.rml("images.csv")[0]["iri"], IMG)
+        self.assertEqual(self.rml("image_edges.csv"),
+                         [{"holder": F1, "image": IMG}, {"holder": SEC, "image": IMG}])
+        refs = {r["iri"]: r for r in self.rml("references.csv")}
+        self.assertEqual(refs[REF]["citation_index"], "1")
+        self.assertEqual(refs[AREF]["site_name"], "Wikipedia")
+
+    def test_region_edges_strip_the_prefix(self):
+        self.assertEqual(self.rml("region_edges.csv"), [{"url": F1, "region": "Japan"}])
 
     def test_types_strip_the_prefix_and_render_the_label(self):
         rows = {r["slug"]: r["label"] for r in self.rml("types.csv")}
@@ -125,8 +181,8 @@ class RmlValueMappingTests(Built):
         tags = {(r["url"], r["tag"]) for r in self.rml("tag_edges.csv")}
         self.assertEqual(tags, {(F1, "doge"), (F1, "dog"), (F2, "doge")})
 
-    def test_broader_edges_strip_both_sides(self):
-        self.assertEqual(self.rml("broader_edges.csv"),
+    def test_subtype_edges_strip_both_sides(self):
+        self.assertEqual(self.rml("subtype_edges.csv"),
                          [{"narrower": "image-macro", "broader": "meme"}])
 
     def test_url_edges_pass_through(self):
@@ -149,11 +205,12 @@ class ProjectionsAgreeTests(Built):
                          read_csv(os.path.join(self.out, "kg_view_edges.csv")))
         self.assertEqual(counts, Counter(e["type"] for e in EDGES))
 
-    def test_rdf_edge_triples_equal_input_edges_per_type(self):
-        _, _, preds = ntdiff.digest(os.path.join(self.out, "graph.nt"))
-        for etype in set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES):
-            expected = sum(1 for e in EDGES if e["type"] == etype)
-            self.assertEqual(preds.get(etype, 0), expected, etype)
+    def test_every_input_edge_is_in_the_rdf(self):
+        graph = set(Path(self.out, "graph.nt").read_text(encoding="utf-8").splitlines())
+        for edge in EDGES:
+            expected = set(rdf.iter_triples([], [edge]))
+            self.assertTrue(expected, edge)
+            self.assertLessEqual(expected, graph, edge)
 
     def test_manifest_counts_match(self):
         self.assertEqual(self.manifest["counts"]["edges"], len(EDGES))
@@ -172,7 +229,7 @@ class SetSemanticsTests(unittest.TestCase):
             _, _, preds = ntdiff.digest(os.path.join(tmp, "graph.nt"))
         self.assertEqual(len(tag_rows), 3)
         self.assertEqual(sum(1 for r in pg_rows if r["type"] == "hasTag"), 3)
-        self.assertEqual(preds["hasTag"], 3)
+        self.assertEqual(preds["tag"], 3)
 
 
 class ViewFilterTests(unittest.TestCase):

@@ -1,43 +1,54 @@
 """
-kg/rdf.py — (nodes, edges) -> canonical N-Triples
-====================================================
+kg/rdf.py — (nodes, edges) -> canonical N-Triples, in IMKG's vocabulary
+==========================================================================
 Pure: no Mongo, no Airflow, no rdflib. N-Triples is one triple per line, so
-serializing it directly keeps the RDF path dependency-free and streaming —
-important at ~800k triples, where building an in-memory graph object first
-would cost more than the whole rest of the build.
+serializing it directly keeps the RDF path dependency-free and streaming.
 
-This is the product path. The YARRRML/RML mapping in
-``dags/kg_config/kg_mapping.yarrrml.yml`` is kept as a *validation* path: a
-separate DAG compiles it, runs morph-kgc over the same corpus, and diffs the
-two outputs (see kg/ntdiff.py). That gate exists because the two
-representations previously drifted 14,571 triples apart without anything
-noticing.
+This is the product path. The YARRRML mapping in
+``dags/kg_config/kg_mapping.yarrrml.yml`` is an independent VALIDATION path:
+kym_kg_validate compiles it, runs morph-kgc over the RML CSVs, and diffs the
+result against this module's output (kg/ntdiff.py).
 
-Vocabulary
-----------
-Predicate local names are identical to kg/build.py's edge ``type`` strings
-and kg/taxonomy.py's ``CONCEPT_EDGE_TYPES``; tests/test_kg_vocabulary.py
-pins that against the YARRRML file.
+The crosswalk: MemeAtlas extends IMKG
+-------------------------------------
+kg/build.py speaks property-graph names; this module decides what each one
+means in RDF. Where IMKG (Tommasini, Ilievski & Wijesiriwardene, ESWC 2023,
+github.com/riccardotommasini/imkg) already models a thing, its terms are
+reused VERBATIM, so an IMKG query runs unchanged against MemeAtlas:
 
-Three modelling choices are deliberate, and match what the RML path emits —
-the diff gate is only meaningful if both sides agree on scope:
+    frame                   a m4s:MediaFrame ; a kym:<Category>
+    hasEntryType            rdf:type kymt:<slug>
+    label (title)           m4s:title  (and rdfs:label for generic tools)
+    status / year / from    m4s:status / m4s:year / m4s:from
+    about                   m4s:about
+    added / last_updated    m4s:added / m4s:last_update_source
+    hasTag                  m4s:tag "<literal>"
+    partOfSeries            skos:broader  (+ skos:narrower, as IMKG emits)
 
-  * **Only real frames and entry_type concepts get node triples.** The RML
-    mapping types rows of ``frames.csv`` and ``types.csv``; a ``frame_stub``
-    appears in no CSV of its own, so it gets no ``rdf:type`` and no label.
-    Emitting them here would show ~9,500 phantom divergences every run.
-  * **Tags stay literals**, per the YARRRML note: 102k distinct tags with
-    heavy singular/plural duplication are not clean enough to mint as SKOS
-    concepts. The property graph does have ``tag_concept`` nodes, so this is
-    a real asymmetry between the two representations, recorded here rather
-    than discovered later.
-  * **``external_ref`` nodes carry no triples of their own.** They exist in
-    the property graph to give ``citesExternal`` a typed endpoint; in RDF
-    the IRI is the endpoint.
+Everything else is a MemeAtlas extension under ``mk:`` and is declared,
+with its alignment to IMKG / schema.org / SKOS, in
+``kg_config/memeatlas.ttl``. tests/test_kg_vocabulary.py asserts that every
+``mk:`` term this module can emit is declared there.
 
-Set semantics is load-bearing: RDF is a set, the property-graph edge list is
-a bag. ``iter_triples`` emits each distinct (s, p, o) exactly once, or the
-diff reports permanent phantom deltas on repeated edges.
+Deliberate differences from IMKG, recorded so nobody rediscovers them:
+  * ``m4s:year`` is typed ``xsd:integer`` (IMKG leaves it untyped) so SPARQL
+    range filters work; ``m4s:added`` / ``m4s:last_update_source`` are
+    ``xsd:dateTime`` (IMKG's mapping says ``xsd:timestamp``, which is not an
+    XSD datatype).
+  * The curated entry-type hierarchy is ``rdfs:subClassOf`` between the
+    ``kymt:`` classes, not ``skos:broader`` — IMKG uses ``skos:broader``
+    for frame series, and one predicate must not carry two meanings.
+  * ``kym:<Category>`` casing follows the paper's ``kym:Meme``; IMKG's raw
+    category values are not published, so exact byte-equality with IMKG's
+    class IRIs is unverified.
+
+Scope rules that keep this path and the RML path in agreement:
+  * Only nodes with a declared class get node triples; ``frame_stub``,
+    ``external_ref``, ``tag_concept`` and ``region_concept`` never do (the
+    latter two are literals in RDF).
+  * An absent value emits nothing — morph-kgc emits nothing for an empty
+    CSV cell, verified by probe.
+  * Set semantics: each distinct (s, p, o) once.
 """
 from __future__ import annotations
 
@@ -45,209 +56,303 @@ import hashlib
 from typing import Any, Iterable, Iterator
 
 __all__ = [
-    "PREFIXES", "EDGE_TYPE_TO_PRED", "NODE_KIND_TO_CLASS", "NODE_ATTR_TO_PRED",
-    "OBJECT_IS_LITERAL", "TYPES_BASE", "escape_literal", "node_iri",
-    "iter_triples", "write_nt",
+    "PREFIXES", "TYPES_BASE", "KYM_CLASS_BASE", "SCHEME_IRI", "SCHEME_CLASS",
+    "SCHEME_LABEL", "NODE_CLASSES", "NODE_LITERALS", "EDGE_PREDICATES",
+    "PROVENANCE_PREDICATES", "escape_literal", "concept_pref_label",
+    "category_class", "node_iri", "edge_object", "all_predicates",
+    "constant_classes", "iter_triples", "write_nt",
 ]
 
 PREFIXES: dict[str, str] = {
-    "mk": "https://meme4.science/atlas/",
+    "m4s": "https://meme4.science/",               # IMKG
+    "mk": "https://meme4.science/atlas/",          # MemeAtlas extension
+    "kym": "https://knowyourmeme.com/memes/",      # IMKG: category classes
+    "kymt": "https://knowyourmeme.com/types/",     # IMKG: entry-type classes
     "skos": "http://www.w3.org/2004/02/skos/core#",
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
 }
+M4S, MK, KYM, KYMT = (PREFIXES[p] for p in ("m4s", "mk", "kym", "kymt"))
+SKOS, RDFS, RDF, XSD = (PREFIXES[p] for p in ("skos", "rdfs", "rdf", "xsd"))
 
-# kg/build.py mints entry_type concept ids as "type:<slug>"; the mapping
-# turns the slug into this IRI. Kept in one place so the two never drift.
-TYPES_BASE = "https://knowyourmeme.com/types/"
+TYPES_BASE = KYMT
+KYM_CLASS_BASE = KYM
+RDF_TYPE = RDF + "type"
+XSD_INTEGER = XSD + "integer"
+XSD_DATETIME = XSD + "dateTime"
 
-RDF_TYPE = PREFIXES["rdf"] + "type"
-
-# The SKOS scheme every entry_type concept declares itself in. The scheme
-# itself must be declared too — an `skos:inScheme` pointing at an undeclared
-# resource is incomplete SKOS. These two triples were in the published graph
-# but derivable from NOTHING in the repository: not the .yarrrml, not the
-# committed .rml.ttl, not a fresh compile, and no commit ever mentioned
-# ConceptScheme. The artifact could not be reproduced from source. The RML
-# path now derives them from a one-row scheme.csv via an `entry_type_scheme`
-# mapping rule, and this module emits the same two triples directly.
-SCHEME_IRI = PREFIXES["mk"] + "EntryTypeScheme"
-SCHEME_CLASS = PREFIXES["skos"] + "ConceptScheme"
+# The SKOS scheme every entry_type concept is in. An skos:inScheme pointing
+# at an undeclared resource is incomplete SKOS; these two triples were in
+# the old published graph but derivable from nothing in the repository. The
+# RML path derives them from a one-row scheme.csv.
+SCHEME_IRI = MK + "EntryTypeScheme"
+SCHEME_CLASS = SKOS + "ConceptScheme"
 SCHEME_LABEL = "MemeAtlas entry-type taxonomy"
 
-NODE_KIND_TO_CLASS: dict[str, str] = {
-    "frame": PREFIXES["mk"] + "MemeFrame",
-    "entry_type_concept": PREFIXES["skos"] + "Concept",
-    # frame_stub / tag_concept / external_ref: deliberately absent, see above.
+# node kind -> classes every node of that kind has. ``reference`` takes its
+# class from its ``ref_class`` property; ``frame`` also gets kym:<Category>.
+NODE_CLASSES: dict[str, tuple[str, ...]] = {
+    "frame": (M4S + "MediaFrame",),
+    "entry_type_concept": (RDFS + "Class", SKOS + "Concept"),
+    "section": (MK + "Section",),
+    "link": (MK + "Link",),
+    "image": (MK + "Image",),
+    "reference": (),
+}
+REFERENCE_CLASSES = ("ExternalReference", "AdditionalReference")
+
+# node kind -> (property, predicate, datatype | None). A list-valued
+# property yields one triple per item.
+NODE_LITERALS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
+    "frame": (
+        ("label", M4S + "title", None),
+        ("label", RDFS + "label", None),
+        ("status", M4S + "status", None),
+        ("year", M4S + "year", XSD_INTEGER),
+        ("from", M4S + "from", None),
+        ("about", M4S + "about", None),
+        ("added", M4S + "added", XSD_DATETIME),
+        ("last_updated", M4S + "last_update_source", XSD_DATETIME),
+        ("description", MK + "description", None),
+        ("badges", MK + "badge", None),
+        ("aliases", SKOS + "altLabel", None),
+        ("corpus_status", MK + "corpusStatus", None),
+        ("corpus_missing", MK + "corpusMissing", None),
+        ("parser_version", MK + "parserVersion", None),
+        ("parsed_at", MK + "parsedAt", XSD_DATETIME),
+        ("scraped_at", MK + "scrapedAt", XSD_DATETIME),
+    ),
+    "entry_type_concept": (
+        ("label", SKOS + "prefLabel", None),       # rendered by concept_pref_label
+    ),
+    "section": (
+        ("section_kind", MK + "sectionKind", None),
+        ("heading", MK + "heading", None),
+        ("position", MK + "position", XSD_INTEGER),
+        ("level", MK + "headingLevel", XSD_INTEGER),
+        ("text", MK + "text", None),
+    ),
+    "link": (
+        ("anchor_text", MK + "anchorText", None),
+    ),
+    "reference": (
+        ("index", MK + "citationIndex", XSD_INTEGER),
+        ("citation_text", MK + "citationText", None),
+        ("site_name", MK + "siteName", None),
+    ),
+    "image": (
+        ("alt", MK + "altText", None),
+        ("caption", MK + "caption", None),
+        ("width", MK + "width", XSD_INTEGER),
+        ("height", MK + "height", XSD_INTEGER),
+    ),
 }
 
-NODE_ATTR_TO_PRED: dict[str, str] = {
-    "label": PREFIXES["rdfs"] + "label",
-    "category": PREFIXES["mk"] + "category",
-    "status": PREFIXES["mk"] + "status",
+# edge type -> (predicate, object is a literal?, inverse predicate | None)
+EDGE_PREDICATES: dict[str, tuple[str, bool, str | None]] = {
+    "hasEntryType": (RDF_TYPE, False, None),
+    "hasTag": (M4S + "tag", True, None),
+    "hasRegion": (MK + "region", True, None),
+    "partOfSeries": (SKOS + "broader", False, SKOS + "narrower"),
+    "relatesToMeme": (MK + "relatesToMeme", False, None),
+    "citesExternal": (MK + "citesExternal", False, None),
+    "subTypeOf": (RDFS + "subClassOf", False, None),
+    "hasSection": (MK + "hasSection", False, None),
+    "hasLink": (MK + "hasLink", False, None),
+    "linksTo": (MK + "linksTo", False, None),
+    "hasReference": (MK + "hasReference", False, None),
+    "refersTo": (MK + "refersTo", False, None),
+    "hasImage": (MK + "hasImage", False, None),
 }
 
-EDGE_TYPE_TO_PRED: dict[str, str] = {
-    "hasEntryType": PREFIXES["mk"] + "hasEntryType",
-    "hasTag": PREFIXES["mk"] + "hasTag",
-    "partOfSeries": PREFIXES["mk"] + "partOfSeries",
-    "relatesToMeme": PREFIXES["mk"] + "relatesToMeme",
-    "citesExternal": PREFIXES["mk"] + "citesExternal",
-    "broader": PREFIXES["skos"] + "broader",
-}
+# Triples describing the build rather than the corpus. The RML path has no
+# notion of a build, so these are the ONE legitimate difference the diff
+# gate tolerates.
+_STAMP_PREDICATES = (("build_id", "buildId"), ("snapshot_at", "snapshotAt"),
+                     ("kg_build_version", "kgBuildVersion"),
+                     ("taxonomy_version", "taxonomyVersion"))
+PROVENANCE_PREDICATES: tuple[str, ...] = tuple(MK + p for _, p in _STAMP_PREDICATES)
+CURRENT_BUILD = MK + "currentBuild"
 
-# Edge types whose object is a plain literal rather than an IRI.
-OBJECT_IS_LITERAL: frozenset[str] = frozenset({"hasTag"})
+_ID_PREFIXES_TO_STRIP = ("tag:", "region:")
+
 
 _ESCAPES = str.maketrans({
     "\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t",
 })
 
 
-def escape_literal(value: str) -> str:
+def escape_literal(value: Any) -> str:
     """Escape a string for an N-Triples quoted literal.
 
-    Not theoretical: 1,141 frame titles in the live corpus contain a double
-    quote or a backslash. None contain a newline, which is what makes the
-    line-based diff in kg/ntdiff.py safe — but the escape is applied anyway,
-    because "no newlines today" is a property of the data, not the schema.
+    1,141 frame titles contain a quote or backslash; section text contains
+    newlines and tabs. kg/ntdiff.py compares literals by decoded value, so
+    this may escape more than morph-kgc does (it writes TAB raw) without the
+    gate calling it a difference.
     """
     return str(value).translate(_ESCAPES)
 
 
 def concept_pref_label(label: str) -> str:
-    """Render an entry_type slug as a human-readable skos:prefLabel.
-
-    ``image-macro`` -> ``image macro``. The property graph keeps the raw
-    slug as the node label because there it is an identifier; a prefLabel is
-    for people, so the hyphens go. This mirrors what types.csv does
-    (``slug.replace("-", " ")``) and therefore what the published graph
-    already contains — 29 of the 119 slugs are affected.
-    """
+    """``image-macro`` -> ``image macro``: a prefLabel is for people."""
     return str(label).replace("-", " ")
 
 
-def node_iri(node_id: str) -> str:
-    """The IRI for a property-graph node id.
+def category_class(category: str | None) -> str | None:
+    """KYM category -> IMKG's class local name (``meme`` -> ``Meme``)."""
+    if not category or category == "unknown":
+        return None
+    return str(category).capitalize()
 
-    Frame and external ids are already URLs. entry_type concepts are minted
-    as ``type:<slug>`` and map onto the KYM types namespace, exactly as the
-    RML mapping does. Tag ids never reach here — tags are literals.
-    """
+
+def node_iri(node_id: str) -> str:
+    """The IRI for a property-graph node id."""
     if node_id.startswith("type:"):
-        return TYPES_BASE + node_id[len("type:"):]
+        return KYMT + node_id[len("type:"):]
+    if node_id.startswith("image:"):
+        return node_id[len("image:"):]
     return node_id
 
 
-def _triple(subject: str, predicate: str, obj: str, *, literal: bool) -> str:
-    tail = f'"{escape_literal(obj)}"' if literal else f"<{obj}>"
-    return f"<{subject}> <{predicate}> {tail} ."
+def edge_object(etype: str, dst: str) -> str:
+    """The object of an edge's triple: a literal value or an IRI."""
+    _, is_literal, _ = EDGE_PREDICATES[etype]
+    if is_literal:
+        for prefix in _ID_PREFIXES_TO_STRIP:
+            if dst.startswith(prefix):
+                return dst[len(prefix):]
+        return dst
+    return node_iri(dst)
+
+
+def all_predicates(include_provenance: bool = False) -> set[str]:
+    """Every predicate IRI this module can emit (not counting rdf:type)."""
+    preds = {p for rows in NODE_LITERALS.values() for _, p, _ in rows}
+    for pred, _, inverse in EDGE_PREDICATES.values():
+        preds.add(pred)
+        if inverse:
+            preds.add(inverse)
+    preds.add(SKOS + "inScheme")
+    preds.add(RDFS + "label")
+    if include_provenance:
+        preds.update(PROVENANCE_PREDICATES)
+    preds.discard(RDF_TYPE)
+    return preds
+
+
+def constant_classes() -> set[str]:
+    """Every class IRI emitted from a constant (not from a data value)."""
+    classes = {c for cs in NODE_CLASSES.values() for c in cs}
+    classes.add(SCHEME_CLASS)
+    classes.update(MK + c for c in REFERENCE_CLASSES)
+    return classes
+
+
+def _literal(value: Any, datatype: str | None) -> str:
+    body = f'"{escape_literal(value)}"'
+    return f"{body}^^<{datatype}>" if datatype else body
 
 
 def iter_triples(nodes: Iterable[dict], edges: Iterable[dict], *,
-                 stamps: dict[str, Any] | None = None) -> Iterator[str]:
+                 stamps: dict[str, Any] | None = None,
+                 dedupe: bool = True) -> Iterator[str]:
     """Stream canonical N-Triples lines for one build.
 
-    Each distinct (s, p, o) is emitted once. ``stamps`` adds provenance
-    triples describing the build itself, so a SPARQL client can ask which
-    build it is looking at and be sure the answer came from the same file
-    as the data around it.
+    ``dedupe`` keeps a set of 8-byte digests of emitted lines. The DAG
+    passes False: its input comes from the store, where every node and edge
+    is unique by ``_id``, and every mapping below is injective on unique
+    input — so dedupe would only cost ~4M digests of memory.
     """
-    seen: set[str] = set()
+    seen: set[bytes] = set()
 
-    def emit(subject, predicate, obj, *, literal=False):
-        line = _triple(subject, predicate, obj, literal=literal)
-        if line not in seen:
-            seen.add(line)
-            return line
-        return None
+    def emit(line: str) -> str | None:
+        if dedupe:
+            h = hashlib.blake2b(line.encode("utf-8"), digest_size=8).digest()
+            if h in seen:
+                return None
+            seen.add(h)
+        return line
+
+    scheme_declared = False
 
     for node in nodes:
         kind = node.get("kind")
-        cls = NODE_KIND_TO_CLASS.get(kind)
-        if cls is None:
+        if kind not in NODE_CLASSES:
             continue
-        subject = node_iri(node["id"])
+        s = node_iri(node["id"])
 
-        line = emit(subject, RDF_TYPE, cls)
-        if line:
-            yield line
+        classes = list(NODE_CLASSES[kind])
+        if kind == "frame":
+            cat = category_class(node.get("category"))
+            if cat:
+                classes.append(KYM + cat)
+        if kind == "reference" and node.get("ref_class") in REFERENCE_CLASSES:
+            classes.append(MK + node["ref_class"])
+        for cls in classes:
+            line = emit(f"<{s}> <{RDF_TYPE}> <{cls}> .")
+            if line:
+                yield line
 
         if kind == "entry_type_concept":
-            # Declare the scheme itself, once, the first time a concept
-            # needs it — so a graph with no concepts carries no orphan
-            # scheme triples.
-            line = emit(SCHEME_IRI, RDF_TYPE, SCHEME_CLASS)
-            if line:
-                yield line
-            line = emit(SCHEME_IRI, NODE_ATTR_TO_PRED["label"], SCHEME_LABEL,
-                        literal=True)
+            if not scheme_declared:
+                scheme_declared = True
+                for line in (f"<{SCHEME_IRI}> <{RDF_TYPE}> <{SCHEME_CLASS}> .",
+                             f"<{SCHEME_IRI}> <{RDFS}label> {_literal(SCHEME_LABEL, None)} ."):
+                    line = emit(line)
+                    if line:
+                        yield line
+            line = emit(f"<{s}> <{SKOS}inScheme> <{SCHEME_IRI}> .")
             if line:
                 yield line
 
-            line = emit(subject, PREFIXES["skos"] + "inScheme", SCHEME_IRI)
-            if line:
-                yield line
-            label = node.get("label")
-            if label:
-                line = emit(subject, PREFIXES["skos"] + "prefLabel",
-                            concept_pref_label(label), literal=True)
+        for prop, pred, datatype in NODE_LITERALS.get(kind, ()):
+            value = node.get(prop)
+            if value in (None, "", []):
+                continue
+            if kind == "entry_type_concept" and prop == "label":
+                value = concept_pref_label(value)
+            for v in (value if isinstance(value, list) else [value]):
+                if v in (None, ""):
+                    continue
+                line = emit(f"<{s}> <{pred}> {_literal(v, datatype)} .")
                 if line:
                     yield line
-            continue
 
-        for attr, predicate in NODE_ATTR_TO_PRED.items():
-            value = node.get(attr)
-            if value in (None, "", "None"):
-                continue
-            line = emit(subject, predicate, value, literal=True)
+    for edge in edges:
+        etype = edge.get("type")
+        if etype not in EDGE_PREDICATES:
+            continue
+        pred, is_literal, inverse = EDGE_PREDICATES[etype]
+        s = node_iri(edge["src"])
+        o = edge_object(etype, edge["dst"])
+        obj = _literal(o, None) if is_literal else f"<{o}>"
+        line = emit(f"<{s}> <{pred}> {obj} .")
+        if line:
+            yield line
+        if inverse:
+            line = emit(f"<{o}> <{inverse}> <{s}> .")
             if line:
                 yield line
 
-    for edge in edges:
-        predicate = EDGE_TYPE_TO_PRED.get(edge.get("type"))
-        if predicate is None:
-            continue
-        subject = node_iri(edge["src"])
-        dst = edge["dst"]
-        if edge["type"] in OBJECT_IS_LITERAL:
-            # The property graph mints "tag:<label>"; RDF wants the label.
-            obj = dst[len("tag:"):] if dst.startswith("tag:") else dst
-            line = emit(subject, predicate, obj, literal=True)
-        else:
-            line = emit(subject, predicate, node_iri(dst))
-        if line:
-            yield line
-
     if stamps:
-        current = PREFIXES["mk"] + "currentBuild"
-        for key, predicate in (
-            ("build_id", "buildId"), ("snapshot_at", "snapshotAt"),
-            ("kg_build_version", "kgBuildVersion"),
-            ("taxonomy_version", "taxonomyVersion"),
-        ):
+        for key, local in _STAMP_PREDICATES:
             value = stamps.get(key)
             if value in (None, ""):
                 continue
-            line = emit(current, PREFIXES["mk"] + predicate, str(value),
-                        literal=True)
+            line = emit(f"<{CURRENT_BUILD}> <{MK}{local}> {_literal(value, None)} .")
             if line:
                 yield line
 
 
 def write_nt(nodes: Iterable[dict], edges: Iterable[dict], path: str, *,
-             stamps: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Serialize to ``path``. Returns {triples, sha256, path}.
-
-    The sha256 is of the bytes written, and goes into the build manifest so
-    a consumer can tell whether the file it holds is the one the run
-    recorded. The July CSV artifacts carried no such stamp, which is why a
-    450k-edge staleness went unnoticed for two months.
-    """
+             stamps: dict[str, Any] | None = None,
+             dedupe: bool = True) -> dict[str, Any]:
+    """Serialize to ``path``. Returns {triples, sha256, path}."""
     digest = hashlib.sha256()
     count = 0
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        for line in iter_triples(nodes, edges, stamps=stamps):
+        for line in iter_triples(nodes, edges, stamps=stamps, dedupe=dedupe):
             payload = line + "\n"
             fh.write(payload)
             digest.update(payload.encode("utf-8"))

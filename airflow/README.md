@@ -109,7 +109,9 @@ dags/
       metrics.py           IMKG-comparable graph statistics (pure stdlib)
       semantics.py         LLM definition-embedding analysis of types
   kg_config/             curated KG inputs, tracked: the entry-type taxonomy,
-                         the YARRRML mapping, the morph-kgc ini template
+                         the YARRRML mapping, the MemeAtlas ontology
+                         (memeatlas.ttl), MODEL.md (the IMKG crosswalk),
+                         the morph-kgc ini template
   tests/                 pytest; conftest.py puts dags/ on sys.path
 dashboard/               Streamlit app, its own image
 ```
@@ -154,13 +156,23 @@ with an icon and a written label, and a data table behind every chart.
 
 ## The KG stage
 
+**MemeAtlas extends IMKG.** Where IMKG models something, its terms are
+used as is (`m4s:MediaFrame`, `m4s:title`, `m4s:tag`, `kymt:` entry-type
+classes, `skos:broader` for series), so IMKG queries run here. The rest of
+the parsed record — sections, links, references, images, regions, corpus
+grading — uses `mk:` terms declared in `dags/kg_config/memeatlas.ttl`.
+`dags/kg_config/MODEL.md` has the full crosswalk. Origin and Spread
+sections are not yet modelled; they are left to the event-extraction task.
+
 **`kym_kg`** (triggered by parse) — lifts `entries` into a knowledge graph
 and publishes it in every representation at once:
 
 - **Neo4j** — the property graph: typed nodes (`Frame`, `TagConcept`, …)
   and relationships whose types are the edge vocabulary verbatim
-  (`hasTag`, `partOfSeries`, `broader`, …);
-- **Fuseki** — the RDF graph, queryable over SPARQL at `/sparql/`;
+  (`hasTag`, `partOfSeries`, `hasSection`, `subTypeOf`, …), carrying every
+  parsed property;
+- **Fuseki** — the RDF graph, queryable over SPARQL at `/sparql/`, with
+  the vocabulary in the named graph `urn:memeatlas:ontology`;
 - **files** under `data/kg/builds/<build_id>/` — `graph.nt`, the CSVs the
   RML mapping reads, Cosmograph/Gephi view CSVs, and a `manifest.json` of
   per-file hashes; `data/kg/current` points at the published build;
@@ -204,7 +216,7 @@ To get the current graph: Mongo readers take `kg_builds.findOne({_id:
 ### Curated inputs are tracked
 
 `dags/kg_config/` holds the reviewed entry-type taxonomy, the YARRRML
-mapping and the morph-kgc ini template. They used to sit in `data/`, which
+mapping, the MemeAtlas ontology and the morph-kgc ini template. They used to sit in `data/`, which
 is gitignored — which is how a 104-line reviewed taxonomy ended up retyped
 by hand into a Python constant, and how that constant came to include an
 edge the taxonomy had marked "sample before promoting". `kg/taxonomy.py`

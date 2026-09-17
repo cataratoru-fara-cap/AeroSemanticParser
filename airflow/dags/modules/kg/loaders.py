@@ -69,7 +69,8 @@ __all__ = [
     "Neo4jConfig", "FusekiConfig", "LoaderError",
     "neo4j_driver", "neo4j_ensure_schema", "neo4j_load", "neo4j_publish",
     "neo4j_current", "neo4j_counts", "neo4j_prune", "label_for_kind",
-    "fuseki_graph_iri", "CURRENT_GRAPH", "fuseki_load", "fuseki_publish",
+    "node_properties", "fuseki_graph_iri", "CURRENT_GRAPH", "ONTOLOGY_GRAPH",
+    "fuseki_load", "fuseki_publish", "fuseki_load_ontology",
     "fuseki_count", "fuseki_current", "fuseki_prune", "fuseki_graphs",
 ]
 
@@ -108,7 +109,7 @@ class FusekiConfig:
     dataset: str = "kg"
     user: str = "admin"
     password: str = ""
-    timeout_s: float = 600.0          # a 120 MB PUT on a slow disk
+    timeout_s: float = 1800.0         # a ~600 MB PUT on a slow disk
 
     def __post_init__(self) -> None:
         # A trailing slash on base_url produced "http://host//kg/data". The
@@ -151,6 +152,24 @@ def label_for_kind(kind: str) -> str:
     """``frame_stub`` -> ``FrameStub``. Labels are identifiers, so the
     snake_case kind becomes PascalCase; every node also carries ``KGNode``."""
     return "".join(p.capitalize() for p in _LABEL_RE.split(kind) if p)
+
+
+# Store bookkeeping, never a property of the graph itself.
+_NON_PROPERTIES = frozenset({"_id", "build_id", "node_id", "uid"})
+
+
+def node_properties(node: dict) -> dict[str, Any]:
+    """Every property kg/build.py gave the node, as Neo4j will store it.
+
+    Generic on purpose: the node carries whatever was parsed (a frame's
+    about text and badges, a section's heading, an image's size); a fixed
+    SET list here would silently drop whatever kg/build.py adds next — the
+    loader used to set only label/category/status. Neo4j cannot store null
+    (it means "remove"), so absent values are left out; lists of strings are
+    native Neo4j array properties.
+    """
+    return {k: v for k, v in node.items()
+            if k not in _NON_PROPERTIES and v is not None and v != []}
 
 
 def neo4j_driver(cfg: Neo4jConfig):
@@ -199,8 +218,7 @@ def neo4j_load(driver, cfg: Neo4jConfig, build_id: str,
         _run(driver, cfg, f"""
             UNWIND $rows AS r
             MERGE (n:KGNode:`{label}` {{uid: r.uid}})
-            SET n.build_id = $bid, n.id = r.id, n.kind = r.kind,
-                n.label = r.label, n.category = r.category, n.status = r.status
+            SET n += r.props, n.build_id = $bid
             """, rows=rows, bid=build_id)
         counts["nodes"] += len(rows)
         # No rows.clear() here: the list was just handed to the driver, and
@@ -211,10 +229,8 @@ def neo4j_load(driver, cfg: Neo4jConfig, build_id: str,
         kind = node.get("kind")
         if kind not in by_kind:
             raise LoaderError(f"node kind {kind!r} outside NODE_KINDS")
-        by_kind[kind].append({
-            "uid": f"{build_id}|{node['id']}", "id": node["id"], "kind": kind,
-            "label": node.get("label"), "category": node.get("category"),
-            "status": node.get("status")})
+        by_kind[kind].append({"uid": f"{build_id}|{node['id']}",
+                              "props": node_properties(node)})
         if len(by_kind[kind]) >= cfg.batch:
             flush_nodes(kind, by_kind[kind])
             by_kind[kind] = []
@@ -300,6 +316,10 @@ def neo4j_prune(driver, cfg: Neo4jConfig, keep: Iterable[str]) -> dict[str, int]
 # ---------------------------------------------------------------------------
 
 CURRENT_GRAPH = "urn:memeatlas:current"      # documentary; the DEFAULT graph is what is served
+# The MemeAtlas vocabulary (kg_config/memeatlas.ttl). A named graph of its
+# own, not part of graph.nt: the diff gate compares instance data, and the
+# ontology changes on a different cadence from the corpus.
+ONTOLOGY_GRAPH = "urn:memeatlas:ontology"
 _BUILD_GRAPH = "urn:memeatlas:build:"
 _MK = PREFIXES["mk"]
 
@@ -343,6 +363,18 @@ def fuseki_publish(session, cfg: FusekiConfig, build_id: str, nt_path: str) -> d
     return {"status": resp.status_code}
 
 
+def fuseki_load_ontology(session, cfg: FusekiConfig, ttl_path: str) -> dict[str, Any]:
+    """PUT the vocabulary into ONTOLOGY_GRAPH. Set-to-value like every other
+    write here, so loading it on every publish is harmless and a hand edit
+    to memeatlas.ttl reaches the endpoint with the next build."""
+    with open(ttl_path, "rb") as fh:
+        resp = session.put(cfg.data_url, params={"graph": ONTOLOGY_GRAPH},
+                           data=fh, headers={"Content-Type": "text/turtle"},
+                           auth=cfg.auth, timeout=cfg.timeout_s)
+    _check(resp, "ontology load")
+    return {"graph": ONTOLOGY_GRAPH, "status": resp.status_code}
+
+
 def _select(session, cfg: FusekiConfig, query: str) -> list[dict]:
     resp = session.post(cfg.query_url, data={"query": query},
                         headers={"Accept": "application/sparql-results+json"},
@@ -366,7 +398,7 @@ def fuseki_current(session, cfg: FusekiConfig) -> str | None:
 
 
 def fuseki_graphs(session, cfg: FusekiConfig) -> list[str]:
-    rows = _select(session, cfg, "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }")
+    rows = _select(session, cfg, "SELECT ?g WHERE { GRAPH ?g { } }")
     return sorted(r["g"]["value"] for r in rows)
 
 

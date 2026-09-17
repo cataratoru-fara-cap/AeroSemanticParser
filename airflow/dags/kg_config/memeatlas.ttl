@@ -1,0 +1,254 @@
+# memeatlas.ttl — the MemeAtlas vocabulary, an extension of IMKG
+# ============================================================================
+# MemeAtlas extends IMKG, the Internet Meme Knowledge Graph. It reuses IMKG's
+# terms wherever the two describe the same thing — m4s:MediaFrame, m4s:title,
+# m4s:status, m4s:year, m4s:from, m4s:about, m4s:added,
+# m4s:last_update_source, m4s:tag, kym:<Category> and kymt:<type> classes,
+# and skos:broader / skos:narrower between frames of a series — and does NOT
+# redeclare them here: they are IMKG's.
+#
+# This file declares only what MemeAtlas adds, under mk:, and aligns each
+# addition to IMKG, SKOS or schema.org where one fits, so a consumer that
+# understands those vocabularies can read MemeAtlas without knowing mk:.
+#
+# Published into Fuseki as the named graph <urn:memeatlas:ontology> and
+# copied into every build directory. tests/test_kg_vocabulary.py asserts
+# every mk: term the serializer can emit is declared below, one declaration
+# per line starting with the term, which is the layout that test relies on.
+#
+# The namespace https://meme4.science/atlas/ sits under the domain IMKG's
+# m4s: vocabulary uses. That is to be agreed with IMKG's authors before
+# publication.
+
+@prefix mk:     <https://meme4.science/atlas/> .
+@prefix m4s:    <https://meme4.science/> .
+@prefix rdf:    <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:    <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+@prefix schema: <https://schema.org/> .
+@prefix dct:    <http://purl.org/dc/terms/> .
+@prefix prov:   <http://www.w3.org/ns/prov#> .
+
+<https://meme4.science/atlas/> a owl:Ontology ;
+    rdfs:label "MemeAtlas" ;
+    dct:description """An extension of IMKG, the Internet Meme Knowledge Graph.
+MemeAtlas describes the full parsed record of each Know Your Meme entry —
+its sections, links, references, images, regions and corpus grading — on
+top of IMKG's model of media frames, which it reuses unchanged.""" ;
+    owl:versionInfo "3.0.0" ;
+    rdfs:seeAlso <https://doi.org/10.1007/978-3-031-33455-9_21> ,
+                 <https://github.com/riccardotommasini/imkg> ;
+    prov:wasDerivedFrom <https://doi.org/10.5281/zenodo.7457166> .
+
+# ---------------------------------------------------------------------------
+# Classes
+# ---------------------------------------------------------------------------
+
+mk:Section a owl:Class ;
+    rdfs:label "Section" ;
+    rdfs:comment "A heading-delimited part of a Know Your Meme entry page (Notable Examples, Search Interest, ...). Origin and Spread sections are not yet modelled." .
+
+mk:Link a owl:Class ;
+    rdfs:label "Link" ;
+    rdfs:comment "One hyperlink occurring in a section, carrying its anchor text." .
+
+mk:Image a owl:Class ;
+    rdfs:subClassOf schema:ImageObject ;
+    rdfs:label "Image" ;
+    rdfs:comment "An image file shown on an entry page. Identified by its own URL, so the same file on several pages is one resource." .
+
+mk:Reference a owl:Class ;
+    rdfs:label "Reference" ;
+    rdfs:comment "A citation an entry makes to another resource." .
+
+mk:ExternalReference a owl:Class ;
+    rdfs:subClassOf mk:Reference ;
+    rdfs:label "External reference" ;
+    rdfs:comment "An item of the entry's numbered External References list." .
+
+mk:AdditionalReference a owl:Class ;
+    rdfs:subClassOf mk:Reference ;
+    rdfs:label "Additional reference" ;
+    rdfs:comment "An item of the entry's Additional References box, named by site (Wikipedia, Urban Dictionary, ...)." .
+
+mk:EntryTypeScheme a skos:ConceptScheme ;
+    rdfs:label "MemeAtlas entry-type taxonomy" ;
+    rdfs:comment "The Know Your Meme entry types (IMKG's kymt: classes), also treated as SKOS concepts, with a curated rdfs:subClassOf hierarchy between them." .
+
+# ---------------------------------------------------------------------------
+# Relations between resources
+# ---------------------------------------------------------------------------
+
+mk:relatesToMeme a owl:ObjectProperty ;
+    rdfs:subPropertyOf rdfs:seeAlso ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:label "relates to meme" ;
+    rdfs:comment "The entry links to another Know Your Meme entry anywhere on its page. Broader than IMKG's rdfs:seeAlso, which covers only the Related Entries box." .
+
+mk:citesExternal a owl:ObjectProperty ;
+    rdfs:subPropertyOf rdfs:seeAlso ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:label "cites external" ;
+    rdfs:comment "The entry links to a resource outside Know Your Meme." .
+
+mk:hasSection a owl:ObjectProperty ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:range mk:Section ;
+    rdfs:label "has section" .
+
+mk:hasLink a owl:ObjectProperty ;
+    rdfs:domain mk:Section ;
+    rdfs:range mk:Link ;
+    rdfs:label "has link" .
+
+mk:linksTo a owl:ObjectProperty ;
+    rdfs:domain mk:Link ;
+    rdfs:label "links to" .
+
+mk:hasReference a owl:ObjectProperty ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:range mk:Reference ;
+    rdfs:label "has reference" .
+
+mk:refersTo a owl:ObjectProperty ;
+    rdfs:domain mk:Reference ;
+    rdfs:label "refers to" .
+
+mk:hasImage a owl:ObjectProperty ;
+    rdfs:subPropertyOf schema:image ;
+    rdfs:range mk:Image ;
+    rdfs:label "has image" ;
+    rdfs:comment "An image of a media frame (its page image) or shown in one of its sections." .
+
+# ---------------------------------------------------------------------------
+# Media frame attributes IMKG does not model
+# ---------------------------------------------------------------------------
+
+mk:region a owl:DatatypeProperty ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:label "region" ;
+    rdfs:comment "A region the entry is associated with, as named by Know Your Meme." .
+
+mk:description a owl:DatatypeProperty ;
+    rdfs:subPropertyOf schema:description ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:label "description" ;
+    rdfs:comment "The entry's one-sentence summary." .
+
+mk:badge a owl:DatatypeProperty ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:label "badge" ;
+    rdfs:comment "A badge Know Your Meme shows on the entry, e.g. Sensitive." .
+
+mk:corpusStatus a owl:DatatypeProperty ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:label "corpus status" ;
+    rdfs:comment "ready or incomplete, against the MemeAtlas corpus policy." .
+
+mk:corpusMissing a owl:DatatypeProperty ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:label "corpus missing" ;
+    rdfs:comment "A field the corpus policy requires that the entry lacks." .
+
+mk:parserVersion a owl:DatatypeProperty ;
+    rdfs:subPropertyOf prov:wasGeneratedBy ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:label "parser version" .
+
+mk:parsedAt a owl:DatatypeProperty ;
+    rdfs:subPropertyOf prov:generatedAtTime ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "parsed at" .
+
+mk:scrapedAt a owl:DatatypeProperty ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "scraped at" .
+
+# ---------------------------------------------------------------------------
+# Section, link, reference and image attributes
+# ---------------------------------------------------------------------------
+
+mk:sectionKind a owl:DatatypeProperty ;
+    rdfs:domain mk:Section ;
+    rdfs:label "section kind" ;
+    rdfs:comment "The section classified: about, notable_examples, various_examples, search_interest, template, related_memes, external_references, other." .
+
+mk:heading a owl:DatatypeProperty ;
+    rdfs:domain mk:Section ;
+    rdfs:label "heading" .
+
+mk:position a owl:DatatypeProperty ;
+    rdfs:domain mk:Section ;
+    rdfs:range xsd:integer ;
+    rdfs:label "position" ;
+    rdfs:comment "0-based order of the section on the page, counting sections not yet modelled." .
+
+mk:headingLevel a owl:DatatypeProperty ;
+    rdfs:domain mk:Section ;
+    rdfs:range xsd:integer ;
+    rdfs:label "heading level" .
+
+mk:text a owl:DatatypeProperty ;
+    rdfs:domain mk:Section ;
+    rdfs:label "text" ;
+    rdfs:comment "The section's paragraphs, blank-line separated. About text is on the frame as m4s:about instead." .
+
+mk:anchorText a owl:DatatypeProperty ;
+    rdfs:domain mk:Link ;
+    rdfs:label "anchor text" .
+
+mk:citationIndex a owl:DatatypeProperty ;
+    rdfs:domain mk:ExternalReference ;
+    rdfs:range xsd:integer ;
+    rdfs:label "citation index" ;
+    rdfs:comment "The number Know Your Meme gives the citation." .
+
+mk:citationText a owl:DatatypeProperty ;
+    rdfs:domain mk:ExternalReference ;
+    rdfs:label "citation text" .
+
+mk:siteName a owl:DatatypeProperty ;
+    rdfs:domain mk:AdditionalReference ;
+    rdfs:label "site name" .
+
+mk:altText a owl:DatatypeProperty ;
+    rdfs:domain mk:Image ;
+    rdfs:label "alt text" .
+
+mk:caption a owl:DatatypeProperty ;
+    rdfs:subPropertyOf schema:caption ;
+    rdfs:domain mk:Image ;
+    rdfs:label "caption" .
+
+mk:width a owl:DatatypeProperty ;
+    rdfs:domain mk:Image ;
+    rdfs:range xsd:integer ;
+    rdfs:label "width" ;
+    rdfs:comment "Pixels." .
+
+mk:height a owl:DatatypeProperty ;
+    rdfs:domain mk:Image ;
+    rdfs:range xsd:integer ;
+    rdfs:label "height" ;
+    rdfs:comment "Pixels." .
+
+# ---------------------------------------------------------------------------
+# Build provenance (describes the published graph, not the corpus)
+# ---------------------------------------------------------------------------
+
+mk:buildId a owl:DatatypeProperty ;
+    rdfs:label "build id" .
+
+mk:snapshotAt a owl:DatatypeProperty ;
+    rdfs:label "snapshot at" .
+
+mk:kgBuildVersion a owl:DatatypeProperty ;
+    rdfs:label "KG build version" .
+
+mk:taxonomyVersion a owl:DatatypeProperty ;
+    rdfs:label "taxonomy version" ;
+    rdfs:comment "sha256 of the curated taxonomy file the build used." .

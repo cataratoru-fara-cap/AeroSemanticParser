@@ -72,8 +72,20 @@ class Neo4jLoadTests(unittest.TestCase):
         cypher, params = d.calls[0]
         self.assertIn("MERGE (n:KGNode:`Frame` {uid: r.uid})", cypher)
         self.assertEqual(params["bid"], BUILD)
+        self.assertIn("SET n += r.props, n.build_id = $bid", cypher)
         self.assertEqual(params["rows"][0]["uid"], f"{BUILD}|{F1}")
-        self.assertEqual(params["rows"][0]["label"], "Doge")
+        self.assertEqual(params["rows"][0]["props"]["label"], "Doge")
+
+    def test_every_parsed_property_reaches_neo4j_and_nulls_do_not(self):
+        d = StubDriver()
+        n = {"id": F1, "kind": "frame", "label": "Doge", "about": "text",
+             "badges": ["Sensitive"], "year": 2013, "status": None,
+             "aliases": [], "_id": "x", "build_id": "y", "node_id": F1}
+        L.neo4j_load(d, CFG, BUILD, [n], [])
+        props = d.calls[0][1]["rows"][0]["props"]
+        self.assertEqual(props, {"id": F1, "kind": "frame", "label": "Doge",
+                                 "about": "text", "badges": ["Sensitive"],
+                                 "year": 2013})
 
     def test_one_statement_per_kind_and_batches_respected(self):
         d = StubDriver()
@@ -89,9 +101,9 @@ class Neo4jLoadTests(unittest.TestCase):
         d = StubDriver()
         L.neo4j_load(d, CFG, BUILD, [],
                      [{"src": F1, "type": "relatesToMeme", "dst": F2},
-                      {"src": "type:model", "type": "broader", "dst": "type:influencer"}])
+                      {"src": "type:model", "type": "subTypeOf", "dst": "type:influencer"}])
         types = {c[0].split("[e:`")[1].split("`")[0] for c in d.calls if "[e:`" in c[0]}
-        self.assertEqual(types, {"relatesToMeme", "broader"})
+        self.assertEqual(types, {"relatesToMeme", "subTypeOf"})
         _, params = [c for c in d.calls if "relatesToMeme" in c[0]][0]
         self.assertEqual(params["rows"][0], {"suid": f"{BUILD}|{F1}",
                                              "duid": f"{BUILD}|{F2}"})
@@ -199,6 +211,19 @@ class FusekiLoadTests(unittest.TestCase):
         _, _, kw = h.calls[0]
         self.assertEqual(kw["params"], {"default": ""})
 
+    def test_ontology_goes_into_its_own_named_graph_as_turtle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ttl = os.path.join(tmp, "memeatlas.ttl")
+            with open(ttl, "w") as fh:
+                fh.write("@prefix mk: <https://meme4.science/atlas/> .\n")
+            h = StubHttp()
+            out = L.fuseki_load_ontology(h, FCFG, ttl)
+        _, url, kw = h.calls[0]
+        self.assertEqual(url, "http://fuseki:3030/kg/data")
+        self.assertEqual(kw["params"], {"graph": "urn:memeatlas:ontology"})
+        self.assertEqual(kw["headers"]["Content-Type"], "text/turtle")
+        self.assertEqual(out["graph"], L.ONTOLOGY_GRAPH)
+
     def test_http_error_raises_loader_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             h = StubHttp(responses=[_Resp(401, "Unauthorized")])
@@ -234,7 +259,7 @@ class FusekiReadTests(unittest.TestCase):
     def test_prune_deletes_only_stale_build_graphs(self):
         graphs = [f"urn:memeatlas:build:{b}" for b in (BUILD, "kg_old", "kg_keep")]
         h = StubHttp(responses=[self._bindings("b", [BUILD]),      # current
-                                self._bindings("g", graphs + ["urn:other"])])
+                                self._bindings("g", graphs + [L.ONTOLOGY_GRAPH])])
         out = L.fuseki_prune(h, FCFG, keep=["kg_keep"])
         deletes = [c for c in h.calls if c[0] == "DELETE"]
         self.assertEqual([c[2]["params"]["graph"] for c in deletes],

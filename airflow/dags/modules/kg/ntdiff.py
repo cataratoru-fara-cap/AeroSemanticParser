@@ -68,13 +68,55 @@ _TERM = re.compile(
 )
 
 
+_LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"(.*)\Z', re.S)
+_ESCAPE = re.compile(r'\\(?:u([0-9A-Fa-f]{4})|U([0-9A-Fa-f]{8})|(.))', re.S)
+_ECHAR = {"t": "\t", "b": "\b", "n": "\n", "r": "\r", "f": "\f",
+          '"': '"', "'": "'", "\\": "\\"}
+
+
+def _unescape(body: str) -> str:
+    if "\\" not in body:
+        return body
+
+    def repl(m: re.Match) -> str:
+        if m.group(1):
+            return chr(int(m.group(1), 16))
+        if m.group(2):
+            return chr(int(m.group(2), 16))
+        return _ECHAR.get(m.group(3), "\\" + m.group(3))
+    return _ESCAPE.sub(repl, body)
+
+
+def canonical_literal(term: str) -> str:
+    """One literal term, re-serialised in a single canonical escaping.
+
+    N-Triples lets a serializer escape a character or write it raw — TAB
+    may appear as ``\\t`` or as a literal tab, and any character may be a
+    ``\\uXXXX`` escape — and those are the SAME RDF term. Serializers
+    disagree: kg/rdf.py writes ``\\t``, morph-kgc writes a raw tab. Comparing
+    lines as text would report every paragraph containing a tab as a
+    divergence, so a literal's lexical value is decoded and re-encoded with
+    only the four characters N-Triples requires escaped (backslash, quote,
+    LF, CR). Datatype and language suffixes are kept as they are.
+    """
+    m = _LITERAL.match(term)
+    if not m:
+        return term
+    body = _unescape(m.group(1))
+    body = (body.replace("\\", "\\\\").replace('"', '\\"')
+                .replace("\n", "\\n").replace("\r", "\\r"))
+    return f'"{body}"{m.group(2)}'
+
+
 def normalize_line(line: str) -> str | None:
     """Canonicalise one N-Triples line, or None if it carries no triple.
 
     Whitespace *between* terms and a trailing explicit ``xsd:string`` type
     are not semantic differences — a plain literal and one typed xsd:string
     denote the same RDF term, and serializers disagree about which to emit.
-    Normalising those away stops the gate reporting a non-difference.
+    Normalising those away stops the gate reporting a non-difference. The
+    same goes for how a literal's characters are escaped; see
+    ``canonical_literal``.
 
     Whitespace *inside* a quoted literal is a different matter: it is part
     of the value. An earlier version of this function did
@@ -88,8 +130,13 @@ def normalize_line(line: str) -> str | None:
         return None
     if line.endswith("."):
         line = line[:-1].rstrip()
-    terms = [term[:-len(_XSD_STRING)] if term.endswith(_XSD_STRING) else term
-             for term in _TERM.findall(line)]
+    terms = []
+    for term in _TERM.findall(line):
+        if term.endswith(_XSD_STRING):
+            term = term[:-len(_XSD_STRING)]
+        if term.startswith('"'):
+            term = canonical_literal(term)
+        terms.append(term)
     if not terms:
         return None
     return " ".join(terms) + " ."

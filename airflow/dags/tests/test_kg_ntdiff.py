@@ -59,9 +59,10 @@ class NormalizeTests(unittest.TestCase):
         self.assertNotEqual(one, two)
         self.assertIn('"doge  meme"', one)
 
-    def test_tab_inside_a_literal_is_preserved(self):
+    def test_tab_inside_a_literal_is_preserved_as_a_value(self):
+        # Canonical form decodes the escape; the TAB itself survives.
         got = ntdiff.normalize_line(f'{S} {P} "a\\tb" .')
-        self.assertIn('"a\\tb"', got)
+        self.assertIn('"a\tb"', got)
 
     def test_language_tag_and_datatype_survive(self):
         tagged = ntdiff.normalize_line(f'{S} {P} "doge"@en .')
@@ -69,6 +70,26 @@ class NormalizeTests(unittest.TestCase):
         typed = ntdiff.normalize_line(
             f'{S} {P} "3"^^<http://www.w3.org/2001/XMLSchema#integer> .')
         self.assertIn("XMLSchema#integer", typed)
+
+    def test_escaped_and_raw_tab_are_the_same_term(self):
+        # Found by probing morph-kgc: it writes TAB raw, kg/rdf.py writes \t.
+        # Same RDF term; must not be reported as a divergence.
+        raw = ntdiff.normalize_line(f'{S} {P} "a\tb" .')
+        escaped = ntdiff.normalize_line(f'{S} {P} "a\\tb" .')
+        self.assertEqual(raw, escaped)
+
+    def test_unicode_escape_equals_the_raw_character(self):
+        self.assertEqual(ntdiff.normalize_line(f'{S} {P} "\\u00E9" .'),
+                         ntdiff.normalize_line(f'{S} {P} "é" .'))
+
+    def test_required_escapes_are_preserved_canonically(self):
+        got = ntdiff.normalize_line(f'{S} {P} "q\\"uote back\\\\slash nl\\n" .')
+        self.assertIn('"q\\"uote back\\\\slash nl\\n"', got)
+
+    def test_datatype_suffix_survives_canonicalisation(self):
+        got = ntdiff.normalize_line(
+            f'{S} {P} "a\\tb"^^<http://www.w3.org/2001/XMLSchema#integer> .')
+        self.assertTrue(got.endswith('^^<http://www.w3.org/2001/XMLSchema#integer> .'))
 
     def test_literal_containing_a_space_is_one_term(self):
         got = ntdiff.normalize_line(f'{S} {P} "two words" .')

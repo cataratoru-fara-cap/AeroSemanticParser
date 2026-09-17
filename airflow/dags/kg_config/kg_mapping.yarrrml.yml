@@ -1,62 +1,143 @@
-# kg_mapping.yarrrml.yml — MemeAtlas RDF mapping (Phase 5)
+# kg_mapping.yarrrml.yml — MemeAtlas RDF mapping, an extension of IMKG
 # ============================================================================
-# Consumes the clean CSVs from kg_export_rml.py. Run through yarrrml-parser
-# to compile to RML, then Morph-KGC (or the RMLMapper) to execute against
-# the CSVs and emit N-Triples. See run commands below the mapping.
+# MemeAtlas extends IMKG, the Internet Meme Knowledge Graph (Tommasini,
+# Ilievski & Wijesiriwardene, ESWC 2023; github.com/riccardotommasini/imkg).
+# Where IMKG already models something, its terms are reused VERBATIM, so an
+# IMKG query runs unchanged here (compare kym/mappings/kym.media.frames.yaml
+# in the IMKG repository). MemeAtlas additions live under `mk:` and are
+# declared, with their alignments, in memeatlas.ttl next to this file. The
+# full crosswalk is in MODEL.md.
 #
-# Design choices, so the "why" isn't buried in triple syntax:
-#   - Predicate local names deliberately match kg_build.py's own edge
-#     "type" strings (hasEntryType, hasTag, partOfSeries, relatesToMeme,
-#     citesExternal) — the property-graph edge type IS the RDF predicate
-#     local name. One vocabulary, two exports, no separate name to keep in
-#     sync by hand.
-#   - entry_type gets full SKOS treatment (skos:Concept, skos:inScheme,
-#     skos:broader for the curated pairs) since it's small (119) and
-#     curated. tags stay plain string literals via mk:hasTag for now —
-#     102k distinct tags with heavy singular/plural duplication aren't
-#     clean enough to mint as SKOS concepts yet (see the normalization
-#     note from the tag-census review). Revisit once normalized.
-#   - No blank nodes anywhere. Frame IRIs are the live KYM URL, doubling
-#     as the Mongo join key (IMKG convention, kept deliberately even
-#     though strict byte-compat with IMKG is no longer a goal).
-#   - Namespace `mk:` is a placeholder — same open question flagged in
-#     kg_eventkg_schema.yaml (mk:kym/<slug> vs. URL-as-IRI). Using the
-#     live URL as subject here regardless of how that question resolves,
-#     since it's already the established convention for the frame layer.
+# This mapping is the VALIDATION path, written by hand and independently of
+# the Python serializer (modules/kg/rdf.py) that produces the published
+# graph. kym_kg_validate compiles it with yatter, runs morph-kgc over the
+# build's rml_data/*.csv (written by modules/kg/serialize.py), and diffs the
+# output against graph.nt. The two must agree on every triple except the
+# build's own provenance stamps. tests/test_kg_vocabulary.py checks that the
+# predicates and classes used here are exactly those rdf.py emits, and that
+# the sources below are exactly the files serialize.py writes.
+#
+# Conventions shared with IMKG: frame IRIs are the live KYM URL; no blank
+# nodes; N-Triples output. Resources MemeAtlas mints (sections, links,
+# references) live under https://meme4.science/atlas/entry/<sha1(url)>/.
+#
+# Deliberate differences from IMKG (also in rdf.py's docstring):
+#   - m4s:year is xsd:integer and m4s:added / m4s:last_update_source are
+#     xsd:dateTime (IMKG: untyped / xsd:timestamp, not an XSD type).
+#   - The curated entry-type hierarchy is rdfs:subClassOf between the kymt:
+#     classes. IMKG uses skos:broader between FRAMES for "Part of a series
+#     on", and this mapping keeps that meaning for skos:broader alone.
+#
+# Not yet mapped: the Origin and Spread sections (text and images), deferred
+# to the event-extraction task — they will map to IMKG's m4s:origin and
+# m4s:spread. Links inside them still feed mk:relatesToMeme/mk:citesExternal.
+#
+# An empty CSV cell produces no triple (verified against morph-kgc), which
+# is what lets optional fields share one wide CSV per entity. Never name a
+# column subject/predicate/object/graph: morph-kgc uses those names
+# internally and silently overwrites the value (every mk:hasImage subject
+# once came out as <>).
+#
+# Run by hand (the DAG does this per build, cwd = the build directory):
+#   python -m yatter -i kg_mapping.yarrrml.yml -o kg_mapping.rml.ttl
+#   python -m morph_kgc morph_kgc.ini     # na_values MUST be empty
 
 prefixes:
+  m4s: "https://meme4.science/"
   mk: "https://meme4.science/atlas/"
   skos: "http://www.w3.org/2004/02/skos/core#"
   rdfs: "http://www.w3.org/2000/01/rdf-schema#"
+  xsd: "http://www.w3.org/2001/XMLSchema#"
 
 mappings:
+
+  # ---- IMKG: media frames ------------------------------------------------
 
   frame:
     sources:
       - [rml_data/frames.csv~csv]
     subjects: $(url)
     po:
-      - [a, mk:MemeFrame]
+      - [a, m4s:MediaFrame]
+      - [a, https://knowyourmeme.com/memes/$(category_class)~iri]
+      - [m4s:title, $(title)]
       - [rdfs:label, $(title)]
-      - [mk:category, $(category)]
-      - [mk:status, $(status)]
+      - [m4s:status, $(status)]
+      - [m4s:year, $(year), xsd:integer]
+      - [m4s:from, $(from)]
+      - [m4s:about, $(about)]
+      - [m4s:added, $(added), xsd:dateTime]
+      - [m4s:last_update_source, $(last_updated), xsd:dateTime]
+      - [mk:description, $(description)]
+      - [mk:corpusStatus, $(corpus_status)]
+      - [mk:parserVersion, $(parser_version)]
+      - [mk:parsedAt, $(parsed_at), xsd:dateTime]
+      - [mk:scrapedAt, $(scraped_at), xsd:dateTime]
+
+  frame_badge:
+    sources:
+      - [rml_data/frame_badges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:badge, $(badge)]
+
+  frame_alias:
+    sources:
+      - [rml_data/frame_aliases.csv~csv]
+    subjects: $(url)
+    po:
+      - [skos:altLabel, $(alias)]
+
+  frame_corpus_missing:
+    sources:
+      - [rml_data/frame_corpus_missing.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:corpusMissing, $(missing)]
+
+  # IMKG: entry types are classes of the frame.
+  has_entry_type:
+    sources:
+      - [rml_data/entry_type_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [a, https://knowyourmeme.com/types/$(slug)~iri]
+
+  # IMKG: tags are plain literals.
+  has_tag:
+    sources:
+      - [rml_data/tag_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [m4s:tag, $(tag)]
+
+  # IMKG: "Part of a series on X" is skos:broader, with the inverse emitted.
+  part_of_series:
+    sources:
+      - [rml_data/series_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [skos:broader, $(parent_url)~iri]
+
+  part_of_series_inverse:
+    sources:
+      - [rml_data/series_edges.csv~csv]
+    subjects: $(parent_url)
+    po:
+      - [skos:narrower, $(url)~iri]
+
+  # ---- MemeAtlas: the entry-type taxonomy ---------------------------------
 
   entry_type_concept:
     sources:
       - [rml_data/types.csv~csv]
     subjects: https://knowyourmeme.com/types/$(slug)
     po:
+      - [a, rdfs:Class]
       - [a, skos:Concept]
       - [skos:inScheme, mk:EntryTypeScheme~iri]
       - [skos:prefLabel, $(label)]
 
-  # The scheme the concepts above declare themselves in. An skos:inScheme
-  # pointing at an undeclared resource is incomplete SKOS. These two triples
-  # were present in the published kg_output.nt but derivable from NOTHING in
-  # the repository — not this file, not the committed .ttl — so the artifact
-  # could not be reproduced from source. scheme.csv is one row, written by
-  # kg/serialize.py; deriving the declaration through the mapping like every
-  # other triple keeps this file the complete description of the RDF graph.
   entry_type_scheme:
     sources:
       - [rml_data/scheme.csv~csv]
@@ -65,33 +146,21 @@ mappings:
       - [a, skos:ConceptScheme]
       - [rdfs:label, $(label)]
 
-  entry_type_broader:
+  entry_type_subtype:
     sources:
-      - [rml_data/broader_edges.csv~csv]
+      - [rml_data/subtype_edges.csv~csv]
     subjects: https://knowyourmeme.com/types/$(narrower)
     po:
-      - [skos:broader, https://knowyourmeme.com/types/$(broader)~iri]
+      - [rdfs:subClassOf, https://knowyourmeme.com/types/$(broader)~iri]
 
-  has_entry_type:
+  # ---- MemeAtlas: relations IMKG does not model ---------------------------
+
+  has_region:
     sources:
-      - [rml_data/entry_type_edges.csv~csv]
+      - [rml_data/region_edges.csv~csv]
     subjects: $(url)
     po:
-      - [mk:hasEntryType, https://knowyourmeme.com/types/$(slug)~iri]
-
-  has_tag:
-    sources:
-      - [rml_data/tag_edges.csv~csv]
-    subjects: $(url)
-    po:
-      - [mk:hasTag, $(tag)]
-
-  part_of_series:
-    sources:
-      - [rml_data/series_edges.csv~csv]
-    subjects: $(url)
-    po:
-      - [mk:partOfSeries, $(parent_url)~iri]
+      - [mk:region, $(region)]
 
   relates_to_meme:
     sources:
@@ -106,3 +175,90 @@ mappings:
     subjects: $(url)
     po:
       - [mk:citesExternal, $(target_url)~iri]
+
+  # ---- MemeAtlas: the page body --------------------------------------------
+
+  section:
+    sources:
+      - [rml_data/sections.csv~csv]
+    subjects: $(iri)
+    po:
+      - [a, mk:Section]
+      - [mk:sectionKind, $(section_kind)]
+      - [mk:heading, $(heading)]
+      - [mk:position, $(position), xsd:integer]
+      - [mk:headingLevel, $(level), xsd:integer]
+      - [mk:text, $(text)]
+
+  has_section:
+    sources:
+      - [rml_data/section_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:hasSection, $(section)~iri]
+
+  link:
+    sources:
+      - [rml_data/links.csv~csv]
+    subjects: $(iri)
+    po:
+      - [a, mk:Link]
+      - [mk:anchorText, $(anchor_text)]
+
+  has_link:
+    sources:
+      - [rml_data/link_edges.csv~csv]
+    subjects: $(section)
+    po:
+      - [mk:hasLink, $(link)~iri]
+
+  links_to:
+    sources:
+      - [rml_data/links_to_edges.csv~csv]
+    subjects: $(link)
+    po:
+      - [mk:linksTo, $(target)~iri]
+
+  image:
+    sources:
+      - [rml_data/images.csv~csv]
+    subjects: $(iri)
+    po:
+      - [a, mk:Image]
+      - [mk:altText, $(alt)]
+      - [mk:caption, $(caption)]
+      - [mk:width, $(width), xsd:integer]
+      - [mk:height, $(height), xsd:integer]
+
+  has_image:
+    sources:
+      - [rml_data/image_edges.csv~csv]
+    subjects: $(holder)
+    po:
+      - [mk:hasImage, $(image)~iri]
+
+  # ---- MemeAtlas: references ------------------------------------------------
+
+  reference:
+    sources:
+      - [rml_data/references.csv~csv]
+    subjects: $(iri)
+    po:
+      - [a, https://meme4.science/atlas/$(ref_class)~iri]
+      - [mk:citationIndex, $(citation_index), xsd:integer]
+      - [mk:citationText, $(citation_text)]
+      - [mk:siteName, $(site_name)]
+
+  has_reference:
+    sources:
+      - [rml_data/reference_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:hasReference, $(reference)~iri]
+
+  refers_to:
+    sources:
+      - [rml_data/refers_to_edges.csv~csv]
+    subjects: $(reference)
+    po:
+      - [mk:refersTo, $(target)~iri]

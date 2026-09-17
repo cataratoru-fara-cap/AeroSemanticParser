@@ -83,6 +83,17 @@ class SaveGraphTests(unittest.TestCase):
         self.assertEqual(self.store.nodes.count_documents(
             {"kind": "frame_stub"}), 0)
 
+    def test_repeated_node_properties_are_merged_not_replaced(self):
+        # The same image is one page's og:image (with a size) and another
+        # section's captioned image; neither write may erase the other.
+        img = "image:https://i.kym-cdn.com/x.jpg"
+        self.store.save_graph(BUILD, [{"id": img, "kind": "image", "width": 600},
+                                      {"id": img, "kind": "image", "alt": "a"}], [])
+        self.store.save_graph(BUILD, [{"id": img, "kind": "image", "caption": "c"}], [])
+        doc = self.store.nodes.find_one({"node_id": img})
+        self.assertEqual((doc["width"], doc["alt"], doc["caption"]), (600, "a", "c"))
+        self.assertEqual(self.store.nodes.count_documents({}), 1)
+
     def test_duplicates_within_a_batch_are_collapsed(self):
         e = edge(FRAME, "hasTag", "tag:doge")
         got = self.store.save_graph(
@@ -248,7 +259,9 @@ class SnapshotTests(unittest.TestCase):
         self.store.entries.insert_many([
             {"_id": "a", "url": FRAME, "parsed_at": now - timedelta(hours=1),
              "parser_version": "1.5.0", "corpus_policy_version": "p1",
-             "corpus_status": "ready"},
+             "corpus_status": "ready", "dom_content_sha256": "f00",
+             "sections": [{"kind": "other", "text": ["p"],
+                           "images": [{"src": "https://i.kym-cdn.com/x.jpg"}]}]},
             {"_id": "b", "url": PARENT, "parsed_at": now - timedelta(hours=2),
              "parser_version": "1.5.0", "corpus_policy_version": "p1",
              "corpus_status": "incomplete"},
@@ -275,9 +288,20 @@ class SnapshotTests(unittest.TestCase):
         # "Nothing is discarded for being incomplete" applies to the KG too.
         self.assertEqual(self.store.snapshot()["entries_count"], 2)
 
-    def test_projection_excludes_the_bulky_fields(self):
-        self.assertNotIn("sections.text", ks.ENTRY_PROJECTION)
-        self.assertIn("sections.links", ks.ENTRY_PROJECTION)
+    def test_projection_carries_the_whole_parsed_record(self):
+        # 3.0.0 models section text, images and references, so the
+        # projection only EXCLUDES pipeline bookkeeping.
+        self.assertTrue(all(v == 0 for v in ks.ENTRY_PROJECTION.values()))
+        self.assertNotIn("sections", ks.ENTRY_PROJECTION)
+        self.assertIn("dom_content_sha256", ks.ENTRY_PROJECTION)
+
+    def test_iter_entries_returns_sections_in_full(self):
+        snap = self.store.snapshot()
+        docs = {d["url"]: d for d in
+                self.store.iter_entries(snap["entry_ids"], snap["snapshot_at"])}
+        self.assertNotIn("dom_content_sha256", docs[FRAME])
+        self.assertEqual(docs[FRAME]["sections"][0]["text"], ["p"])
+        self.assertEqual(len(docs[FRAME]["sections"][0]["images"]), 1)
 
 
 class CountsAndPruneTests(unittest.TestCase):
@@ -377,6 +401,17 @@ class FacadeContractTests(unittest.TestCase):
         self.assertEqual(len(edges), 1)
         self.assertNotIn("build_id", nodes[0])      # projection strips it
         self.assertEqual(nodes[0]["id"], FRAME)
+
+    def test_iter_nodes_and_edges_filter_by_kind_type_and_fields(self):
+        s = fresh_store()
+        s.save_graph(BUILD, [{**frame_node(), "about": "long text"},
+                             {"id": "tag:doge", "kind": "tag_concept", "label": "doge"}],
+                     [edge(FRAME, "hasTag", "tag:doge"),
+                      edge(FRAME, "hasSection", FRAME + "#s0")])
+        frames = list(s.iter_nodes(BUILD, kinds=["frame"], fields=["label"]))
+        self.assertEqual(frames, [{"id": FRAME, "kind": "frame", "label": "Doge"}])
+        self.assertEqual([e["type"] for e in s.iter_edges(BUILD, types=["hasTag"])],
+                         ["hasTag"])
 
 
 class ValidationRecordTests(unittest.TestCase):

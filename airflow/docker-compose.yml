@@ -61,11 +61,17 @@ x-airflow-common:
     AIRFLOW__CORE__FERNET_KEY: ''
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    # Credentials come from .env, like every other secret here. They used to be
+    # typed literally as airflow:airflow, so changing POSTGRES_PASSWORD in .env
+    # alone would have broken every Airflow service rather than rotated anything.
+    # The password must stay URL-safe (it is embedded in these URLs), and note
+    # that POSTGRES_PASSWORD only initialises a NEW volume: rotating it on an
+    # existing one also needs `ALTER ROLE <user> WITH PASSWORD ...` in postgres.
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_AUTH_JWT_SECRET}
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
     AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
     AIRFLOW__CELERY__WORKER_CONCURRENCY: '4'
     AIRFLOW__CELERY__WORKER_PREFETCH_MULTIPLIER: '1'
     # yamllint disable rule:line-length

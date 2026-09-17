@@ -1,4 +1,4 @@
-"""Tests for kg/rdf.py — (nodes, edges) -> canonical N-Triples.
+"""Tests for kg/rdf.py — (nodes, edges) -> canonical N-Triples, in IMKG's vocabulary.
 
 Scope is pinned deliberately, because the RML validation path only emits
 triples for rows that exist in one of its CSVs. If this module typed
@@ -55,18 +55,53 @@ class NodeIriTests(unittest.TestCase):
         self.assertEqual(rdf.node_iri(FRAME), FRAME)
 
 
-class NodeTripleScopeTests(unittest.TestCase):
-    def test_frame_gets_type_label_category_status(self):
-        got = triples([frame()], [])
-        self.assertEqual(len(got), 4)
-        self.assertTrue(any("22-rdf-syntax-ns#type" in t
-                            and "MemeFrame" in t for t in got))
-        self.assertTrue(any("rdf-schema#label" in t and '"Doge"' in t
-                            for t in got))
+M4S, MK, KYM = rdf.PREFIXES["m4s"], rdf.PREFIXES["mk"], rdf.PREFIXES["kym"]
+RDF_TYPE = rdf.PREFIXES["rdf"] + "type"
+XSD = rdf.PREFIXES["xsd"]
+
+
+class ImkgFrameTests(unittest.TestCase):
+    """A frame must read as an IMKG media frame, term for term."""
+
+    def test_frame_gets_imkg_class_title_status_and_category_class(self):
+        got = set(triples([frame()], []))
+        self.assertEqual(got, {
+            f"<{FRAME}> <{RDF_TYPE}> <{M4S}MediaFrame> .",
+            f"<{FRAME}> <{RDF_TYPE}> <{KYM}Meme> .",
+            f'<{FRAME}> <{M4S}title> "Doge" .',
+            f'<{FRAME}> <{rdf.PREFIXES["rdfs"]}label> "Doge" .',
+            f'<{FRAME}> <{M4S}status> "confirmed" .',
+        })
+
+    def test_imkg_literals_and_datatypes(self):
+        got = set(triples([{
+            "id": FRAME, "kind": "frame", "year": 2013, "from": "Tumblr",
+            "about": "a\nb", "added": "2011-03-13T07:06:40Z",
+            "last_updated": "2023-11-14T22:13:20Z"}], []))
+        self.assertIn(f'<{FRAME}> <{M4S}year> "2013"^^<{XSD}integer> .', got)
+        self.assertIn(f'<{FRAME}> <{M4S}from> "Tumblr" .', got)
+        self.assertIn(f'<{FRAME}> <{M4S}added> '
+                      f'"2011-03-13T07:06:40Z"^^<{XSD}dateTime> .', got)
+        self.assertIn(f'<{FRAME}> <{M4S}last_update_source> '
+                      f'"2023-11-14T22:13:20Z"^^<{XSD}dateTime> .', got)
+        self.assertTrue(any(f"<{M4S}about>" in t for t in got))
+
+    def test_list_properties_emit_one_triple_per_value(self):
+        got = triples([{"id": FRAME, "kind": "frame",
+                        "badges": ["Sensitive", "NSFW"], "aliases": ["Shibe"],
+                        "corpus_missing": ["region"]}], [])
+        self.assertEqual(sum(f"<{MK}badge>" in t for t in got), 2)
+        self.assertEqual(sum("altLabel" in t for t in got), 1)
+        self.assertEqual(sum(f"<{MK}corpusMissing>" in t for t in got), 1)
+
+    def test_unknown_category_gets_no_category_class(self):
+        self.assertIsNone(rdf.category_class("unknown"))
+        self.assertIsNone(rdf.category_class(None))
+        self.assertEqual(rdf.category_class("subculture"), "Subculture")
 
     def test_missing_attributes_emit_nothing(self):
         got = triples([frame(label=None, category=None, status=None)], [])
-        self.assertEqual(len(got), 1)   # rdf:type only
+        self.assertEqual(got, [f"<{FRAME}> <{RDF_TYPE}> <{M4S}MediaFrame> ."])
 
     def test_stub_gets_no_triples(self):
         # The RML path has no CSV row for a stub, so neither may this.
@@ -84,13 +119,14 @@ class NodeTripleScopeTests(unittest.TestCase):
             triples([{"id": EXTERNAL, "kind": "external_ref", "label": None}],
                     []), [])
 
-    def test_entry_type_concept_gets_skos_treatment(self):
+    def test_entry_type_concept_is_a_class_and_a_skos_concept(self):
         got = triples([{"id": "type:exploitable", "kind": "entry_type_concept",
                         "label": "exploitable"}], [])
-        # 3 for the concept (type, inScheme, prefLabel) + 2 declaring the
-        # scheme itself. An skos:inScheme pointing at an undeclared resource
-        # is incomplete SKOS, and the published graph declares it too.
-        self.assertEqual(len(got), 5)
+        # 4 for the concept (rdfs:Class, skos:Concept, inScheme, prefLabel)
+        # + 2 declaring the scheme itself. An skos:inScheme pointing at an
+        # undeclared resource is incomplete SKOS.
+        self.assertEqual(len(got), 6)
+        self.assertTrue(any("rdf-schema#Class" in t for t in got))
         self.assertTrue(any("inScheme" in t for t in got))
         self.assertTrue(any("prefLabel" in t for t in got))
         self.assertFalse(any("category" in t for t in got))
@@ -118,27 +154,91 @@ class NodeTripleScopeTests(unittest.TestCase):
         self.assertIn('"ai generated"', pref)
 
 
+class BodyNodeTests(unittest.TestCase):
+    SID = "https://meme4.science/atlas/entry/abc/section/3"
+
+    def test_section(self):
+        got = set(triples([{"id": self.SID, "kind": "section",
+                            "section_kind": "other", "heading": "H",
+                            "position": 3, "level": 2, "text": "p1\n\tp2"}], []))
+        self.assertIn(f"<{self.SID}> <{RDF_TYPE}> <{MK}Section> .", got)
+        self.assertIn(f'<{self.SID}> <{MK}position> "3"^^<{XSD}integer> .', got)
+        self.assertIn(f'<{self.SID}> <{MK}headingLevel> "2"^^<{XSD}integer> .', got)
+        self.assertIn(f'<{self.SID}> <{MK}text> "p1\\n\\tp2" .', got)
+
+    def test_position_zero_is_a_value_not_an_absence(self):
+        got = triples([{"id": self.SID, "kind": "section", "position": 0}], [])
+        self.assertTrue(any(f"<{MK}position>" in t and '"0"' in t for t in got))
+
+    def test_reference_class_comes_from_ref_class(self):
+        rid = "https://meme4.science/atlas/entry/abc/reference/0"
+        got = set(triples([{"id": rid, "kind": "reference",
+                            "ref_class": "ExternalReference", "index": 1,
+                            "citation_text": "Wikipedia"}], []))
+        self.assertEqual(got, {
+            f"<{rid}> <{RDF_TYPE}> <{MK}ExternalReference> .",
+            f'<{rid}> <{MK}citationIndex> "1"^^<{XSD}integer> .',
+            f'<{rid}> <{MK}citationText> "Wikipedia" .'})
+
+    def test_image_iri_is_the_file_url(self):
+        img = "https://i.kym-cdn.com/x.jpg"
+        got = set(triples([{"id": f"image:{img}", "kind": "image",
+                            "width": 600, "caption": "wow"}], []))
+        self.assertEqual(got, {
+            f"<{img}> <{RDF_TYPE}> <{MK}Image> .",
+            f'<{img}> <{MK}width> "600"^^<{XSD}integer> .',
+            f'<{img}> <{MK}caption> "wow" .'})
+
+    def test_region_concept_gets_no_triples(self):
+        self.assertEqual(triples([{"id": "region:Japan", "kind": "region_concept",
+                                   "label": "Japan"}], []), [])
+
+
 class EdgeTripleTests(unittest.TestCase):
-    def test_relations_become_iri_objects(self):
+    def test_series_is_skos_broader_with_its_inverse(self):
+        # IMKG emits both directions; so do we.
         got = triples([], [{"src": FRAME, "type": "partOfSeries",
                             "dst": PARENT}])
-        self.assertEqual(got, [f"<{FRAME}> <{rdf.PREFIXES['mk']}partOfSeries> "
-                               f"<{PARENT}> ."])
+        skos = rdf.PREFIXES["skos"]
+        self.assertEqual(got, [f"<{FRAME}> <{skos}broader> <{PARENT}> .",
+                               f"<{PARENT}> <{skos}narrower> <{FRAME}> ."])
 
-    def test_tags_become_literals_with_the_prefix_stripped(self):
+    def test_relations_become_iri_objects(self):
+        got = triples([], [{"src": FRAME, "type": "relatesToMeme",
+                            "dst": PARENT}])
+        self.assertEqual(got, [f"<{FRAME}> <{MK}relatesToMeme> <{PARENT}> ."])
+
+    def test_entry_type_is_rdf_type(self):
+        got = triples([], [{"src": FRAME, "type": "hasEntryType",
+                            "dst": "type:exploitable"}])
+        self.assertEqual(got, [f"<{FRAME}> <{RDF_TYPE}> <{rdf.TYPES_BASE}exploitable> ."])
+
+    def test_region_is_a_literal(self):
+        got = triples([], [{"src": FRAME, "type": "hasRegion", "dst": "region:Japan"}])
+        self.assertEqual(got, [f'<{FRAME}> <{MK}region> "Japan" .'])
+
+    def test_has_image_points_at_the_file(self):
+        img = "https://i.kym-cdn.com/x.jpg"
+        got = triples([], [{"src": FRAME, "type": "hasImage", "dst": f"image:{img}"}])
+        self.assertEqual(got, [f"<{FRAME}> <{MK}hasImage> <{img}> ."])
+
+    def test_tags_become_imkg_literals_with_the_prefix_stripped(self):
         got = triples([], [{"src": FRAME, "type": "hasTag", "dst": "tag:doge"}])
-        self.assertIn('"doge"', got[0])
-        self.assertNotIn("tag:doge", got[0])
+        self.assertEqual(got, [f'<{FRAME}> <{M4S}tag> "doge" .'])
 
     def test_entry_type_edges_point_at_the_types_namespace(self):
         got = triples([], [{"src": FRAME, "type": "hasEntryType",
                             "dst": "type:exploitable"}])
         self.assertIn(f"<{rdf.TYPES_BASE}exploitable>", got[0])
 
-    def test_broader_uses_the_skos_predicate(self):
-        got = triples([], [{"src": "type:model", "type": "broader",
+    def test_taxonomy_is_rdfs_subclassof_not_skos_broader(self):
+        # skos:broader already means "part of a series" between frames in
+        # IMKG; the entry-type hierarchy must not reuse it.
+        got = triples([], [{"src": "type:model", "type": "subTypeOf",
                             "dst": "type:influencer"}])
-        self.assertIn(f"{rdf.PREFIXES['skos']}broader", got[0])
+        self.assertEqual(got, [f"<{rdf.TYPES_BASE}model> "
+                               f"<{rdf.PREFIXES['rdfs']}subClassOf> "
+                               f"<{rdf.TYPES_BASE}influencer> ."])
 
     def test_unknown_edge_type_is_skipped(self):
         self.assertEqual(triples([], [{"src": FRAME, "type": "nope",
@@ -147,7 +247,12 @@ class EdgeTripleTests(unittest.TestCase):
     def test_every_build_edge_type_has_a_predicate(self):
         from modules.kg import build, taxonomy
         for etype in set(build.EDGE_TYPES) | set(taxonomy.CONCEPT_EDGE_TYPES):
-            self.assertIn(etype, rdf.EDGE_TYPE_TO_PRED)
+            self.assertIn(etype, rdf.EDGE_PREDICATES)
+
+    def test_every_node_kind_is_either_classed_or_deliberately_not(self):
+        from modules.kg import build
+        unclassed = {"frame_stub", "tag_concept", "region_concept", "external_ref"}
+        self.assertEqual(set(rdf.NODE_CLASSES) | unclassed, set(build.NODE_KINDS))
 
 
 class SetSemanticsTests(unittest.TestCase):
@@ -158,12 +263,16 @@ class SetSemanticsTests(unittest.TestCase):
         self.assertEqual(len(triples([], [e, dict(e)])), 1)
 
     def test_repeated_node_yields_one_set_of_triples(self):
-        self.assertEqual(len(triples([frame(), frame()], [])), 4)
+        self.assertEqual(len(triples([frame(), frame()], [])), 5)
 
     def test_two_frames_sharing_a_label_both_emit(self):
         # Dedup is per triple, not per literal value.
         got = triples([frame(), frame(nid=PARENT, label="Doge")], [])
-        self.assertEqual(len(got), 8)
+        self.assertEqual(len(got), 10)
+
+    def test_dedupe_can_be_turned_off_for_unique_input(self):
+        e = {"src": FRAME, "type": "hasTag", "dst": "tag:doge"}
+        self.assertEqual(len(triples([], [e, dict(e)], dedupe=False)), 2)
 
 
 class ProvenanceTests(unittest.TestCase):
@@ -184,10 +293,10 @@ class WriteNtTests(unittest.TestCase):
             path = str(Path(tmp) / "graph.nt")
             got = rdf.write_nt([frame()], [], path)
             body = Path(path).read_bytes()
-            self.assertEqual(got["triples"], 4)
+            self.assertEqual(got["triples"], 5)
             self.assertEqual(got["sha256"],
                              hashlib.sha256(body).hexdigest())
-            self.assertEqual(body.decode().count("\n"), 4)
+            self.assertEqual(body.decode().count("\n"), 5)
 
     def test_output_is_byte_stable_across_runs(self):
         with tempfile.TemporaryDirectory() as tmp:

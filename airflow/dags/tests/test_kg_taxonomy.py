@@ -4,7 +4,7 @@ Two of these pin findings rather than behaviour, and should not be deleted
 as redundant:
 
   * ``ConsistencyGuardTests`` — ``model -> influencer`` was encoded as a
-    skos:broader triple in kg_output.nt while the curated file listed it
+    skos:broader triple in kg_output.nt (now rdfs:subClassOf) while the curated file listed it
     under ``contested`` ("sample before promoting"). The entries were
     sampled and the pair was then promoted by curator decision, so the
     record and the graph now agree. The guard is what stops them silently
@@ -117,13 +117,15 @@ class ConceptEdgeTests(unittest.TestCase):
             self.assertTrue(e["src"].startswith("type:"))
             self.assertTrue(e["dst"].startswith("type:"))
 
-    def test_edge_type_is_the_skos_local_name(self):
-        self.assertEqual({e["type"] for e in self.edges}, {"broader"})
-        self.assertEqual(set(tx.CONCEPT_EDGE_TYPES), {"broader"})
+    def test_edge_type_is_subtypeof(self):
+        # Not "broader": IMKG uses skos:broader for frame series, so the
+        # type hierarchy is rdfs:subClassOf (kg/rdf.py) under its own name.
+        self.assertEqual({e["type"] for e in self.edges}, {"subTypeOf"})
+        self.assertEqual(set(tx.CONCEPT_EDGE_TYPES), {"subTypeOf"})
 
     def test_direction_is_narrower_to_broader(self):
         self.assertIn({"src": "type:streamer", "dst": "type:creator",
-                       "type": "broader"}, self.edges)
+                       "type": "subTypeOf"}, self.edges)
 
 
 class ConsistencyGuardTests(unittest.TestCase):
@@ -242,7 +244,7 @@ class ValidateAgainstCensusTests(unittest.TestCase):
         census = {"value_counts": {"streamer": 5, "creator": 9}}
         edges = tx.encodable_edges(self.tax, census)
         self.assertEqual(edges, [{"src": "type:streamer", "dst": "type:creator",
-                                  "type": "broader"}])
+                                  "type": "subTypeOf"}])
 
     def test_summary_shape_for_the_run_record(self):
         summary = self.tax.summary()

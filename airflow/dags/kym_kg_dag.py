@@ -15,11 +15,16 @@ snapshot of `entries` — in every representation at once:
 
     Mongo    kg_nodes / kg_edges documents tagged with this build_id
     files    data/kg/builds/<build_id>/{graph.nt, rml_data/*.csv,
-             kg_view_*.csv, manifest.json}
+             kg_view_*.csv, ontology.ttl, manifest.json}
     Fuseki   named graph urn:memeatlas:build:<build_id>      (RDF)
+             + the vocabulary in urn:memeatlas:ontology
     Neo4j    nodes/relationships carrying build_id            (property graph)
 
 and then, if verification passes, flips every pointer to it.
+
+The graph is MemeAtlas as an extension of IMKG: IMKG's terms where IMKG
+models a thing, mk: terms (kg_config/memeatlas.ttl) for the rest of the
+parsed record — see kg/rdf.py and kg_config/MODEL.md.
 
 Atomicity without transactions
 ------------------------------
@@ -57,15 +62,16 @@ Pipeline:
     materialize_stubs   one pass: a stub node for every edge target with no node
     census              entry_type frequency + co-occurrence for the taxonomy
     load_taxonomy       kg_config/entry_type_taxonomy.yaml, validated against it
-    write_concept_edges skos:broader edges into the same generation
+    write_concept_edges subTypeOf edges (rdfs:subClassOf) into the same generation
     write_exports       kg/serialize.py: one stream -> every file representation
-    load_fuseki         graph.nt -> the build's named graph
+    load_fuseki         graph.nt -> the build's named graph; ontology -> its own
     load_neo4j          nodes/edges -> Neo4j, tagged with build_id
     verify              Mongo == manifest == RML rows == Fuseki == Neo4j
     publish             followers first, Mongo last; read every pointer back
     prune               drop generations beyond keep_builds, in every store
-    compute_metrics     kg/metrics.py over the published build (memory-heavy,
-                        so AFTER publish: it can never block a verified graph)
+    compute_metrics     kg/metrics.py over the published build's IMKG-comparable
+                        core (memory-heavy, so AFTER publish: it can never
+                        block a verified graph)
     summarize / record_summary   -> run_summaries, stage="kg"
 
 The RDF diff gate (morph-kgc re-derivation vs graph.nt) is its own DAG,
@@ -111,6 +117,20 @@ DEFAULT_ARGS = {
 KG_DATA_DIR = os.getenv("KG_DATA_DIR", "/opt/airflow/data/kg")
 KG_CONFIG_DIR = os.getenv("KG_CONFIG_DIR", "/opt/airflow/dags/kg_config")
 TAXONOMY_PATH = os.path.join(KG_CONFIG_DIR, "entry_type_taxonomy.yaml")
+ONTOLOGY_PATH = os.path.join(KG_CONFIG_DIR, "memeatlas.ttl")
+
+# The subgraph kg/metrics.py measures: the shape IMKG publishes numbers for
+# (frames, their types, tags, series and cross-links), so MemeAtlas's figures
+# stay comparable with IMKG's. The page body — sections, links, references,
+# images — would multiply node counts without saying anything about meme
+# connectivity, and would not fit in the worker's memory besides. Every
+# node a core edge touches is a core kind (kg/build.py emits frame-level
+# edges for every body link and reference), so the core is closed.
+METRICS_NODE_KINDS = ("frame", "frame_stub", "entry_type_concept",
+                      "tag_concept", "external_ref")
+METRICS_EDGE_TYPES = ("hasEntryType", "hasTag", "partOfSeries",
+                      "relatesToMeme", "citesExternal", "subTypeOf")
+METRICS_NODE_FIELDS = ("label", "category", "status")
 
 
 def _build_dir(build_id: str) -> str:
@@ -366,11 +386,15 @@ def kym_kg_dag():
         bid = proceed["build_id"]
         out_dir = _build_dir(bid)
         os.makedirs(out_dir, exist_ok=True)
+        # assume_unique: the store keys every node and edge by a unique _id,
+        # so serialize's dedupe sets (millions of entries at this size)
+        # would only cost memory.
         manifest = serialize.write_build(
             lambda: store.iter_nodes(bid), lambda: store.iter_edges(bid),
             out_dir, build_id=bid, stamps=snap["stamps"],
             exclude_kinds=p.get("exclude_kinds") or (),
-            top_tags=p.get("top_tags", 0))
+            top_tags=p.get("top_tags", 0),
+            ontology_path=ONTOLOGY_PATH, assume_unique=True)
         log.info("Exports written to %s: %s", out_dir, manifest["counts"])
         return manifest
 
@@ -384,8 +408,12 @@ def kym_kg_dag():
         with _http() as http:
             loaded = loaders.fuseki_load(http, cfg, bid, _graph_nt(bid))
             triples = loaders.fuseki_count(http, cfg, loaders.fuseki_graph_iri(bid))
+            # The vocabulary is not part of any one build; loading it with
+            # each one keeps the endpoint's copy equal to the tracked file.
+            loaders.fuseki_load_ontology(http, cfg, ONTOLOGY_PATH)
         log.info("Fuseki: %s triples in %s", triples, loaded["graph"])
-        return {**loaded, "triples": triples}
+        return {**loaded, "triples": triples,
+                "ontology_graph": loaders.ONTOLOGY_GRAPH}
 
     @task(execution_timeout=timedelta(minutes=45))
     def load_neo4j(proceed: dict, stubs: dict, concepts: dict) -> dict:
@@ -525,15 +553,17 @@ def kym_kg_dag():
     # -- Phase 7: measure the published graph ----------------------------------
     @task(execution_timeout=timedelta(minutes=30), retries=1)
     def compute_metrics(published: dict, pruned: dict) -> dict:
-        """kg/metrics.py needs the whole graph in memory (~0.6 GB at 350k
-        nodes / 713k edges), which is why it runs after publish: a metrics
-        OOM must never block a verified graph from going live."""
+        """kg/metrics.py needs its graph in memory (~0.6 GB for the core:
+        ~350k nodes / ~713k edges), which is why it runs after publish: a
+        metrics OOM must never block a verified graph from going live. Only
+        the core subgraph (METRICS_*) and only the fields metrics reads are
+        loaded — section text alone would not fit."""
         import json
         from modules.kg import metrics
         bid = published["build_id"]
-        nodes = {n["node_id"]: {**n, "id": n["node_id"]}
-                 for n in store.iter_nodes(bid)}
-        edges = list(store.iter_edges(bid))
+        nodes = {n["id"]: n for n in store.iter_nodes(
+            bid, kinds=METRICS_NODE_KINDS, fields=METRICS_NODE_FIELDS)}
+        edges = list(store.iter_edges(bid, types=METRICS_EDGE_TYPES))
         m = metrics.compute_metrics(nodes, edges)
         del nodes, edges
         out = os.path.join(_build_dir(bid), "metrics.json")
@@ -549,7 +579,8 @@ def kym_kg_dag():
     def summarize(snap: dict, chunk_stats: list[dict] | None = None,
                   stubs: dict | None = None, tax: dict | None = None,
                   manifest: dict | None = None, fuseki: dict | None = None,
-                  neo4j: dict | None = None, published: dict | None = None,
+                  neo4j: dict | None = None, verified: dict | None = None,
+                  published: dict | None = None,
                   metrics: dict | None = None) -> dict:
         if not snap["stale"]:
             summary = {"skipped": True, "reason": snap["reason"],
@@ -565,6 +596,10 @@ def kym_kg_dag():
         run_totals.update(stubs or {})
 
         rep = (metrics or {}).get("replication", {})
+        # The whole graph's counts come from verify (they are Mongo's, which
+        # every other store was checked against); metrics measures the
+        # IMKG-comparable core only, reported under "core".
+        counts = (verified or {}).get("counts", {})
         summary = {
             "run": run_totals,
             "build": {"build_id": snap["build_id"],
@@ -572,11 +607,17 @@ def kym_kg_dag():
                       "pointers": (published or {}).get("pointers"),
                       **snap["stamps"]},
             "graph": {
-                "nodes": rep.get("nodes"), "edges": rep.get("edges"),
-                "frames": rep.get("frames"), "rel_types": rep.get("rel_types"),
-                "avg_degree": rep.get("avg_degree"),
-                "nodes_by_kind": rep.get("nodes_by_kind", {}),
-                "edges_by_type": rep.get("edges_by_type", {}),
+                "nodes": counts.get("nodes"), "edges": counts.get("edges"),
+                "frames": counts.get("frames"),
+                "rel_types": len(counts.get("edges_by_type", {})) or None,
+                "triples": (manifest or {}).get("counts", {}).get("triples"),
+                "nodes_by_kind": counts.get("nodes_by_kind", {}),
+                "edges_by_type": counts.get("edges_by_type", {}),
+                "core": {
+                    "nodes": rep.get("nodes"), "edges": rep.get("edges"),
+                    "frames": rep.get("frames"), "rel_types": rep.get("rel_types"),
+                    "avg_degree": rep.get("avg_degree"),
+                },
             },
             "integrity": (metrics or {}).get("integrity", {}),
             "taxonomy": {k: (tax or {}).get(k) for k in (
@@ -625,7 +666,8 @@ def kym_kg_dag():
     published = publish(proceed, manifest, verified)
     pruned = prune(published, verified)
     measured = compute_metrics(published, pruned)
-    summary = summarize(snap, built, stubs, tax, manifest, fus, neo, published, measured)
+    summary = summarize(snap, built, stubs, tax, manifest, fus, neo, verified,
+                        published, measured)
     record_summary(summary)
 
 

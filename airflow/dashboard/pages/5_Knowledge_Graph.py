@@ -25,7 +25,9 @@ if not reachable:
 
 st.title("Knowledge graph")
 st.caption("`kym_kg`, triggered by parse · owns `kg_nodes`, `kg_edges` and "
-           "`kg_builds` · publishes into Neo4j, Fuseki and `data/kg/`")
+           "`kg_builds` · publishes into Neo4j, Fuseki and `data/kg/` · "
+           "MemeAtlas extends IMKG: IMKG's `m4s:` terms where IMKG models a "
+           "thing, `mk:` (`kg_config/memeatlas.ttl`) for the rest")
 
 kg = data.kg_state()
 rows = data.run_history("kg")
@@ -51,11 +53,13 @@ with left:
 with right:
     ui.stat_tiles([
         {"label": "Frames", "value": kg["frames"],
-         "help": "Scraped KYM entries in the graph — every other node hangs off one."},
+         "help": "Scraped KYM entries (IMKG's m4s:MediaFrame) — every other node "
+                 "hangs off one."},
         {"label": "Edges", "value": kg["edges"]},
         {"label": "RDF triples", "value": kg["manifest_counts"].get("triples"),
          "help": "Lines in graph.nt, and what Fuseki holds. More than edges: "
-                 "each frame also carries type/label/category/status triples."},
+                 "every node also carries its attributes as literal triples "
+                 "(title, about, section text, captions, …)."},
         {"label": "Generations kept", "value": kg["generations"],
          "help": "Builds retained after prune. Rollback is re-pointing at the previous one."},
     ], pal)
@@ -161,7 +165,9 @@ st.subheader("Entry-type taxonomy")
 tax = latest.get("taxonomy") or {}
 st.caption(
     "The curated record in `dags/kg_config/entry_type_taxonomy.yaml`. Only "
-    "`broader_confirmed` and `broader_semantic_only` become `skos:broader` edges; "
+    "`broader_confirmed` and `broader_semantic_only` become `subTypeOf` edges "
+    "(`rdfs:subClassOf` between the `kymt:` classes — IMKG already uses "
+    "`skos:broader` for frame series); "
     "the other buckets are decisions *not* to encode something, carried here so "
     "they stay visible rather than becoming folklore.")
 if tax.get("buckets"):

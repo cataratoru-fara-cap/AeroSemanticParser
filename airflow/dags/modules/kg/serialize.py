@@ -4,45 +4,36 @@ kg/serialize.py — one build, every on-disk representation, one code path
 Pure: no Mongo, no Airflow. Given the nodes and edges of one build, writes
 into a build directory:
 
-    graph.nt                 the RDF graph (kg/rdf.py)           — the product
-    rml_data/*.csv           the eight CSVs the YARRRML mapping reads — the
-                             input to the morph-kgc VALIDATION path
-    kg_view_nodes.csv        the property graph for Cosmograph / Gephi
-    kg_view_edges.csv
+    graph.nt                 the RDF graph (kg/rdf.py)             — the product
+    rml_data/*.csv           the CSVs kg_config/kg_mapping.yarrrml.yml reads —
+                             the input to the morph-kgc VALIDATION path
+    kg_view_nodes.csv        a slim property-graph view for Cosmograph / Gephi
+    kg_view_edges.csv        (the full property graph is Mongo and Neo4j)
+    ontology.ttl             copy of kg_config/memeatlas.ttl, if given
     manifest.json            build_id, stamps, per-file sha256 and row counts
 
-Why one module
---------------
-This replaces two: ``kg_export.py`` (property-graph CSVs from kg_nodes/
-kg_edges) and ``kg_export_rml.py`` (RML CSVs, re-derived DIRECTLY from
-`entries` by a second copy of the link-classification loop). Two loops, one
-copy-paste apart, and they drifted: the RML copy forgot to seed its
-per-entry ``seen`` set with ``series_parent``, so the published RDF carried
-14,563 ``mk:relatesToMeme`` triples the property graph did not. Every file
-below is now a projection of the SAME node/edge stream from kg/build.py, so
-the representations cannot disagree about which edges exist — only about
-how each chooses to render them, and that is what the vocabulary test and
-the diff gate pin down.
+Every file is a projection of the SAME node/edge stream from kg/build.py.
+The exporters this replaced derived the RDF by a second copy of the loop,
+and the two drifted 14,563 edges apart unnoticed.
+
+RML CSV shape
+-------------
+One wide CSV per node kind (optional columns left empty — morph-kgc emits
+nothing for an empty cell, verified by probe), one CSV per list-valued frame
+property, one CSV per edge type. Every column is declared in the tables
+below; tests/test_kg_vocabulary.py asserts these files are exactly the
+sources the YARRRML mapping reads.
 
 Inputs are factories, not iterables
 -----------------------------------
 ``nodes`` and ``edges`` are zero-argument callables returning a fresh
-iterable each time. Each output family walks the stream once more rather
-than the whole graph being buffered: 348k nodes + 713k edges is ~500 MB in
-Python objects, and a Mongo cursor is cheap to reopen. Peak memory stays
-near one row per open file.
+iterable each time; each output walks the stream again rather than
+buffering ~1M nodes. ``assume_unique=True`` (what the DAG passes, since the
+store keys every node and edge by a unique ``_id``) also skips the dedupe
+sets, which at this size would otherwise cost hundreds of MB.
 
-Nothing is half-written
------------------------
-Every file is written as ``<name>.tmp`` and ``os.replace``d into place when
-complete, and the manifest is written last. The previous exporter opened six
-handles bare with no try/finally; an exception mid-run left six truncated
-CSVs that looked complete to morph-kgc. Here a crash leaves ``.tmp`` files
-and no manifest — visibly unfinished, never plausibly finished.
-
-Value mapping to the RML CSVs mirrors ``kg_mapping.yarrrml.yml`` exactly: the
-property graph's ``type:<slug>`` and ``tag:<label>`` ids are stripped back
-to the raw slug/label, because the mapping mints the IRI or literal itself.
+Nothing is half-written: every file is ``<name>.tmp`` until complete, then
+``os.replace``d; the manifest is written last.
 """
 from __future__ import annotations
 
@@ -51,6 +42,7 @@ import csv
 import hashlib
 import json
 import os
+import shutil
 from collections import Counter
 from typing import Any, Callable, Iterable
 
@@ -59,8 +51,9 @@ from modules.kg.build import EDGE_TYPES, NODE_KINDS
 from modules.kg.taxonomy import CONCEPT_EDGE_TYPES
 
 __all__ = [
-    "EDGE_TYPE_TO_RML_FILE", "RML_NODE_FILES", "PG_NODES_HEADER",
-    "PG_EDGES_HEADER", "RML_DIR", "write_build", "load_manifest",
+    "EDGE_TYPE_TO_RML_FILE", "RML_NODE_FILES", "RML_LIST_FILES", "RESERVED_COLUMNS",
+    "RML_CONCEPT_FILES", "PG_NODES_HEADER", "PG_EDGES_HEADER", "RML_DIR",
+    "all_rml_files", "write_build", "load_manifest",
 ]
 
 NodeSource = Callable[[], Iterable[dict]]
@@ -68,48 +61,105 @@ EdgeSource = Callable[[], Iterable[dict]]
 
 RML_DIR = "rml_data"
 
-# edge type -> (RML csv name, header). tests/test_kg_vocabulary.py asserts
-# these keys equal EDGE_TYPES + CONCEPT_EDGE_TYPES equal the YARRRML's
-# predicate local names — the one-vocabulary invariant.
-EDGE_TYPE_TO_RML_FILE: dict[str, tuple[str, tuple[str, ...]]] = {
+# file -> (node kind, ((column, node property), ...)). "id" is rendered as
+# the node's IRI; "category_class" is derived via rdf.category_class.
+RML_NODE_FILES: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
+    "frames.csv": ("frame", (
+        ("url", "id"), ("title", "label"), ("category_class", "category"),
+        ("status", "status"), ("year", "year"), ("from", "from"),
+        ("about", "about"), ("added", "added"), ("last_updated", "last_updated"),
+        ("description", "description"), ("corpus_status", "corpus_status"),
+        ("parser_version", "parser_version"), ("parsed_at", "parsed_at"),
+        ("scraped_at", "scraped_at"))),
+    "sections.csv": ("section", (
+        ("iri", "id"), ("section_kind", "section_kind"), ("heading", "heading"),
+        ("position", "position"), ("level", "level"), ("text", "text"))),
+    "links.csv": ("link", (("iri", "id"), ("anchor_text", "anchor_text"))),
+    "references.csv": ("reference", (
+        ("iri", "id"), ("ref_class", "ref_class"), ("citation_index", "index"),
+        ("citation_text", "citation_text"), ("site_name", "site_name"))),
+    "images.csv": ("image", (
+        ("iri", "id"), ("alt", "alt"), ("caption", "caption"),
+        ("width", "width"), ("height", "height"))),
+}
+
+# file -> (frame list property, value column)
+RML_LIST_FILES: dict[str, tuple[str, str]] = {
+    "frame_badges.csv": ("badges", "badge"),
+    "frame_aliases.csv": ("aliases", "alias"),
+    "frame_corpus_missing.csv": ("corpus_missing", "missing"),
+}
+
+# Concept/scheme sources with their own shape.
+RML_CONCEPT_FILES: dict[str, tuple[str, ...]] = {
+    "types.csv": ("slug", "label"),
+    "scheme.csv": ("iri", "label"),
+}
+
+# edge type -> (RML csv name, header). Values: ids are rendered through
+# _rml_id, so type:/tag:/region:/image: prefixes become the slug, literal,
+# or IRI the mapping expects.
+EDGE_TYPE_TO_RML_FILE: dict[str, tuple[str, tuple[str, str]]] = {
     "hasEntryType":  ("entry_type_edges.csv", ("url", "slug")),
     "hasTag":        ("tag_edges.csv",        ("url", "tag")),
+    "hasRegion":     ("region_edges.csv",     ("url", "region")),
     "partOfSeries":  ("series_edges.csv",     ("url", "parent_url")),
     "relatesToMeme": ("relates_edges.csv",    ("url", "target_url")),
     "citesExternal": ("cites_edges.csv",      ("url", "target_url")),
-    "broader":       ("broader_edges.csv",    ("narrower", "broader")),
+    "subTypeOf":     ("subtype_edges.csv",    ("narrower", "broader")),
+    "hasSection":    ("section_edges.csv",    ("url", "section")),
+    "hasLink":       ("link_edges.csv",       ("section", "link")),
+    "linksTo":       ("links_to_edges.csv",   ("link", "target")),
+    "hasReference":  ("reference_edges.csv",  ("url", "reference")),
+    "refersTo":      ("refers_to_edges.csv",  ("reference", "target")),
+    "hasImage":      ("image_edges.csv",      ("holder", "image")),
 }
-
-RML_NODE_FILES: dict[str, tuple[str, ...]] = {
-    "frames.csv": ("url", "title", "category", "status"),
-    "types.csv":  ("slug", "label"),
-    "scheme.csv": ("iri", "label"),     # one row: the SKOS scheme itself
-}
+# Column names are also morph-kgc dataframe columns once read, and morph-kgc
+# uses some names itself: a CSV column called "subject" is silently
+# overwritten, so every hasImage triple came out as <> mk:hasImage <img>.
+# Found by the end-to-end probe; the vocabulary test forbids these names.
+RESERVED_COLUMNS = frozenset({"subject", "predicate", "object", "graph"})
 
 PG_NODES_HEADER = ("id", "label", "kind", "category", "status")
 PG_EDGES_HEADER = ("source", "target", "type")
 
 assert set(EDGE_TYPE_TO_RML_FILE) == set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES), (
     "serialize.py's RML file table drifted from the edge vocabulary")
+assert {k for k, _ in RML_NODE_FILES.values()} | {"frame_stub", "entry_type_concept",
+        "tag_concept", "region_concept", "external_ref"} == set(NODE_KINDS), (
+    "serialize.py's node file table drifted from NODE_KINDS")
 
 
-def _strip(prefix: str, value: str) -> str:
-    return value[len(prefix):] if value.startswith(prefix) else value
+def all_rml_files() -> set[str]:
+    """Every file under rml_data/ a build writes."""
+    return (set(RML_NODE_FILES) | set(RML_LIST_FILES) | set(RML_CONCEPT_FILES)
+            | {name for name, _ in EDGE_TYPE_TO_RML_FILE.values()})
 
 
-def _rml_row(edge: dict) -> tuple[str, str] | None:
-    """One edge -> the two-column row its RML CSV expects, or None."""
-    etype = edge.get("type")
-    src, dst = edge.get("src"), edge.get("dst")
-    if etype not in EDGE_TYPE_TO_RML_FILE or not src or not dst:
-        return None
-    if etype == "hasEntryType":
-        return (src, _strip("type:", dst))
-    if etype == "hasTag":
-        return (src, _strip("tag:", dst))
-    if etype == "broader":
-        return (_strip("type:", src), _strip("type:", dst))
-    return (src, dst)
+_ID_PREFIXES = ("type:", "tag:", "region:", "image:")
+
+
+def _rml_id(value: str) -> str:
+    for prefix in _ID_PREFIXES:
+        if value.startswith(prefix):
+            return value[len(prefix):]
+    return value
+
+
+def _cell(value: Any) -> str:
+    return "" if value in (None, "") else str(value)
+
+
+def _node_row(node: dict, columns: tuple[tuple[str, str], ...]) -> list[str]:
+    row = []
+    for column, prop in columns:
+        if prop == "id":
+            row.append(rdf.node_iri(node["id"]))
+        elif column == "category_class":
+            row.append(_cell(rdf.category_class(node.get("category"))))
+        else:
+            row.append(_cell(node.get(prop)))
+    return row
 
 
 class _AtomicFiles:
@@ -153,15 +203,14 @@ def _sha256(path: str) -> str:
 
 def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
                 build_id: str, stamps: dict[str, Any] | None = None,
-                exclude_kinds: Iterable[str] = (), top_tags: int = 0
-                ) -> dict[str, Any]:
+                exclude_kinds: Iterable[str] = (), top_tags: int = 0,
+                ontology_path: str | None = None,
+                assume_unique: bool = False) -> dict[str, Any]:
     """Write every representation of one build into ``out_dir``.
 
-    ``exclude_kinds`` / ``top_tags`` shape ONLY the property-graph view
-    CSVs (they exist so a 100k-tag hairball can be opened in Cosmograph);
-    the RDF and RML outputs are always the full graph. The filters used are
-    recorded in the manifest — the July CSVs carried no such record, which
-    is why a 450k-edge staleness was undiagnosable from the files.
+    ``exclude_kinds`` / ``top_tags`` shape ONLY the view CSVs; the RDF and
+    RML outputs are always the full graph. The filters are recorded in the
+    manifest.
     """
     stamps = dict(stamps or {})
     stamps.setdefault("build_id", build_id)
@@ -170,68 +219,74 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
     if unknown:
         raise ValueError(f"exclude_kinds not in NODE_KINDS: {sorted(unknown)}")
 
-    os.makedirs(os.path.join(out_dir, RML_DIR), exist_ok=True)
+    rml = os.path.join(out_dir, RML_DIR)
+    os.makedirs(rml, exist_ok=True)
     rows: Counter[str] = Counter()
     nodes_by_kind: Counter[str] = Counter()
     edges_by_type: Counter[str] = Counter()
+    paths: dict[str, str] = {}
 
-    # -- pass 1: RML node CSVs -------------------------------------------
+    # -- pass 1: RML node, list and concept CSVs ----------------------------
     with _AtomicFiles() as files:
-        frames = files.open_csv("frames.csv",
-                                os.path.join(out_dir, RML_DIR, "frames.csv"),
-                                RML_NODE_FILES["frames.csv"])
-        types_ = files.open_csv("types.csv",
-                                os.path.join(out_dir, RML_DIR, "types.csv"),
-                                RML_NODE_FILES["types.csv"])
-        # One-row source for the SKOS scheme declaration, so the RML path
-        # derives <mk:EntryTypeScheme> a skos:ConceptScheme (+ label) from
-        # the mapping like everything else. Those two triples were in the
-        # published graph but in NO source in the repository — not the
-        # .yarrrml, not the committed .ttl — so the artifact could not be
-        # reproduced. Now it can.
-        scheme = files.open_csv("scheme.csv",
-                                os.path.join(out_dir, RML_DIR, "scheme.csv"),
-                                RML_NODE_FILES["scheme.csv"])
-        scheme.writerow([rdf.SCHEME_IRI, rdf.SCHEME_LABEL])
+        node_writers = {
+            kind: (name, files.open_csv(name, os.path.join(rml, name),
+                                        [c for c, _ in columns]), columns)
+            for name, (kind, columns) in RML_NODE_FILES.items()}
+        list_writers = {
+            prop: (name, files.open_csv(name, os.path.join(rml, name), ("url", column)))
+            for name, (prop, column) in RML_LIST_FILES.items()}
+        types_w = files.open_csv("types.csv", os.path.join(rml, "types.csv"),
+                                 RML_CONCEPT_FILES["types.csv"])
+        scheme_w = files.open_csv("scheme.csv", os.path.join(rml, "scheme.csv"),
+                                  RML_CONCEPT_FILES["scheme.csv"])
+        scheme_w.writerow([rdf.SCHEME_IRI, rdf.SCHEME_LABEL])
         rows["scheme.csv"] = 1
+
         seen_types: set[str] = set()
         for node in nodes():
             kind = node.get("kind")
             nodes_by_kind[kind or "(none)"] += 1
+            if kind in node_writers:
+                name, writer, columns = node_writers[kind]
+                writer.writerow(_node_row(node, columns))
+                rows[name] += 1
             if kind == "frame":
-                frames.writerow([node["id"], node.get("label") or "",
-                                 node.get("category") or "",
-                                 node.get("status") or ""])
-                rows["frames.csv"] += 1
+                url = node["id"]
+                for prop, (name, writer) in list_writers.items():
+                    for value in node.get(prop) or []:
+                        if value not in (None, ""):
+                            writer.writerow([url, value])
+                            rows[name] += 1
             elif kind == "entry_type_concept":
-                slug = _strip("type:", node["id"])
+                slug = _rml_id(node["id"])
                 if slug not in seen_types:
                     seen_types.add(slug)
-                    types_.writerow([slug, rdf.concept_pref_label(slug)])
+                    types_w.writerow([slug, rdf.concept_pref_label(slug)])
                     rows["types.csv"] += 1
-        rml_node_paths = dict(files.paths)
+        paths.update(files.paths)
 
     # -- pass 2: RML edge CSVs ---------------------------------------------
     with _AtomicFiles() as files:
         writers = {
-            etype: files.open_csv(name, os.path.join(out_dir, RML_DIR, name), header)
+            etype: files.open_csv(name, os.path.join(rml, name), header)
             for etype, (name, header) in EDGE_TYPE_TO_RML_FILE.items()}
         seen_edges: set[tuple[str, str, str]] = set()
         for edge in edges():
             etype = edge.get("type")
             edges_by_type[etype or "(none)"] += 1
-            row = _rml_row(edge)
-            if row is None:
+            if etype not in writers or not edge.get("src") or not edge.get("dst"):
                 continue
-            key = (etype, *row)
-            if key in seen_edges:
-                continue            # RDF is a set; so is each RML file
-            seen_edges.add(key)
+            row = (_rml_id(edge["src"]), _rml_id(edge["dst"]))
+            if not assume_unique:
+                key = (etype, *row)
+                if key in seen_edges:
+                    continue            # RDF is a set; so is each RML file
+                seen_edges.add(key)
             writers[etype].writerow(row)
             rows[EDGE_TYPE_TO_RML_FILE[etype][0]] += 1
-        rml_edge_paths = dict(files.paths)
+        paths.update(files.paths)
 
-    # -- pass 3 (+4): property-graph view CSVs -----------------------------
+    # -- pass 3 (+4): property-graph view CSVs ------------------------------
     tag_allowed: set[str] | None = None
     if top_tags and "tag_concept" not in exclude:
         degree: Counter[str] = Counter()
@@ -257,37 +312,41 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
                                node.get("category") or "",
                                node.get("status") or ""])
             rows["kg_view_nodes.csv"] += 1
-        pg_node_path = files.paths["kg_view_nodes.csv"]
+        paths.update(files.paths)
 
     with _AtomicFiles() as files:
         pg_edges = files.open_csv("kg_view_edges.csv",
                                   os.path.join(out_dir, "kg_view_edges.csv"),
                                   PG_EDGES_HEADER)
-        # A set here too, so that with no view filters this file, the RML
-        # CSVs and graph.nt all describe the same edges row-for-row. The
-        # exporter this replaces wrote a bag, which is why its counts could
-        # never be reconciled against the RDF.
         seen_pg: set[tuple[str, str, str]] = set()
         for edge in edges():
-            key = (edge["src"], edge["type"], edge["dst"])
-            if key in seen_pg or not (edge["src"] in kept and edge["dst"] in kept):
+            if not (edge["src"] in kept and edge["dst"] in kept):
                 continue
-            seen_pg.add(key)
+            key = (edge["src"], edge["type"], edge["dst"])
+            if not assume_unique:
+                if key in seen_pg:
+                    continue
+                seen_pg.add(key)
             pg_edges.writerow([edge["src"], edge["dst"], edge["type"]])
             rows["kg_view_edges.csv"] += 1
-        pg_edge_path = files.paths["kg_view_edges.csv"]
+        paths.update(files.paths)
 
     # -- pass 5: RDF ---------------------------------------------------------
     nt_path = os.path.join(out_dir, "graph.nt")
-    nt_tmp = nt_path + ".tmp"
-    nt = rdf.write_nt(nodes(), edges(), nt_tmp, stamps=stamps)
-    os.replace(nt_tmp, nt_path)
+    nt = rdf.write_nt(nodes(), edges(), nt_path + ".tmp", stamps=stamps,
+                      dedupe=not assume_unique)
+    os.replace(nt_path + ".tmp", nt_path)
+
+    # -- ontology --------------------------------------------------------------
+    files_out: dict[str, dict[str, Any]] = {}
+    if ontology_path:
+        onto = os.path.join(out_dir, "ontology.ttl")
+        shutil.copyfile(ontology_path, onto + ".tmp")
+        os.replace(onto + ".tmp", onto)
+        files_out["ontology.ttl"] = {"path": "ontology.ttl", "sha256": _sha256(onto)}
 
     # -- manifest, last ---------------------------------------------------------
-    files_out: dict[str, dict[str, Any]] = {}
-    for name, path in {**rml_node_paths, **rml_edge_paths,
-                       "kg_view_nodes.csv": pg_node_path,
-                       "kg_view_edges.csv": pg_edge_path}.items():
+    for name, path in paths.items():
         files_out[name] = {"path": os.path.relpath(path, out_dir),
                            "rows": rows[name], "sha256": _sha256(path)}
     files_out["graph.nt"] = {"path": "graph.nt", "triples": nt["triples"],
