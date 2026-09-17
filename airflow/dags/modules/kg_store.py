@@ -393,12 +393,19 @@ class KGStore(MongoStoreBase):
             projection = {"_id": 0, "id": 1, "kind": 1, **{f: 1 for f in fields}}
         yield from self.nodes.find(query, projection)
 
-    def iter_edges(self, build_id: str,
-                   types: Iterable[str] | None = None) -> Iterator[dict]:
+    def iter_edges(self, build_id: str, types: Iterable[str] | None = None,
+                   occurrences: bool = True) -> Iterator[dict]:
+        """One build's edges. ``occurrences=False`` leaves out the per-mention
+        lists (anchor and citation texts, captions) for consumers that need
+        only the graph's shape — the metrics task holds every edge in
+        memory at once."""
         query: dict[str, Any] = {"build_id": build_id}
         if types is not None:
             query["type"] = {"$in": list(types)}
-        yield from self.edges.find(query, {"_id": 0, "src": 1, "dst": 1, "type": 1})
+        projection = {"_id": 0, "src": 1, "dst": 1, "type": 1}
+        if occurrences:
+            projection["occurrences"] = 1
+        yield from self.edges.find(query, projection)
 
     def counts(self, build_id: str) -> dict[str, Any]:
         """Per-kind and per-type counts, aggregated server-side."""
@@ -536,9 +543,9 @@ def iter_nodes(build_id: str, kinds=None, fields=None):
         yield from store.iter_nodes(build_id, kinds=kinds, fields=fields)
 
 
-def iter_edges(build_id: str, types=None):
+def iter_edges(build_id: str, types=None, occurrences: bool = True):
     with get_store() as store:
-        yield from store.iter_edges(build_id, types=types)
+        yield from store.iter_edges(build_id, types=types, occurrences=occurrences)
 
 
 def graph_counts(build_id: str) -> dict:

@@ -407,11 +407,21 @@ class FacadeContractTests(unittest.TestCase):
         s.save_graph(BUILD, [{**frame_node(), "about": "long text"},
                              {"id": "tag:doge", "kind": "tag_concept", "label": "doge"}],
                      [edge(FRAME, "hasTag", "tag:doge"),
-                      edge(FRAME, "hasSection", FRAME + "#s0")])
+                      edge(FRAME, "hasRegion", "region:Japan")])
         frames = list(s.iter_nodes(BUILD, kinds=["frame"], fields=["label"]))
         self.assertEqual(frames, [{"id": FRAME, "kind": "frame", "label": "Doge"}])
         self.assertEqual([e["type"] for e in s.iter_edges(BUILD, types=["hasTag"])],
                          ["hasTag"])
+
+    def test_edges_keep_their_occurrences_unless_asked_not_to(self):
+        s = fresh_store()
+        occ = [{"anchor_text": "Cheems", "in_section": "About"}, {"citation_index": 2}]
+        s.save_graph(BUILD, [frame_node()],
+                     [{**edge(FRAME, "relatesToMeme", PARENT), "occurrences": occ}])
+        (full,) = s.iter_edges(BUILD)
+        self.assertEqual(full["occurrences"], occ)
+        (lean,) = s.iter_edges(BUILD, occurrences=False)
+        self.assertNotIn("occurrences", lean)
 
 
 class ValidationRecordTests(unittest.TestCase):

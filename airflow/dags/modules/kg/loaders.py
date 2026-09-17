@@ -61,7 +61,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator
 
-from modules.kg.build import EDGE_TYPES, NODE_KINDS
+from modules.kg.build import EDGE_TYPES, NODE_KINDS, OCCURRENCE_FIELDS
 from modules.kg.rdf import PREFIXES
 from modules.kg.taxonomy import CONCEPT_EDGE_TYPES
 
@@ -69,7 +69,8 @@ __all__ = [
     "Neo4jConfig", "FusekiConfig", "LoaderError",
     "neo4j_driver", "neo4j_ensure_schema", "neo4j_load", "neo4j_publish",
     "neo4j_current", "neo4j_counts", "neo4j_prune", "label_for_kind",
-    "node_properties", "fuseki_graph_iri", "CURRENT_GRAPH", "ONTOLOGY_GRAPH",
+    "node_properties", "edge_properties", "fuseki_graph_iri", "CURRENT_GRAPH",
+    "ONTOLOGY_GRAPH",
     "fuseki_load", "fuseki_publish", "fuseki_load_ontology",
     "fuseki_count", "fuseki_current", "fuseki_prune", "fuseki_graphs",
 ]
@@ -162,7 +163,7 @@ def node_properties(node: dict) -> dict[str, Any]:
     """Every property kg/build.py gave the node, as Neo4j will store it.
 
     Generic on purpose: the node carries whatever was parsed (a frame's
-    about text and badges, a section's heading, an image's size); a fixed
+    about and section texts and badges, an image's size); a fixed
     SET list here would silently drop whatever kg/build.py adds next — the
     loader used to set only label/category/status. Neo4j cannot store null
     (it means "remove"), so absent values are left out; lists of strings are
@@ -170,6 +171,43 @@ def node_properties(node: dict) -> dict[str, Any]:
     """
     return {k: v for k, v in node.items()
             if k not in _NON_PROPERTIES and v is not None and v != []}
+
+
+# occurrence field -> the Neo4j list property holding it, and the stand-in
+# for "absent" at that position (a Neo4j list cannot hold null, and must be
+# homogeneous: strings get "", the one integer field gets -1).
+_OCCURRENCE_LISTS: dict[str, tuple[str, Any]] = {
+    "anchor_text": ("anchor_texts", ""),
+    "in_section": ("in_sections", ""),
+    "citation_text": ("citation_texts", ""),
+    "citation_index": ("citation_indexes", -1),
+    "site_name": ("site_names", ""),
+    "role": ("roles", ""),
+    "alt_text": ("alt_texts", ""),
+    "caption": ("captions", ""),
+}
+assert set(_OCCURRENCE_LISTS) == set(OCCURRENCE_FIELDS), (
+    "loaders.py's occurrence list table drifted from build.OCCURRENCE_FIELDS")
+
+
+def edge_properties(edge: dict) -> dict[str, Any]:
+    """An edge's occurrences as Neo4j relationship properties.
+
+    Neo4j cannot store a list of maps, so the list of occurrences becomes
+    one list per field, index-aligned: position i of ``anchor_texts`` and
+    of ``in_sections`` describe the same mention. Only fields some
+    occurrence actually has get a list, and ``occurrence_count`` says how
+    long every list is.
+    """
+    occurrences = edge.get("occurrences") or []
+    if not occurrences:
+        return {}
+    props: dict[str, Any] = {"occurrence_count": len(occurrences)}
+    for field in OCCURRENCE_FIELDS:
+        if any(field in occ for occ in occurrences):
+            name, absent = _OCCURRENCE_LISTS[field]
+            props[name] = [occ.get(field, absent) for occ in occurrences]
+    return props
 
 
 def neo4j_driver(cfg: Neo4jConfig):
@@ -247,6 +285,7 @@ def neo4j_load(driver, cfg: Neo4jConfig, build_id: str,
             UNWIND $rows AS r
             MATCH (a:KGNode {{uid: r.suid}}), (b:KGNode {{uid: r.duid}})
             MERGE (a)-[e:`{etype}` {{build_id: $bid}}]->(b)
+            SET e += r.props
             """, rows=rows, bid=build_id)
         counts["edges"] += len(rows)
 
@@ -255,7 +294,8 @@ def neo4j_load(driver, cfg: Neo4jConfig, build_id: str,
         if etype not in by_type:
             raise LoaderError(f"edge type {etype!r} outside the vocabulary")
         by_type[etype].append({"suid": f"{build_id}|{edge['src']}",
-                               "duid": f"{build_id}|{edge['dst']}"})
+                               "duid": f"{build_id}|{edge['dst']}",
+                               "props": edge_properties(edge)})
         if len(by_type[etype]) >= cfg.batch:
             flush_edges(etype, by_type[etype])
             by_type[etype] = []
@@ -290,9 +330,23 @@ def neo4j_current(driver, cfg: Neo4jConfig) -> str | None:
     return rows[0]["bid"] if rows else None
 
 
+# Rows per inner transaction when deleting a generation. Small on purpose:
+# see neo4j_prune.
+PRUNE_BATCH = 5_000
+
+
 def neo4j_prune(driver, cfg: Neo4jConfig, keep: Iterable[str]) -> dict[str, int]:
     """Delete every generation not in ``keep``, in transactional batches
-    (CALL {...} IN TRANSACTIONS is Community-available in 5.x)."""
+    (CALL {...} IN TRANSACTIONS is Community-available in 5.x).
+
+    Relationships first, then the now-bare nodes. Deleting nodes with
+    ``DETACH DELETE`` in one pass sizes each inner transaction by the nodes'
+    DEGREE, not by the batch: a batch holding an entry-type or tag concept
+    carries tens of thousands of relationships with it. The first real prune
+    (a 348k-node / 713k-edge generation, 2026-09-17) exhausted Neo4j's 1 GB
+    transaction memory pool that way after 50k nodes. Two passes bound every
+    transaction to PRUNE_BATCH rows whatever the graph's shape.
+    """
     keep = list(keep)
     current = neo4j_current(driver, cfg)
     if current and current not in keep:
@@ -300,15 +354,21 @@ def neo4j_prune(driver, cfg: Neo4jConfig, keep: Iterable[str]) -> dict[str, int]
     doomed = [r["bid"] for r in _run(
         driver, cfg, "MATCH (n:KGNode) WHERE NOT n.build_id IN $keep "
                      "RETURN DISTINCT n.build_id AS bid", keep=keep)]
-    deleted = 0
+    deleted = {"nodes": 0, "edges": 0}
     for bid in doomed:
-        with driver.session(database=cfg.database) as session:
-            result = session.run(
-                "MATCH (n:KGNode {build_id: $bid}) "
-                "CALL { WITH n DETACH DELETE n } IN TRANSACTIONS OF 10000 ROWS "
-                "RETURN count(*) AS n", bid=bid)
-            deleted += sum(r["n"] for r in result)
-    return {"generations_pruned": len(doomed), "nodes_deleted": deleted}
+        for what, cypher in (
+                ("edges", "MATCH (:KGNode {build_id: $bid})-[r]->() "
+                          "CALL { WITH r DELETE r } "
+                          f"IN TRANSACTIONS OF {PRUNE_BATCH} ROWS "
+                          "RETURN count(*) AS n"),
+                ("nodes", "MATCH (n:KGNode {build_id: $bid}) "
+                          "CALL { WITH n DETACH DELETE n } "
+                          f"IN TRANSACTIONS OF {PRUNE_BATCH} ROWS "
+                          "RETURN count(*) AS n")):
+            with driver.session(database=cfg.database) as session:
+                deleted[what] += sum(r["n"] for r in session.run(cypher, bid=bid))
+    return {"generations_pruned": len(doomed), "nodes_deleted": deleted["nodes"],
+            "edges_deleted": deleted["edges"]}
 
 
 # ---------------------------------------------------------------------------

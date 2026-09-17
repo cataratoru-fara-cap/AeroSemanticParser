@@ -154,44 +154,74 @@ class ImkgFrameTests(unittest.TestCase):
         self.assertIn('"ai generated"', pref)
 
 
-class BodyNodeTests(unittest.TestCase):
-    SID = "https://meme4.science/atlas/entry/abc/section/3"
+class FrameContentTests(unittest.TestCase):
+    def test_section_texts_are_frame_literals(self):
+        got = set(triples([{"id": FRAME, "kind": "frame",
+                            "section_texts": ["History\n\np1\tp2", "Reception\n\np3"]}], []))
+        self.assertIn(f'<{FRAME}> <{MK}sectionText> "History\\n\\np1\\tp2" .', got)
+        self.assertIn(f'<{FRAME}> <{MK}sectionText> "Reception\\n\\np3" .', got)
 
-    def test_section(self):
-        got = set(triples([{"id": self.SID, "kind": "section",
-                            "section_kind": "other", "heading": "H",
-                            "position": 3, "level": 2, "text": "p1\n\tp2"}], []))
-        self.assertIn(f"<{self.SID}> <{RDF_TYPE}> <{MK}Section> .", got)
-        self.assertIn(f'<{self.SID}> <{MK}position> "3"^^<{XSD}integer> .', got)
-        self.assertIn(f'<{self.SID}> <{MK}headingLevel> "2"^^<{XSD}integer> .', got)
-        self.assertIn(f'<{self.SID}> <{MK}text> "p1\\n\\tp2" .', got)
-
-    def test_position_zero_is_a_value_not_an_absence(self):
-        got = triples([{"id": self.SID, "kind": "section", "position": 0}], [])
-        self.assertTrue(any(f"<{MK}position>" in t and '"0"' in t for t in got))
-
-    def test_reference_class_comes_from_ref_class(self):
-        rid = "https://meme4.science/atlas/entry/abc/reference/0"
-        got = set(triples([{"id": rid, "kind": "reference",
-                            "ref_class": "ExternalReference", "index": 1,
-                            "citation_text": "Wikipedia"}], []))
-        self.assertEqual(got, {
-            f"<{rid}> <{RDF_TYPE}> <{MK}ExternalReference> .",
-            f'<{rid}> <{MK}citationIndex> "1"^^<{XSD}integer> .',
-            f'<{rid}> <{MK}citationText> "Wikipedia" .'})
-
-    def test_image_iri_is_the_file_url(self):
+    def test_image_iri_is_the_file_url_and_carries_only_its_size(self):
         img = "https://i.kym-cdn.com/x.jpg"
         got = set(triples([{"id": f"image:{img}", "kind": "image",
-                            "width": 600, "caption": "wow"}], []))
+                            "width": 600, "caption": "not a node property"}], []))
         self.assertEqual(got, {
             f"<{img}> <{RDF_TYPE}> <{MK}Image> .",
-            f'<{img}> <{MK}width> "600"^^<{XSD}integer> .',
-            f'<{img}> <{MK}caption> "wow" .'})
+            f'<{img}> <{MK}width> "600"^^<{XSD}integer> .'})
 
     def test_region_concept_gets_no_triples(self):
         self.assertEqual(triples([{"id": "region:Japan", "kind": "region_concept",
                                    "label": "Japan"}], []), [])
+
+
+class OccurrenceAnnotationTests(unittest.TestCase):
+    """Occurrences are RDF-star annotations on the quoted frame-level edge."""
+
+    def test_each_distinct_value_annotates_the_quoted_edge(self):
+        edge = {"src": FRAME, "type": "citesExternal", "dst": EXTERNAL, "occurrences": [
+            {"anchor_text": "wiki", "in_section": "About"},
+            {"anchor_text": "wiki", "in_section": "Spread"},     # repeated anchor
+            {"citation_text": 'The "Doge" article', "citation_index": 3}]}
+        got = triples([], [edge])
+        q = f"<< <{FRAME}> <{MK}citesExternal> <{EXTERNAL}> >>"
+        self.assertEqual(got[0], f"<{FRAME}> <{MK}citesExternal> <{EXTERNAL}> .")
+        self.assertEqual(sorted(got[1:]), sorted([
+            f'{q} <{MK}anchorText> "wiki" .',
+            f'{q} <{MK}inSection> "About" .',
+            f'{q} <{MK}inSection> "Spread" .',
+            f'{q} <{MK}citationText> "The \\"Doge\\" article" .',
+            f'{q} <{MK}citationIndex> "3"^^<{XSD}integer> .']))
+
+    def test_repeats_are_collapsed_even_without_global_dedupe(self):
+        # dedupe=False is what the DAG passes; per-edge repeats must still go.
+        edge = {"src": FRAME, "type": "relatesToMeme", "dst": PARENT,
+                "occurrences": [{"anchor_text": "x"}, {"anchor_text": "x"}]}
+        self.assertEqual(len(triples([], [edge], dedupe=False)), 2)
+
+    def test_image_edge_annotations_point_at_the_file(self):
+        img = "https://i.kym-cdn.com/x.jpg"
+        got = triples([], [{"src": FRAME, "type": "hasImage", "dst": f"image:{img}",
+                            "occurrences": [{"role": "section", "caption": "wow"}]}])
+        q = f"<< <{FRAME}> <{MK}hasImage> <{img}> >>"
+        self.assertIn(f'{q} <{MK}imageRole> "section" .', got)
+        self.assertIn(f'{q} <{MK}caption> "wow" .', got)
+
+    def test_empty_values_and_unknown_fields_emit_nothing(self):
+        edge = {"src": FRAME, "type": "relatesToMeme", "dst": PARENT,
+                "occurrences": [{"anchor_text": "", "nonsense": "x", "citation_index": None}]}
+        self.assertEqual(len(triples([], [edge])), 1)
+
+    def test_citation_index_zero_is_a_value(self):
+        edge = {"src": FRAME, "type": "citesExternal", "dst": EXTERNAL,
+                "occurrences": [{"citation_index": 0}]}
+        self.assertTrue(any('"0"^^' in t for t in triples([], [edge])))
+
+    def test_ntdiff_reports_the_annotation_predicate(self):
+        from modules.kg import ntdiff
+        edge = {"src": FRAME, "type": "citesExternal", "dst": EXTERNAL,
+                "occurrences": [{"anchor_text": "wiki"}]}
+        line = triples([], [edge])[1]
+        self.assertEqual(ntdiff.predicate_of(ntdiff.normalize_line(line)), "anchorText")
 
 
 class EdgeTripleTests(unittest.TestCase):

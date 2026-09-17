@@ -104,9 +104,31 @@ class Neo4jLoadTests(unittest.TestCase):
                       {"src": "type:model", "type": "subTypeOf", "dst": "type:influencer"}])
         types = {c[0].split("[e:`")[1].split("`")[0] for c in d.calls if "[e:`" in c[0]}
         self.assertEqual(types, {"relatesToMeme", "subTypeOf"})
-        _, params = [c for c in d.calls if "relatesToMeme" in c[0]][0]
+        cypher, params = [c for c in d.calls if "relatesToMeme" in c[0]][0]
         self.assertEqual(params["rows"][0], {"suid": f"{BUILD}|{F1}",
-                                             "duid": f"{BUILD}|{F2}"})
+                                             "duid": f"{BUILD}|{F2}", "props": {}})
+        self.assertIn("SET e += r.props", cypher)
+
+    def test_occurrences_become_index_aligned_relationship_lists(self):
+        # Neo4j cannot store a list of maps; position i of every list is
+        # the same mention, with "" / -1 where that mention lacks the field.
+        props = L.edge_properties({"src": F1, "type": "citesExternal", "dst": F2,
+                                   "occurrences": [
+                                       {"anchor_text": "wiki", "in_section": "About"},
+                                       {"citation_text": "Doge", "citation_index": 3}]})
+        self.assertEqual(props, {"occurrence_count": 2,
+                                 "anchor_texts": ["wiki", ""],
+                                 "in_sections": ["About", ""],
+                                 "citation_texts": ["", "Doge"],
+                                 "citation_indexes": [-1, 3]})
+        self.assertEqual(L.edge_properties({"src": F1, "type": "hasTag", "dst": F2}), {})
+
+    def test_edge_properties_reach_the_statement(self):
+        d = StubDriver()
+        L.neo4j_load(d, CFG, BUILD, [], [{"src": F1, "type": "hasImage", "dst": F2,
+                                          "occurrences": [{"role": "page"}]}])
+        _, params = [c for c in d.calls if "hasImage" in c[0]][0]
+        self.assertEqual(params["rows"][0]["props"], {"occurrence_count": 1, "roles": ["page"]})
         self.assertEqual(params["bid"], BUILD)
 
     def test_every_vocabulary_type_is_accepted(self):
@@ -146,15 +168,29 @@ class Neo4jPointerTests(unittest.TestCase):
 
     def test_prune_never_deletes_the_published_generation(self):
         # current lookup -> published; doomed lookup -> only the old one
-        d = StubDriver(responses=[[{"bid": BUILD}], [{"bid": "kg_old"}], [{"n": 3}]])
+        d = StubDriver(responses=[[{"bid": BUILD}], [{"bid": "kg_old"}],
+                                  [{"n": 7}], [{"n": 3}]])
         out = L.neo4j_prune(d, CFG, keep=["kg_other"])
         doomed_call = [c for c in d.calls if "RETURN DISTINCT n.build_id" in c[0]][0]
         self.assertIn(BUILD, doomed_call[1]["keep"])       # published added to keep
         self.assertIn("kg_other", doomed_call[1]["keep"])
-        self.assertEqual(out, {"generations_pruned": 1, "nodes_deleted": 3})
-        delete_call = [c for c in d.calls if "DETACH DELETE" in c[0]][0]
-        self.assertEqual(delete_call[1]["bid"], "kg_old")
-        self.assertIn("IN TRANSACTIONS", delete_call[0])
+        self.assertEqual(out, {"generations_pruned": 1, "nodes_deleted": 3,
+                               "edges_deleted": 7})
+
+    def test_prune_deletes_relationships_before_nodes_in_small_batches(self):
+        # DETACH DELETE per node batch sized transactions by node degree and
+        # ran Neo4j out of transaction memory on the first real prune.
+        d = StubDriver(responses=[[], [{"bid": "kg_old"}], [{"n": 0}], [{"n": 0}]])
+        L.neo4j_prune(d, CFG, keep=[])
+        deletes = [c for c in d.calls if "IN TRANSACTIONS" in c[0]]
+        self.assertEqual(len(deletes), 2)
+        self.assertIn("-[r]->()", deletes[0][0])
+        self.assertIn("DELETE r", deletes[0][0])
+        self.assertIn("DETACH DELETE n", deletes[1][0])
+        for cypher, params in deletes:
+            self.assertIn(f"IN TRANSACTIONS OF {L.PRUNE_BATCH} ROWS", cypher)
+            self.assertEqual(params["bid"], "kg_old")
+        self.assertLessEqual(L.PRUNE_BATCH, 5_000)
 
 
 # --- Fuseki stubs -------------------------------------------------------------

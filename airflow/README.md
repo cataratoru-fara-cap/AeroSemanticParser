@@ -97,6 +97,7 @@ dags/
     summary_store.py     owns `run_summaries`
     kym_discover.py      pure discovery library + CLI   (no Mongo, no Airflow)
     scrapingant_client.py pure fetch library + CLI       (no Mongo, no Airflow)
+    openwebui_client.py  lab LLM/embedding client + CLI  (no Mongo, no Airflow)
     kym_parse.py         pure HTML → model + CLI         (no Mongo, no Airflow)
     kym_models.py        the entry schema and CorpusPolicy
     kg/                  pure KG libraries (no Mongo, no Airflow):
@@ -107,7 +108,7 @@ dags/
       rdf.py               canonical N-Triples serializer
       ntdiff.py            memory-bounded set diff of two .nt files
       metrics.py           IMKG-comparable graph statistics (pure stdlib)
-      semantics.py         LLM definition-embedding analysis of types
+      semantics.py         LLM definition-embedding analysis of types (CLI)
   kg_config/             curated KG inputs, tracked: the entry-type taxonomy,
                          the YARRRML mapping, the MemeAtlas ontology
                          (memeatlas.ttl), MODEL.md (the IMKG crosswalk),
@@ -169,10 +170,14 @@ and publishes it in every representation at once:
 
 - **Neo4j** — the property graph: typed nodes (`Frame`, `TagConcept`, …)
   and relationships whose types are the edge vocabulary verbatim
-  (`hasTag`, `partOfSeries`, `hasSection`, `subTypeOf`, …), carrying every
-  parsed property;
+  (`hasTag`, `partOfSeries`, `citesExternal`, `subTypeOf`, …), carrying every
+  parsed property. A node is only something other things can share (a frame,
+  a type, a URL, an image). Section text sits on the frame, and what belongs
+  to one link, citation or image showing sits on the edge;
 - **Fuseki** — the RDF graph, queryable over SPARQL at `/sparql/`, with
-  the vocabulary in the named graph `urn:memeatlas:ontology`;
+  the vocabulary in the named graph `urn:memeatlas:ontology`. Edge details
+  such as anchor and citation text are RDF-star annotations
+  (`<< ?f mk:citesExternal ?u >> mk:citationText ?t`);
 - **files** under `data/kg/builds/<build_id>/` — `graph.nt`, the CSVs the
   RML mapping reads, Cosmograph/Gephi view CSVs, and a `manifest.json` of
   per-file hashes; `data/kg/current` points at the published build;
@@ -212,6 +217,30 @@ To get the current graph: Mongo readers take `kg_builds.findOne({_id:
 "current"}).build_id` and filter on it; file consumers follow
 `data/kg/current` (or read `data/kg/CURRENT`) to a self-describing
 `manifest.json`.
+
+### Model calls go through one client
+
+Every LLM or embedding call uses `dags/modules/openwebui_client.py`,
+never raw HTTP. The lab's Open WebUI hosts each need their own API key and
+serve different models, and they go down independently. The client
+handles all of that:
+
+- **Hosts:** tried in priority order, ollama-ccdd first, then ollama-ui.
+- **Model choice:** discovered at runtime from each host's model list.
+  The requested model is tried on every host before any other model.
+  Only then does it fall back to a model of the same size tier
+  (sm/md/lg/xl) and the same specialization (general/vision/coding).
+  A caller can instead ask for a specialization directly.
+- **Pinning:** once a purpose has succeeded, it stays on that model's
+  digest for the whole run. It may change host, but never model.
+
+`python -m modules.openwebui_client probe --model <name>` shows both
+inventories and the order models would be tried in. The client's
+docstring has the full rules and the env vars.
+
+`kg/semantics.py` (describe → embed → analyze) records the model name,
+digest and embedding size in every file it writes. A resumed run stays on
+the model that produced the existing output, or stops.
 
 ### Curated inputs are tracked
 

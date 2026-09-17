@@ -18,8 +18,10 @@
 # the sources below are exactly the files serialize.py writes.
 #
 # Conventions shared with IMKG: frame IRIs are the live KYM URL; no blank
-# nodes; N-Triples output. Resources MemeAtlas mints (sections, links,
-# references) live under https://meme4.science/atlas/entry/<sha1(url)>/.
+# nodes; N-Triples output. MemeAtlas mints no IRIs of its own for page
+# content: since 4.0.0 a node is only something that can be shared (a frame,
+# a type, an image, a URL), and what belongs to one mention of a target is an
+# RDF-star annotation on the quoted edge (the "occurrence" mappings below).
 #
 # Deliberate differences from IMKG (also in rdf.py's docstring):
 #   - m4s:year is xsd:integer and m4s:added / m4s:last_update_source are
@@ -28,9 +30,16 @@
 #     classes. IMKG uses skos:broader between FRAMES for "Part of a series
 #     on", and this mapping keeps that meaning for skos:broader alone.
 #
-# Not yet mapped: the Origin and Spread sections (text and images), deferred
-# to the event-extraction task — they will map to IMKG's m4s:origin and
-# m4s:spread. Links inside them still feed mk:relatesToMeme/mk:citesExternal.
+# Not yet mapped: the Origin and Spread sections (text, images, anchor text),
+# deferred to the event-extraction task — they will map to IMKG's m4s:origin
+# and m4s:spread. Links inside them still feed mk:relatesToMeme /
+# mk:citesExternal.
+#
+# RDF-star: each *_occurrences.csv has a row per mention. Its *_edge mapping
+# is quotedNonAsserted (morph-kgc still asserts it; the same triple already
+# comes from the edge CSV, and RDF is a set), and the annotation mapping over
+# the SAME source quotes it row by row — no join condition needed. Verified
+# end to end: yatter -> morph-kgc -> Fuseki 5.1 -> SPARQL-star.
 #
 # An empty CSV cell produces no triple (verified against morph-kgc), which
 # is what lets optional fields share one wide CSV per entity. Never name a
@@ -87,6 +96,13 @@ mappings:
     subjects: $(url)
     po:
       - [skos:altLabel, $(alias)]
+
+  frame_section_text:
+    sources:
+      - [rml_data/frame_section_texts.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:sectionText, $(text)]
 
   frame_corpus_missing:
     sources:
@@ -176,48 +192,7 @@ mappings:
     po:
       - [mk:citesExternal, $(target_url)~iri]
 
-  # ---- MemeAtlas: the page body --------------------------------------------
-
-  section:
-    sources:
-      - [rml_data/sections.csv~csv]
-    subjects: $(iri)
-    po:
-      - [a, mk:Section]
-      - [mk:sectionKind, $(section_kind)]
-      - [mk:heading, $(heading)]
-      - [mk:position, $(position), xsd:integer]
-      - [mk:headingLevel, $(level), xsd:integer]
-      - [mk:text, $(text)]
-
-  has_section:
-    sources:
-      - [rml_data/section_edges.csv~csv]
-    subjects: $(url)
-    po:
-      - [mk:hasSection, $(section)~iri]
-
-  link:
-    sources:
-      - [rml_data/links.csv~csv]
-    subjects: $(iri)
-    po:
-      - [a, mk:Link]
-      - [mk:anchorText, $(anchor_text)]
-
-  has_link:
-    sources:
-      - [rml_data/link_edges.csv~csv]
-    subjects: $(section)
-    po:
-      - [mk:hasLink, $(link)~iri]
-
-  links_to:
-    sources:
-      - [rml_data/links_to_edges.csv~csv]
-    subjects: $(link)
-    po:
-      - [mk:linksTo, $(target)~iri]
+  # ---- MemeAtlas: images --------------------------------------------------
 
   image:
     sources:
@@ -225,40 +200,70 @@ mappings:
     subjects: $(iri)
     po:
       - [a, mk:Image]
-      - [mk:altText, $(alt)]
-      - [mk:caption, $(caption)]
       - [mk:width, $(width), xsd:integer]
       - [mk:height, $(height), xsd:integer]
 
   has_image:
     sources:
       - [rml_data/image_edges.csv~csv]
-    subjects: $(holder)
+    subjects: $(url)
     po:
       - [mk:hasImage, $(image)~iri]
 
-  # ---- MemeAtlas: references ------------------------------------------------
+  # ---- MemeAtlas: occurrences, as RDF-star annotations -----------------------
 
-  reference:
+  relates_occurrence_edge:
     sources:
-      - [rml_data/references.csv~csv]
-    subjects: $(iri)
+      - [rml_data/relates_occurrences.csv~csv]
+    subjects: $(src)
     po:
-      - [a, https://meme4.science/atlas/$(ref_class)~iri]
-      - [mk:citationIndex, $(citation_index), xsd:integer]
+      - [mk:relatesToMeme, $(dst)~iri]
+
+  relates_occurrence:
+    sources:
+      - [rml_data/relates_occurrences.csv~csv]
+    subjects:
+      - quotedNonAsserted: relates_occurrence_edge
+    po:
+      - [mk:anchorText, $(anchor_text)]
+      - [mk:inSection, $(in_section)]
       - [mk:citationText, $(citation_text)]
+      - [mk:citationIndex, $(citation_index), xsd:integer]
       - [mk:siteName, $(site_name)]
 
-  has_reference:
+  cites_occurrence_edge:
     sources:
-      - [rml_data/reference_edges.csv~csv]
-    subjects: $(url)
+      - [rml_data/cites_occurrences.csv~csv]
+    subjects: $(src)
     po:
-      - [mk:hasReference, $(reference)~iri]
+      - [mk:citesExternal, $(dst)~iri]
 
-  refers_to:
+  cites_occurrence:
     sources:
-      - [rml_data/refers_to_edges.csv~csv]
-    subjects: $(reference)
+      - [rml_data/cites_occurrences.csv~csv]
+    subjects:
+      - quotedNonAsserted: cites_occurrence_edge
     po:
-      - [mk:refersTo, $(target)~iri]
+      - [mk:anchorText, $(anchor_text)]
+      - [mk:inSection, $(in_section)]
+      - [mk:citationText, $(citation_text)]
+      - [mk:citationIndex, $(citation_index), xsd:integer]
+      - [mk:siteName, $(site_name)]
+
+  image_occurrence_edge:
+    sources:
+      - [rml_data/image_occurrences.csv~csv]
+    subjects: $(src)
+    po:
+      - [mk:hasImage, $(dst)~iri]
+
+  image_occurrence:
+    sources:
+      - [rml_data/image_occurrences.csv~csv]
+    subjects:
+      - quotedNonAsserted: image_occurrence_edge
+    po:
+      - [mk:imageRole, $(role)]
+      - [mk:inSection, $(in_section)]
+      - [mk:altText, $(alt_text)]
+      - [mk:caption, $(caption)]

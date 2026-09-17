@@ -1,0 +1,201 @@
+{
+ "_note": "GET /ollama/api/tags on ollama-ui.pagoda.liris.cnrs.fr, 2026-09-17, trimmed (urls/connection_type/modified_at dropped). No credentials.",
+ "models": [
+  {
+   "name": "gemma4:latest",
+   "model": "gemma4:latest",
+   "digest": "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb",
+   "size": 9608350718,
+   "details": {
+    "family": "gemma4",
+    "families": [
+     "gemma4"
+    ],
+    "parameter_size": "8.0B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "glm-ocr:latest",
+   "model": "glm-ocr:latest",
+   "digest": "6effedd0dc8aec66ad86c94b8099395376e212f22c87a9d7147c422f7e447be4",
+   "size": 2219299168,
+   "details": {
+    "family": "glmocr",
+    "families": [
+     "glmocr"
+    ],
+    "parameter_size": "1.1B",
+    "quantization_level": "F16",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "vision",
+    "completion",
+    "tools"
+   ]
+  },
+  {
+   "name": "deepseek-r1:7b",
+   "model": "deepseek-r1:7b",
+   "digest": "755ced02ce7befdb13b7ca74e1e4d08cddba4986afdb63a480f2c93d3140383f",
+   "size": 4683075440,
+   "details": {
+    "family": "qwen2",
+    "families": [
+     "qwen2"
+    ],
+    "parameter_size": "7.6B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "thinking"
+   ]
+  },
+  {
+   "name": "llama3:70b",
+   "model": "llama3:70b",
+   "digest": "786f3184aec0e907952488b865362bdaa38180739a9881a8190d85bad8cab893",
+   "size": 39969745349,
+   "details": {
+    "family": "llama",
+    "families": [
+     "llama"
+    ],
+    "parameter_size": "70.6B",
+    "quantization_level": "Q4_0",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion"
+   ]
+  },
+  {
+   "name": "gemma4:e4b",
+   "model": "gemma4:e4b",
+   "digest": "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb",
+   "size": 9608350718,
+   "details": {
+    "family": "gemma4",
+    "families": [
+     "gemma4"
+    ],
+    "parameter_size": "8.0B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "nemotron-3.5-lightning:30b",
+   "model": "nemotron-3.5-lightning:30b",
+   "digest": "e7a64ff15fb174c42b4f463e5c888c4f2c7b9cabf9e8d65a1c0874405426c1b2",
+   "size": 25430749387,
+   "details": {
+    "family": "nemotron_h_moe",
+    "families": [
+     "nemotron_h_moe"
+    ],
+    "parameter_size": "32.9B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "mistral-small3.2:24b",
+   "model": "mistral-small3.2:24b",
+   "digest": "5a408ab55df5c1b5cf46533c368813b30bf9e4d8fc39263bf2a3338cfa3b895b",
+   "size": 15177384862,
+   "details": {
+    "family": "mistral3",
+    "families": [
+     "mistral3"
+    ],
+    "parameter_size": "24.0B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "vision",
+    "completion",
+    "tools"
+   ]
+  },
+  {
+   "name": "gpt-oss:120b",
+   "model": "gpt-oss:120b",
+   "digest": "a951a23b46a1f6093dafee2ea481d634b4e31ac720a8a16f3f91e04f5a40ecd9",
+   "size": 65369818941,
+   "details": {
+    "family": "gptoss",
+    "families": [
+     "gptoss"
+    ],
+    "parameter_size": "116.8B",
+    "quantization_level": "MXFP4",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "qwen3-embedding:0.6b",
+   "model": "qwen3-embedding:0.6b",
+   "digest": "ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d",
+   "size": 639150858,
+   "details": {
+    "family": "qwen3",
+    "families": [
+     "qwen3"
+    ],
+    "parameter_size": "595.78M",
+    "quantization_level": "Q8_0",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "embedding"
+   ]
+  },
+  {
+   "name": "qwen3.8:27b",
+   "model": "qwen3.8:27b",
+   "digest": "22130167c4c20e20c7b71454612966ca8e8171e9b3cc8ab6ce8aa6cbfec79643",
+   "size": 17741872154,
+   "details": {
+    "family": "qwen35",
+    "families": [
+     "qwen35"
+    ],
+    "parameter_size": "27.3B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking",
+    "vision"
+   ]
+  }
+ ]
+}

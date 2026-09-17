@@ -8,13 +8,16 @@ asserted about both representations at once.
 RML exporter re-implemented this loop and started its per-entry ``seen``
 set empty, where this module seeds it with ``series_parent``. The result
 was 14,571 ``mk:relatesToMeme`` triples in the published kg_output.nt that
-the property graph did not contain (229,027 - 14,571 = 214,456, the Mongo
-count exactly). The two projections now share this code; the test stops the
-divergence coming back.
+the property graph did not contain. The two projections now share this
+code; the test stops the divergence coming back.
 
-``FullRecordTests`` pins the 3.0.0 scope against the real doge.html
-fixture: every field the parser extracts lands somewhere in the graph,
-except the Origin/Spread sections, which are deferred on purpose.
+``OccurrenceTests`` pins the 4.0.0 rule: a node is something other things
+can share. Page sections, body links and references are not nodes; what
+was particular to one mention lives on the frame-level edge.
+
+``FullRecordTests`` pins the scope against the real doge.html fixture:
+every field the parser extracts lands somewhere in the graph, except the
+Origin/Spread sections, which are deferred on purpose.
 
 Run inside the Airflow container:
     docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
@@ -22,20 +25,16 @@ Run inside the Airflow container:
 """
 import os
 import unittest
+from collections import Counter
 from datetime import datetime
 
 from modules.kg import build
-from modules.mongo_base import url_doc_id
 
 URL = "https://knowyourmeme.com/memes/doge"
 PARENT = "https://knowyourmeme.com/memes/shiba-inu"
 OTHER = "https://knowyourmeme.com/memes/cheems"
 EXTERNAL = "https://en.wikipedia.org/wiki/Doge_(meme)"
 IMG = "https://i.kym-cdn.com/photos/images/original/000/1.jpg"
-BASE = f"{build.ATLAS_BASE}entry/{url_doc_id(URL)}/"
-
-# The edges that existed before 3.0.0 and describe the frame as a whole.
-FRAME_LEVEL = {"partOfSeries", "relatesToMeme", "citesExternal"}
 
 
 def entry(**over) -> dict:
@@ -63,39 +62,41 @@ def edge_set(edges):
     return {(e["src"], e["type"], e["dst"]) for e in edges}
 
 
-def frame_level(edges):
-    return [e for e in edges if e["type"] in FRAME_LEVEL]
+def the_edge(edges, etype, dst):
+    matches = [e for e in edges if e["type"] == etype and e["dst"] == dst]
+    assert len(matches) == 1, f"{len(matches)} {etype} edges to {dst}"
+    return matches[0]
 
 
 class VocabularyTests(unittest.TestCase):
     def test_constants_are_exported(self):
         self.assertEqual(set(build.NODE_KINDS),
                          {"frame", "frame_stub", "entry_type_concept",
-                          "tag_concept", "region_concept", "external_ref",
-                          "section", "link", "reference", "image"})
+                          "tag_concept", "region_concept", "external_ref", "image"})
         self.assertEqual(set(build.EDGE_TYPES),
-                         {"hasEntryType", "hasTag", "hasRegion",
-                          "partOfSeries", "relatesToMeme", "citesExternal",
-                          "hasSection", "hasLink", "linksTo", "hasReference",
-                          "refersTo", "hasImage"})
+                         {"hasEntryType", "hasTag", "hasRegion", "partOfSeries",
+                          "relatesToMeme", "citesExternal", "hasImage"})
+        self.assertLessEqual(set(build.OCCURRENCE_EDGE_TYPES), set(build.EDGE_TYPES))
 
     def test_version_is_stamped(self):
-        self.assertTrue(build.KG_BUILD_VERSION)
+        self.assertEqual(build.KG_BUILD_VERSION, "4.0.0")
 
-    def test_emitted_kinds_and_types_stay_inside_the_vocabulary(self):
+    def test_emitted_kinds_types_and_occurrence_fields_stay_in_the_vocabulary(self):
         nodes, edges = build.build_nodes_and_edges(entry(
             entry_type=["meme"], tags=["shiba"], region=["Japan"],
             series_parent=PARENT, og_image=IMG,
-            sections=[section(links=[{"url": OTHER, "text": "x"}],
-                              images=[{"src": IMG}])],
+            sections=[section(text=["t"], links=[{"url": OTHER, "text": "x"}],
+                              images=[{"src": IMG, "alt": "a", "caption": "c"}])],
             additional_references=[{"url": EXTERNAL, "name": "Wikipedia"}],
-            external_references=[{"url": EXTERNAL, "index": 1}]))
+            external_references=[{"url": EXTERNAL, "index": 1, "text": "w"}]))
         self.assertLessEqual({n["kind"] for n in nodes}, set(build.NODE_KINDS))
         self.assertLessEqual({e["type"] for e in edges}, set(build.EDGE_TYPES))
-
-    def test_entry_id_is_the_stores_id(self):
-        # Section IRIs embed it so they join back to `entries` by _id.
-        self.assertEqual(build.entry_id(URL), url_doc_id(URL))
+        for e in edges:
+            if "occurrences" in e:
+                self.assertIn(e["type"], build.OCCURRENCE_EDGE_TYPES)
+                for occ in e["occurrences"]:
+                    self.assertLessEqual(set(occ), set(build.OCCURRENCE_FIELDS))
+                    self.assertTrue(occ)
 
 
 class FrameNodeTests(unittest.TestCase):
@@ -110,8 +111,7 @@ class FrameNodeTests(unittest.TestCase):
         frame = nodes_by_id(nodes)[URL]
         self.assertEqual(frame["kind"], "frame")
         self.assertEqual(frame["label"], "Doge")
-        self.assertEqual(frame["category"], "meme")
-        self.assertEqual(frame["status"], "confirmed")
+        self.assertEqual((frame["category"], frame["status"]), ("meme", "confirmed"))
         self.assertEqual(frame["year"], 2013)
         self.assertEqual(frame["from"], "Tumblr")          # the infobox origin FIELD
         self.assertEqual(frame["badges"], ["Sensitive"])
@@ -127,19 +127,33 @@ class FrameNodeTests(unittest.TestCase):
         # morph-kgc emits nothing for an empty cell; neither may any store.
         nodes, _ = build.build_nodes_and_edges(entry(badges=[], year=None))
         frame = nodes_by_id(nodes)[URL]
-        self.assertNotIn("badges", frame)
-        self.assertNotIn("year", frame)
-        self.assertNotIn("corpus_missing", frame)
-
-    def test_about_text_is_on_the_frame_not_the_section(self):
-        nodes, _ = build.build_nodes_and_edges(entry(sections=[
-            section(kind="about", heading="About", text=["one", "two"])]))
-        ids = nodes_by_id(nodes)
-        self.assertEqual(ids[URL]["about"], "one\n\ntwo")
-        self.assertNotIn("text", ids[f"{BASE}section/0"])
+        for absent in ("badges", "year", "corpus_missing", "section_texts"):
+            self.assertNotIn(absent, frame)
 
     def test_entry_without_url_yields_nothing(self):
         self.assertEqual(build.build_nodes_and_edges({"title": "x"}), ([], []))
+
+
+class SectionTextTests(unittest.TestCase):
+    def test_sections_are_frame_properties_not_nodes(self):
+        nodes, edges = build.build_nodes_and_edges(entry(sections=[
+            section(kind="about", heading="About", text=["one", "two"]),
+            section(kind="other", heading="History", text=["p1", "", "p2"]),
+            section(kind="origin", heading="Origin", text=["deferred"]),
+            section(kind="various_examples", heading="Various Examples", text=[],
+                    images=[{"src": IMG}]),
+            section(kind="other", heading="Reception", text=["p3"]),
+            section(kind="other", heading="", text=["headless"])]))
+        frame = nodes_by_id(nodes)[URL]
+        self.assertEqual(frame["about"], "one\n\ntwo")
+        self.assertEqual(frame["section_texts"],
+                         ["History\n\np1\n\np2", "Reception\n\np3", "headless"])
+        self.assertEqual({n["kind"] for n in nodes}, {"frame", "image"})
+
+    def test_about_is_not_repeated_in_section_texts(self):
+        nodes, _ = build.build_nodes_and_edges(entry(sections=[
+            section(kind="about", heading="About", text=["only here"])]))
+        self.assertNotIn("section_texts", nodes_by_id(nodes)[URL])
 
 
 class IsoUtcTests(unittest.TestCase):
@@ -190,18 +204,14 @@ class LinkClassificationTests(unittest.TestCase):
 
     def test_series_parent_is_not_also_a_relates_edge(self):
         # THE REGRESSION. The parent is linked in the body too, as it always
-        # is on a real page; it must produce partOfSeries and nothing else
-        # at the frame level.
+        # is on a real page; it must produce partOfSeries and nothing else.
         _, edges = build.build_nodes_and_edges(entry(
             series_parent=PARENT,
             sections=[section(links=[{"url": PARENT, "text": "Shiba"}])]))
-        types_to_parent = {e["type"] for e in frame_level(edges)
-                           if e["dst"] == PARENT}
-        self.assertEqual(types_to_parent, {"partOfSeries"})
+        self.assertEqual({e["type"] for e in edges if e["dst"] == PARENT}, {"partOfSeries"})
 
     def test_kym_link_in_external_references_is_still_relatesToMeme(self):
-        _, edges = build.build_nodes_and_edges(entry(
-            external_references=[{"url": OTHER}]))
+        _, edges = build.build_nodes_and_edges(entry(external_references=[{"url": OTHER}]))
         self.assertIn((URL, "relatesToMeme", OTHER), edge_set(edges))
 
     def test_outside_link_in_a_body_section_is_still_citesExternal(self):
@@ -210,17 +220,10 @@ class LinkClassificationTests(unittest.TestCase):
         self.assertIn((URL, "citesExternal", EXTERNAL), edge_set(edges))
         self.assertEqual(nodes_by_id(nodes)[EXTERNAL]["kind"], "external_ref")
 
-    def test_self_link_is_not_a_frame_level_edge(self):
+    def test_self_link_is_not_an_edge(self):
         _, edges = build.build_nodes_and_edges(entry(
             sections=[section(links=[{"url": URL, "text": "Doge"}])]))
-        self.assertEqual(frame_level(edges), [])
-
-    def test_repeated_link_within_one_entry_yields_one_frame_level_edge(self):
-        _, edges = build.build_nodes_and_edges(entry(
-            sections=[section(links=[{"url": OTHER, "text": "a"},
-                                     {"url": OTHER, "text": "b"}])],
-            additional_references=[{"url": OTHER, "name": "again"}]))
-        self.assertEqual(len([e for e in frame_level(edges) if e["dst"] == OTHER]), 1)
+        self.assertEqual(edges, [])
 
     def test_all_link_bearing_fields_are_read(self):
         _, edges = build.build_nodes_and_edges(entry(
@@ -232,7 +235,8 @@ class LinkClassificationTests(unittest.TestCase):
     def test_links_in_deferred_sections_still_feed_frame_level_edges(self):
         _, edges = build.build_nodes_and_edges(entry(
             sections=[section(kind="origin", links=[{"url": OTHER, "text": "x"}])]))
-        self.assertIn((URL, "relatesToMeme", OTHER), edge_set(edges))
+        e = the_edge(edges, "relatesToMeme", OTHER)
+        self.assertNotIn("occurrences", e)             # anchor text is deferred too
 
     def test_www_host_counts_as_internal(self):
         www = "https://www.knowyourmeme.com/memes/pepe"
@@ -241,95 +245,65 @@ class LinkClassificationTests(unittest.TestCase):
         self.assertIn((URL, "relatesToMeme", www), edge_set(edges))
 
 
-class BodyTests(unittest.TestCase):
-    def test_section_node_and_its_links(self):
-        nodes, edges = build.build_nodes_and_edges(entry(sections=[
-            section(heading="Notable Examples", level=3, text=["p1", "", "p2"],
-                    links=[{"url": OTHER, "text": " Cheems "},
-                           {"url": EXTERNAL, "text": ""}])]))
-        ids = nodes_by_id(nodes)
-        sid = f"{BASE}section/0"
-        self.assertEqual(ids[sid], {"id": sid, "kind": "section",
-                                    "section_kind": "notable_examples",
-                                    "heading": "Notable Examples",
-                                    "position": 0, "level": 3,
-                                    "text": "p1\n\np2"})
-        self.assertEqual(ids[f"{sid}/link/0"]["anchor_text"], "Cheems")
-        self.assertNotIn("anchor_text", ids[f"{sid}/link/1"])
-        es = edge_set(edges)
-        self.assertIn((URL, "hasSection", sid), es)
-        self.assertIn((sid, "hasLink", f"{sid}/link/0"), es)
-        self.assertIn((f"{sid}/link/0", "linksTo", OTHER), es)
-        self.assertIn((f"{sid}/link/1", "linksTo", EXTERNAL), es)
+class OccurrenceTests(unittest.TestCase):
+    def test_repeated_mentions_are_one_edge_with_every_occurrence(self):
+        _, edges = build.build_nodes_and_edges(entry(
+            sections=[section(heading="About", links=[{"url": OTHER, "text": " Cheems "}]),
+                      section(heading="Spread", kind="other",
+                              links=[{"url": OTHER, "text": "the dog"}])],
+            additional_references=[{"url": OTHER, "name": "KYM"}],
+            external_references=[{"url": OTHER, "index": 4, "text": "Cheems – KYM"}]))
+        e = the_edge(edges, "relatesToMeme", OTHER)
+        self.assertEqual(e["occurrences"], [
+            {"anchor_text": "Cheems", "in_section": "About"},
+            {"anchor_text": "the dog", "in_section": "Spread"},
+            {"site_name": "KYM"},
+            {"citation_text": "Cheems – KYM", "citation_index": 4},
+        ])
 
-    def test_deferred_sections_are_skipped_but_keep_positions_stable(self):
-        nodes, edges = build.build_nodes_and_edges(entry(sections=[
-            section(kind="origin", text=["o"], images=[{"src": IMG}]),
-            section(kind="spread", text=["s"]),
-            section(kind="other", text=["x"])]))
-        sections = [n for n in nodes if n["kind"] == "section"]
-        self.assertEqual([s["id"] for s in sections], [f"{BASE}section/2"])
-        self.assertEqual(sections[0]["position"], 2)
-        self.assertFalse(any(n["kind"] == "image" for n in nodes))
-        self.assertEqual(build.DEFERRED_SECTION_KINDS, {"origin", "spread"})
+    def test_an_empty_mention_adds_no_occurrence(self):
+        _, edges = build.build_nodes_and_edges(entry(
+            sections=[section(heading="", links=[{"url": EXTERNAL, "text": "  "}])]))
+        self.assertNotIn("occurrences", the_edge(edges, "citesExternal", EXTERNAL))
 
-    def test_section_images(self):
-        nodes, edges = build.build_nodes_and_edges(entry(sections=[
-            section(images=[{"src": IMG, "alt": "doge", "caption": "wow"}])]))
-        img = nodes_by_id(nodes)[f"image:{IMG}"]
-        self.assertEqual(img, {"id": f"image:{IMG}", "kind": "image",
-                               "alt": "doge", "caption": "wow"})
-        self.assertIn((f"{BASE}section/0", "hasImage", f"image:{IMG}"),
-                      edge_set(edges))
+    def test_no_link_or_reference_nodes(self):
+        nodes, edges = build.build_nodes_and_edges(entry(
+            sections=[section(links=[{"url": EXTERNAL, "text": "w"}])],
+            external_references=[{"url": EXTERNAL, "index": 1}]))
+        self.assertEqual(Counter(n["kind"] for n in nodes), {"frame": 1, "external_ref": 1})
+        self.assertEqual([e["type"] for e in edges], ["citesExternal"])
 
-    def test_page_image_carries_its_size(self):
+    def test_image_shown_as_page_image_and_in_a_section_is_one_edge(self):
         nodes, edges = build.build_nodes_and_edges(entry(
             og_image=IMG, template_image_url=IMG,
-            meta={"og:image:width": "600", "og:image:height": "nope"}))
-        images = [n for n in nodes if n["kind"] == "image"]
-        self.assertEqual(images, [{"id": f"image:{IMG}", "kind": "image",
-                                   "width": 600}])
-        self.assertEqual([e for e in edges if e["type"] == "hasImage"],
-                         [{"src": URL, "type": "hasImage", "dst": f"image:{IMG}"}])
+            meta={"og:image:width": "600", "og:image:height": "nope"},
+            sections=[section(heading="Notable Examples",
+                              images=[{"src": IMG, "alt": "doge", "caption": "wow"}]),
+                      section(kind="origin", images=[{"src": IMG, "caption": "deferred"}])]))
+        img = nodes_by_id(nodes)[f"image:{IMG}"]
+        self.assertEqual(img, {"id": f"image:{IMG}", "kind": "image", "width": 600})
+        e = the_edge(edges, "hasImage", f"image:{IMG}")
+        self.assertEqual(e["occurrences"], [
+            {"role": "page"},
+            {"role": "section", "in_section": "Notable Examples",
+             "alt_text": "doge", "caption": "wow"}])
+
+    def test_caption_lives_on_the_edge_not_the_shared_image(self):
+        # Two pages showing one file with different captions keep both.
+        _, a = build.build_nodes_and_edges(entry(sections=[section(
+            images=[{"src": IMG, "caption": "first"}])]))
+        n, b = build.build_nodes_and_edges(entry(url=OTHER, sections=[section(
+            images=[{"src": IMG, "caption": "second"}])]))
+        self.assertNotIn("caption", nodes_by_id(n)[f"image:{IMG}"])
+        self.assertEqual(a[0]["occurrences"][0]["caption"], "first")
+        self.assertEqual(b[0]["occurrences"][0]["caption"], "second")
 
     def test_image_ids_cannot_collide_with_a_link_target(self):
-        # A body link may point straight at an image file.
         nodes, _ = build.build_nodes_and_edges(entry(sections=[
             section(links=[{"url": IMG, "text": "img"}], images=[{"src": IMG}])]))
         kinds = {n["id"]: n["kind"] for n in nodes}
         self.assertEqual(kinds[IMG], "external_ref")
         self.assertEqual(kinds[f"image:{IMG}"], "image")
-
-
-class ReferenceTests(unittest.TestCase):
-    def test_external_references(self):
-        nodes, edges = build.build_nodes_and_edges(entry(external_references=[
-            {"index": 1, "text": "Wikipedia – Doge", "url": EXTERNAL},
-            {"index": 2, "text": "no url"}]))
-        ids = nodes_by_id(nodes)
-        rid = f"{BASE}reference/0"
-        self.assertEqual(ids[rid], {"id": rid, "kind": "reference",
-                                    "ref_class": "ExternalReference",
-                                    "index": 1,
-                                    "citation_text": "Wikipedia – Doge"})
-        self.assertNotIn(f"{BASE}reference/1", ids)
-        self.assertIn((URL, "hasReference", rid), edge_set(edges))
-        self.assertIn((rid, "refersTo", EXTERNAL), edge_set(edges))
-
-    def test_additional_references_have_their_own_iri_space(self):
-        nodes, edges = build.build_nodes_and_edges(entry(
-            external_references=[{"index": 1, "url": EXTERNAL}],
-            additional_references=[{"name": "Wikipedia", "url": EXTERNAL}]))
-        ids = nodes_by_id(nodes)
-        rid = f"{BASE}additional-reference/0"
-        self.assertEqual(ids[rid]["ref_class"], "AdditionalReference")
-        self.assertEqual(ids[rid]["site_name"], "Wikipedia")
-        self.assertIn(f"{BASE}reference/0", ids)
-
-    def test_kym_reference_target_is_a_stub(self):
-        nodes, _ = build.build_nodes_and_edges(entry(
-            external_references=[{"url": OTHER}]))
-        self.assertEqual(nodes_by_id(nodes)[OTHER]["kind"], "frame_stub")
 
 
 class FullRecordTests(unittest.TestCase):
@@ -344,27 +318,29 @@ class FullRecordTests(unittest.TestCase):
         cls.doc = parsed.model_dump(mode="json", exclude_none=True)
         cls.nodes, cls.edges = build.build_nodes_and_edges(cls.doc)
         cls.ids = nodes_by_id(cls.nodes)
-
-    def test_every_non_deferred_section_is_a_node(self):
-        expected = [i for i, s in enumerate(self.doc["sections"])
+        cls.live = [s for s in cls.doc["sections"]
                     if s["kind"] not in build.DEFERRED_SECTION_KINDS]
-        got = sorted(n["position"] for n in self.nodes if n["kind"] == "section")
+
+    def occurrences(self, etype, **match):
+        return [o for e in self.edges if e["type"] == etype
+                for o in e.get("occurrences", [])
+                if all(o.get(k) == v for k, v in match.items())]
+
+    def test_every_non_about_section_with_text_is_kept(self):
+        expected = [s for s in self.live if s["kind"] != "about" and any(s.get("text"))]
         self.assertTrue(expected)
-        self.assertEqual(got, expected)
+        self.assertEqual(len(self.ids[self.doc["url"]]["section_texts"]), len(expected))
 
-    def test_every_non_deferred_link_and_image_is_carried(self):
-        live = [s for s in self.doc["sections"]
-                if s["kind"] not in build.DEFERRED_SECTION_KINDS]
-        self.assertEqual(sum(e["type"] == "hasLink" for e in self.edges),
-                         sum(len(s.get("links", [])) for s in live))
-        section_images = sum(e["type"] == "hasImage"
-                             and "/section/" in e["src"] for e in self.edges)
-        self.assertEqual(section_images, sum(len(s.get("images", [])) for s in live))
+    def test_every_non_deferred_section_image_is_an_occurrence(self):
+        self.assertEqual(len(self.occurrences("hasImage", role="section")),
+                         sum(len(s.get("images", [])) for s in self.live))
 
-    def test_every_reference_is_carried(self):
-        self.assertEqual(sum(e["type"] == "hasReference" for e in self.edges),
-                         len(self.doc.get("external_references", []))
-                         + len(self.doc.get("additional_references", [])))
+    def test_every_reference_is_an_occurrence(self):
+        refs = (self.occurrences("relatesToMeme") + self.occurrences("citesExternal"))
+        cited = [o for o in refs if "citation_text" in o or "citation_index" in o]
+        named = [o for o in refs if "site_name" in o]
+        self.assertEqual(len(cited), len(self.doc.get("external_references", [])))
+        self.assertEqual(len(named), len(self.doc.get("additional_references", [])))
 
     def test_frame_fields(self):
         frame = self.ids[self.doc["url"]]
@@ -386,7 +362,6 @@ class StubNodeTests(unittest.TestCase):
             "meme")
 
     def test_more_specific_prefix_wins(self):
-        # /memes/subcultures/ must not be read as /memes/
         self.assertEqual(
             build.guess_stub_node(
                 "https://knowyourmeme.com/memes/subcultures/x")["category"],
@@ -398,8 +373,7 @@ class StubNodeTests(unittest.TestCase):
 
     def test_shape_matches_what_build_emits_inline(self):
         nodes, _ = build.build_nodes_and_edges(entry(series_parent=PARENT))
-        self.assertEqual(nodes_by_id(nodes)[PARENT],
-                         build.guess_stub_node(PARENT))
+        self.assertEqual(nodes_by_id(nodes)[PARENT], build.guess_stub_node(PARENT))
 
 
 if __name__ == "__main__":

@@ -108,6 +108,35 @@ class PredicateTests(unittest.TestCase):
         self.assertEqual(ntdiff.predicate_of("nonsense"), "(unparsed)")
 
 
+class QuotedTripleTests(unittest.TestCase):
+    """KG 4.0.0 annotations: << s p o >> annotation "value" ."""
+
+    Q = f"<< {S} <https://meme4.science/atlas/citesExternal> <https://en.wikipedia.org/wiki/Doge> >>"
+    A = "<https://meme4.science/atlas/anchorText>"
+
+    def test_ours_and_morph_kgcs_spelling_normalise_equal(self):
+        ours = f'{self.Q} {self.A} "a\\tb \\"c\\"" .'
+        theirs = f'{self.Q}  {self.A}\t"a\tb \\"c\\""  .'       # raw tab, extra spacing
+        self.assertEqual(ntdiff.normalize_line(ours), ntdiff.normalize_line(theirs))
+
+    def test_different_annotation_values_stay_different(self):
+        one = ntdiff.normalize_line(f'{self.Q} {self.A} "a  b" .')
+        two = ntdiff.normalize_line(f'{self.Q} {self.A} "a b" .')
+        self.assertNotEqual(one, two)
+
+    def test_the_reported_predicate_is_the_annotation(self):
+        line = ntdiff.normalize_line(f'{self.Q} {self.A} "wiki" .')
+        self.assertEqual(ntdiff.predicate_of(line), "anchorText")
+        self.assertEqual(ntdiff.predicate_of(ntdiff.normalize_line(f"{S} {P} {S} .")), "hasTag")
+
+    def test_a_quoted_subject_is_not_mistaken_for_a_blank_node(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "g.nt")
+            path.write_text(f'{self.Q} {self.A} "wiki" .\n', encoding="utf-8")
+            _, count, preds = ntdiff.digest(str(path))
+        self.assertEqual((count, preds), (1, {"anchorText": 1}))
+
+
 class DigestTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

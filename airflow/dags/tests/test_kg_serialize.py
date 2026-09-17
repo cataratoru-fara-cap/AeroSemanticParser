@@ -27,16 +27,13 @@ F2 = "https://knowyourmeme.com/memes/cheems"
 STUB = "https://knowyourmeme.com/memes/shiba-inu"
 EXT = "https://en.wikipedia.org/wiki/Doge"
 IMG = "https://i.kym-cdn.com/photos/images/original/000/1.jpg"
-SEC = "https://meme4.science/atlas/entry/abc/section/2"
-LNK = SEC + "/link/0"
-REF = "https://meme4.science/atlas/entry/abc/reference/0"
-AREF = "https://meme4.science/atlas/entry/abc/additional-reference/0"
 
 NODES = [
     {"id": F1, "kind": "frame", "label": 'Doge "the" dog', "category": "meme",
      "status": "confirmed", "year": 2013, "from": "Tumblr",
      "about": "line one\n\nline\ttwo", "added": "2011-03-13T07:06:40Z",
-     "badges": ["Sensitive"], "corpus_missing": ["region", "tags"]},
+     "badges": ["Sensitive"], "corpus_missing": ["region", "tags"],
+     "section_texts": ["History\n\np1\n\np2", "Reception\n\np3"]},
     {"id": F2, "kind": "frame", "label": "Cheems", "category": "meme",
      "status": "confirmed"},
     {"id": STUB, "kind": "frame_stub", "label": None, "category": "meme",
@@ -47,15 +44,7 @@ NODES = [
     {"id": "tag:dog", "kind": "tag_concept", "label": "dog"},
     {"id": EXT, "kind": "external_ref", "label": None},
     {"id": "region:Japan", "kind": "region_concept", "label": "Japan"},
-    {"id": SEC, "kind": "section", "section_kind": "other", "heading": "Notes",
-     "position": 2, "level": 2, "text": "p1\n\np2"},
-    {"id": LNK, "kind": "link", "anchor_text": "Cheems"},
-    {"id": REF, "kind": "reference", "ref_class": "ExternalReference",
-     "index": 1, "citation_text": "Wikipedia"},
-    {"id": AREF, "kind": "reference", "ref_class": "AdditionalReference",
-     "site_name": "Wikipedia"},
-    {"id": "image:" + IMG, "kind": "image", "width": 600, "height": 400,
-     "caption": "wow"},
+    {"id": "image:" + IMG, "kind": "image", "width": 600, "height": 400},
 ]
 EDGES = [
     {"src": F1, "type": "hasEntryType", "dst": "type:image-macro"},
@@ -63,19 +52,16 @@ EDGES = [
     {"src": F1, "type": "hasTag", "dst": "tag:dog"},
     {"src": F2, "type": "hasTag", "dst": "tag:doge"},
     {"src": F1, "type": "partOfSeries", "dst": STUB},
-    {"src": F1, "type": "relatesToMeme", "dst": F2},
-    {"src": F1, "type": "citesExternal", "dst": EXT},
+    {"src": F1, "type": "relatesToMeme", "dst": F2, "occurrences": [
+        {"anchor_text": "Cheems", "in_section": "Notes"}]},
+    {"src": F1, "type": "citesExternal", "dst": EXT, "occurrences": [
+        {"citation_text": 'The "Doge" article', "citation_index": 1},
+        {"site_name": "Wikipedia"}]},
     {"src": "type:image-macro", "type": "subTypeOf", "dst": "type:meme"},
     {"src": F1, "type": "hasRegion", "dst": "region:Japan"},
-    {"src": F1, "type": "hasSection", "dst": SEC},
-    {"src": SEC, "type": "hasLink", "dst": LNK},
-    {"src": LNK, "type": "linksTo", "dst": F2},
-    {"src": F1, "type": "hasReference", "dst": REF},
-    {"src": F1, "type": "hasReference", "dst": AREF},
-    {"src": REF, "type": "refersTo", "dst": EXT},
-    {"src": AREF, "type": "refersTo", "dst": EXT},
-    {"src": F1, "type": "hasImage", "dst": "image:" + IMG},
-    {"src": SEC, "type": "hasImage", "dst": "image:" + IMG},
+    {"src": F1, "type": "hasImage", "dst": "image:" + IMG, "occurrences": [
+        {"role": "page"},
+        {"role": "section", "in_section": "Notes", "alt_text": "doge", "caption": "wow"}]},
 ]
 
 
@@ -157,14 +143,29 @@ class RmlValueMappingTests(Built):
                          {"region", "tags"})
         self.assertEqual(self.rml("frame_aliases.csv"), [])
 
-    def test_body_rows_use_iris(self):
-        self.assertEqual(self.rml("sections.csv")[0]["iri"], SEC)
-        self.assertEqual(self.rml("images.csv")[0]["iri"], IMG)
-        self.assertEqual(self.rml("image_edges.csv"),
-                         [{"holder": F1, "image": IMG}, {"holder": SEC, "image": IMG}])
-        refs = {r["iri"]: r for r in self.rml("references.csv")}
-        self.assertEqual(refs[REF]["citation_index"], "1")
-        self.assertEqual(refs[AREF]["site_name"], "Wikipedia")
+    def test_images_are_files_with_their_size(self):
+        self.assertEqual(self.rml("images.csv"), [{"iri": IMG, "width": "600", "height": "400"}])
+        self.assertEqual(self.rml("image_edges.csv"), [{"url": F1, "image": IMG}])
+
+    def test_section_texts_are_a_frame_list_file(self):
+        self.assertEqual([r["text"] for r in self.rml("frame_section_texts.csv")],
+                         ["History\n\np1\n\np2", "Reception\n\np3"])
+
+    def test_one_occurrence_row_per_mention_with_empty_cells(self):
+        cites = self.rml("cites_occurrences.csv")
+        self.assertEqual(len(cites), 2)
+        self.assertEqual((cites[0]["src"], cites[0]["dst"]), (F1, EXT))
+        self.assertEqual((cites[0]["citation_text"], cites[0]["citation_index"],
+                          cites[0]["site_name"]), ('The "Doge" article', "1", ""))
+        self.assertEqual(cites[1]["site_name"], "Wikipedia")
+        images = self.rml("image_occurrences.csv")
+        self.assertEqual([(r["dst"], r["role"], r["caption"]) for r in images],
+                         [(IMG, "page", ""), (IMG, "section", "wow")])
+        self.assertEqual(self.rml("relates_occurrences.csv")[0]["anchor_text"], "Cheems")
+
+    def test_occurrence_rows_are_counted_in_the_manifest(self):
+        self.assertEqual(self.manifest["files"]["cites_occurrences.csv"]["rows"], 2)
+        self.assertEqual(self.manifest["files"]["image_occurrences.csv"]["rows"], 2)
 
     def test_region_edges_strip_the_prefix(self):
         self.assertEqual(self.rml("region_edges.csv"), [{"url": F1, "region": "Japan"}])
@@ -205,8 +206,10 @@ class ProjectionsAgreeTests(Built):
                          read_csv(os.path.join(self.out, "kg_view_edges.csv")))
         self.assertEqual(counts, Counter(e["type"] for e in EDGES))
 
-    def test_every_input_edge_is_in_the_rdf(self):
+    def test_every_input_edge_and_occurrence_is_in_the_rdf(self):
         graph = set(Path(self.out, "graph.nt").read_text(encoding="utf-8").splitlines())
+        annotations = [line for line in graph if line.startswith("<<")]
+        self.assertEqual(len(annotations), 2 + 3 + 5)   # relates + cites + image values
         for edge in EDGES:
             expected = set(rdf.iter_triples([], [edge]))
             self.assertTrue(expected, edge)

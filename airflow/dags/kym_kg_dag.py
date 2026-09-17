@@ -563,7 +563,7 @@ def kym_kg_dag():
         bid = published["build_id"]
         nodes = {n["id"]: n for n in store.iter_nodes(
             bid, kinds=METRICS_NODE_KINDS, fields=METRICS_NODE_FIELDS)}
-        edges = list(store.iter_edges(bid, types=METRICS_EDGE_TYPES))
+        edges = list(store.iter_edges(bid, types=METRICS_EDGE_TYPES, occurrences=False))
         m = metrics.compute_metrics(nodes, edges)
         del nodes, edges
         out = os.path.join(_build_dir(bid), "metrics.json")

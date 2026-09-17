@@ -1,0 +1,306 @@
+{
+ "_note": "GET /ollama/api/tags on ollama-ccdd.pagoda.liris.cnrs.fr, 2026-09-17, trimmed (urls/connection_type/modified_at dropped). No credentials.",
+ "models": [
+  {
+   "name": "qwen3.8:27b",
+   "model": "qwen3.8:27b",
+   "digest": "22130167c4c20e20c7b71454612966ca8e8171e9b3cc8ab6ce8aa6cbfec79643",
+   "size": 17741872154,
+   "details": {
+    "family": "qwen35",
+    "families": [
+     "qwen35"
+    ],
+    "parameter_size": "27.3B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "qwen3.6:35b",
+   "model": "qwen3.6:35b",
+   "digest": "07d35212591fc27746f0a317c975a6d68754fb38e9053d82e25f06057af28522",
+   "size": 23938333577,
+   "details": {
+    "family": "qwen35moe",
+    "families": [
+     "qwen35moe"
+    ],
+    "parameter_size": "36.0B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "llama3.3:70b",
+   "model": "llama3.3:70b",
+   "digest": "a6eb4748fd2990ad2952b2335a95a7f952d1a06119a0aa6a2df6cd052a93a3fa",
+   "size": 42520413916,
+   "details": {
+    "family": "llama",
+    "families": [
+     "llama"
+    ],
+    "parameter_size": "70.6B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "tools"
+   ]
+  },
+  {
+   "name": "minimax-m2.7:cloud",
+   "model": "minimax-m2.7:cloud",
+   "digest": "06daa293c105f0bd71fd19420e4d15cae66cc5f71cb8f55b4f998e96ec8ab67a",
+   "size": 375,
+   "details": {
+    "family": "minimax",
+    "families": [
+     "minimax"
+    ],
+    "parameter_size": "",
+    "quantization_level": "",
+    "format": ""
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "glm-4.7-flash:bf16",
+   "model": "glm-4.7-flash:bf16",
+   "digest": "69c2c86b80aa74865cae99be74211c5808e02b8249c242bfac33c2162bce1301",
+   "size": 59909454497,
+   "details": {
+    "family": "glm4moelite",
+    "families": [
+     "glm4moelite"
+    ],
+    "parameter_size": "29.9B",
+    "quantization_level": "F16",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "devstral-2:123b",
+   "model": "devstral-2:123b",
+   "digest": "524a6607f0f50e33b7d3a3a7ecff4f6892c0586faa0920084392bdc79951e6c7",
+   "size": 74897651260,
+   "details": {
+    "family": "mistral3",
+    "families": [
+     "mistral3"
+    ],
+    "parameter_size": "125.0B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "tools"
+   ]
+  },
+  {
+   "name": "ministral-3:8b",
+   "model": "ministral-3:8b",
+   "digest": "77300ee7514e14cacbee496270b49c5ce79a02acca789354eb37fa22197e0b72",
+   "size": 6022224665,
+   "details": {
+    "family": "mistral3",
+    "families": [
+     "mistral3"
+    ],
+    "parameter_size": "8.9B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "tools"
+   ]
+  },
+  {
+   "name": "ministral-3:14b",
+   "model": "ministral-3:14b",
+   "digest": "8a5cdca192c03534de42ecada47d6c8ce9176b6d68815362aa541def7ccb8389",
+   "size": 9082525626,
+   "details": {
+    "family": "mistral3",
+    "families": [
+     "mistral3"
+    ],
+    "parameter_size": "13.9B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "tools"
+   ]
+  },
+  {
+   "name": "mixtral:8x7b",
+   "model": "mixtral:8x7b",
+   "digest": "a3b6bef0f836ff29ddb576a80eeb1b7def43ec9b809466f62e96adb871fe8498",
+   "size": 26443602516,
+   "details": {
+    "family": "llama",
+    "families": [
+     "llama"
+    ],
+    "parameter_size": "46.7B",
+    "quantization_level": "Q4_0",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion"
+   ]
+  },
+  {
+   "name": "qwen3:8b",
+   "model": "qwen3:8b",
+   "digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+   "size": 5225388164,
+   "details": {
+    "family": "qwen3",
+    "families": [
+     "qwen3"
+    ],
+    "parameter_size": "8.2B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "qwen3-vl:32b",
+   "model": "qwen3-vl:32b",
+   "digest": "ff2e46876908853b8d0872595047c46d599d970056277e4864c8a1f0fd93fd3b",
+   "size": 20910297800,
+   "details": {
+    "family": "qwen3vl",
+    "families": [
+     "qwen3vl"
+    ],
+    "parameter_size": "33.4B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "qwen3-vl:8b",
+   "model": "qwen3-vl:8b",
+   "digest": "901cae73216286ea8c5aba8b46d307ff7188f737285ec500c795a12f05225d28",
+   "size": 6140415879,
+   "details": {
+    "family": "qwen3vl",
+    "families": [
+     "qwen3vl"
+    ],
+    "parameter_size": "8.8B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "qwen3-vl:8b-thinking",
+   "model": "qwen3-vl:8b-thinking",
+   "digest": "901cae73216286ea8c5aba8b46d307ff7188f737285ec500c795a12f05225d28",
+   "size": 6140415879,
+   "details": {
+    "family": "qwen3vl",
+    "families": [
+     "qwen3vl"
+    ],
+    "parameter_size": "8.8B",
+    "quantization_level": "Q4_K_M",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "gpt-oss:120b",
+   "model": "gpt-oss:120b",
+   "digest": "a951a23b46a1f6093dafee2ea481d634b4e31ac720a8a16f3f91e04f5a40ecd9",
+   "size": 65369818941,
+   "details": {
+    "family": "gptoss",
+    "families": [
+     "gptoss"
+    ],
+    "parameter_size": "116.8B",
+    "quantization_level": "MXFP4",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  },
+  {
+   "name": "gpt-oss:20b",
+   "model": "gpt-oss:20b",
+   "digest": "17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7",
+   "size": 13793441244,
+   "details": {
+    "family": "gptoss",
+    "families": [
+     "gptoss"
+    ],
+    "parameter_size": "20.9B",
+    "quantization_level": "MXFP4",
+    "format": "gguf"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ]
+  }
+ ]
+}

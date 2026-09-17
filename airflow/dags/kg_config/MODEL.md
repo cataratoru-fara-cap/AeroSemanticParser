@@ -65,21 +65,57 @@ Neo4j and Mongo) to its RDF term.
 | node `entry_type_concept` | `kymt:<slug> a rdfs:Class, skos:Concept`; `skos:inScheme mk:EntryTypeScheme`; `skos:prefLabel` | | the entry-type vocabulary |
 | edge `subTypeOf` | `rdfs:subClassOf` between `kymt:` classes | | `entry_type_taxonomy.yaml` |
 | edge `hasRegion` | `mk:region "<name>"` | | `region` |
-| edge `relatesToMeme` | `mk:relatesToMeme` | ⊑ `rdfs:seeAlso` | every KYM link on the page |
-| edge `citesExternal` | `mk:citesExternal` | ⊑ `rdfs:seeAlso` | every non-KYM link on the page |
+| edge `relatesToMeme` | `mk:relatesToMeme` | ⊑ `rdfs:seeAlso` | every KYM link on the page or in its references |
+| edge `citesExternal` | `mk:citesExternal` | ⊑ `rdfs:seeAlso` | every non-KYM link on the page or in its references |
 | `frame.description` | `mk:description` | ⊑ `schema:description` | `meta.description` |
 | `frame.badges` | `mk:badge` | | `badges` |
 | `frame.aliases` | `skos:altLabel` | | `aliases` |
+| `frame.section_texts` | `mk:sectionText "<heading>\n\n<paragraphs>"` | ⊑ `schema:articleBody` | `sections[]` with text, except About (`m4s:about`) and the deferred Origin/Spread |
 | `frame.corpus_status`, `corpus_missing` | `mk:corpusStatus`, `mk:corpusMissing` | | corpus grading |
 | `frame.parser_version`, `parsed_at`, `scraped_at` | `mk:parserVersion`, `mk:parsedAt`, `mk:scrapedAt` | ⊑ PROV | provenance |
-| node `section` | `a mk:Section`; `mk:sectionKind`, `mk:heading`, `mk:position`, `mk:headingLevel`, `mk:text` | | `sections[]` |
-| edge `hasSection` | `mk:hasSection` | | |
-| node `link` | `a mk:Link`; `mk:anchorText` | | `sections[].links[]` |
-| edges `hasLink`, `linksTo` | `mk:hasLink`, `mk:linksTo` | | |
-| node `reference` | `a mk:ExternalReference` or `a mk:AdditionalReference` (both ⊑ `mk:Reference`); `mk:citationIndex`, `mk:citationText`, `mk:siteName` | | `external_references[]`, `additional_references[]` |
-| edges `hasReference`, `refersTo` | `mk:hasReference`, `mk:refersTo` | | |
-| node `image` | `<file url> a mk:Image`; `mk:altText`, `mk:caption`, `mk:width`, `mk:height` | `mk:Image` ⊑ `schema:ImageObject`, `mk:caption` ⊑ `schema:caption` | `og_image`, `template_image_url`, `sections[].images[]`, `og:image:width/height` |
+| node `image` | `<file url> a mk:Image`; `mk:width`, `mk:height` | `mk:Image` ⊑ `schema:ImageObject` | `og_image`, `template_image_url`, `sections[].images[]`, `og:image:width/height` |
 | edge `hasImage` | `mk:hasImage` | ⊑ `schema:image` | |
+
+### Occurrences: edge properties / RDF-star annotations
+
+What belongs to one *mention* of a target, rather than to the frame or the
+target, is an `occurrences` entry on the frame-level edge. In Neo4j it
+becomes index-aligned list properties on the relationship, and in RDF an
+annotation on the quoted edge:
+
+```turtle
+<frame> mk:citesExternal <url> .
+<< <frame> mk:citesExternal <url> >> mk:citationText "The Doge article" ;
+                                     mk:citationIndex 3 .
+```
+
+| Occurrence field | RDF-star annotation | Neo4j list property | On edges | Parsed field |
+|---|---|---|---|---|
+| `anchor_text` | `mk:anchorText` | `anchor_texts` | `relatesToMeme`, `citesExternal` | `sections[].links[].text` |
+| `in_section` | `mk:inSection` | `in_sections` | all three | `sections[].heading` |
+| `citation_text` | `mk:citationText` | `citation_texts` | `relatesToMeme`, `citesExternal` | `external_references[].text` |
+| `citation_index` | `mk:citationIndex` (`xsd:integer`) | `citation_indexes` | `relatesToMeme`, `citesExternal` | `external_references[].index` |
+| `site_name` | `mk:siteName` | `site_names` | `relatesToMeme`, `citesExternal` | `additional_references[].name` |
+| `role` | `mk:imageRole` (`page` / `section`) | `roles` | `hasImage` | `og_image` / `sections[].images[]` |
+| `alt_text` | `mk:altText` | `alt_texts` | `hasImage` | `sections[].images[].alt` |
+| `caption` | `mk:caption` ⊑ `schema:caption` | `captions` | `hasImage` | `sections[].images[].caption` |
+
+- Neo4j lists are aligned by position: entry *i* of every list is the same
+  mention. A missing value is `""`, or `-1` for `citation_indexes`, because a
+  Neo4j list cannot hold null. `occurrence_count` gives the length.
+- RDF-star annotations are a set. When one frame mentions the same target
+  twice, RDF keeps both anchor texts but not which heading went with which;
+  the property graph keeps the pairing. This affects 1,542 (frame, target)
+  pairs.
+
+SPARQL-star, on Fuseki:
+
+```sparql
+PREFIX mk: <https://meme4.science/atlas/>
+SELECT ?url ?citation WHERE {
+  << <https://knowyourmeme.com/memes/doge> mk:citesExternal ?url >> mk:citationText ?citation
+}
+```
 
 These nodes appear only in the property graph:
 
@@ -92,19 +128,32 @@ Build provenance is written into every graph as `mk:currentBuild`, with the
 predicates `mk:buildId`, `mk:snapshotAt`, `mk:kgBuildVersion` and
 `mk:taxonomyVersion`.
 
-## IRIs MemeAtlas mints
+## What becomes a node
 
-```
-https://meme4.science/atlas/entry/<sha1(url)>/section/<i>
-https://meme4.science/atlas/entry/<sha1(url)>/section/<i>/link/<j>
-https://meme4.science/atlas/entry/<sha1(url)>/reference/<j>
-https://meme4.science/atlas/entry/<sha1(url)>/additional-reference/<j>
-```
+A node (in RDF, a resource with its own IRI) is something other things can
+share: a media frame, an entry type, a tag, a region, a URL, an image file.
+What belongs to one frame is a literal on it (`m4s:about`, `mk:sectionText`),
+which is also how IMKG keeps About, Origin and Spread. What belongs to one
+mention of a target is an occurrence on the edge (see above).
 
-- `sha1(url)` is the entry's `_id` in Mongo.
-- `<i>` is the position among all parsed sections, including the deferred
-  ones below, so an IRI stays the same once those are modelled.
-- Images are identified by the URL of the image file.
+MemeAtlas therefore mints no IRIs of its own for page content:
+
+- Frames keep IMKG's convention: the live KYM URL.
+- Images are identified by the image file's URL.
+- Entry types are `kymt:<slug>`.
+
+Before 4.0.0, sections, body links and references were nodes under
+`https://meme4.science/atlas/entry/<sha1(url)>/…`. On the real corpus:
+- about 88k of the 135k section nodes held no text;
+- every Link node had exactly one `hasLink` in and one `linksTo` out, and
+  every Reference one `hasReference` in and one `refersTo` out — a detour
+  around edges that already existed;
+- image captions sat on the shared image node, so pages overwrote each other.
+
+Dissolving them in 4.0.0 took the published graph from 985,481 to 476,794
+nodes, from 1,738,366 to 855,932 edges, and from 4,177,478 to 2,632,847
+triples, with no parsed data dropped. The IMKG-comparable core is unchanged:
+348,751 nodes and 712,796 edges, identical to 3.0.0.
 
 ## Deliberate differences from IMKG
 

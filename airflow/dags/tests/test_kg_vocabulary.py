@@ -15,6 +15,9 @@ skos:, so comparing local names — as this test once did — is not enough):
     and the data-driven class templates are the same namespaces
   * the CSVs the mapping reads == the CSVs serialize.py writes, and every
     ``$(column)`` it references is in that CSV's header
+  * every RDF-star annotation mapping quotes an existing edge mapping over
+    the SAME source (morph-kgc needs no join then), and the edge it quotes
+    is one of build.OCCURRENCE_EDGE_TYPES
   * every mk: term rdf.py can emit is declared in kg_config/memeatlas.ttl,
     and every term declared there is one rdf.py can emit (no dead terms)
   * IMKG's own terms are used, not re-declared under mk:
@@ -94,14 +97,10 @@ class MappingCrosswalkTests(unittest.TestCase):
                          "rdf.py predicates the mapping never emits")
 
     def test_constant_classes_are_exactly_rdf_pys(self):
-        # mk:ExternalReference / mk:AdditionalReference come from a template
-        # in the mapping (ref_class) and are constants in rdf.py.
-        ref_classes = {rdf.PREFIXES["mk"] + c for c in rdf.REFERENCE_CLASSES}
-        self.assertEqual(self.constant_classes, rdf.constant_classes() - ref_classes)
+        self.assertEqual(self.constant_classes, rdf.constant_classes())
 
-    def test_class_templates_are_the_imkg_and_atlas_namespaces(self):
-        self.assertEqual(self.class_templates,
-                         {rdf.KYM_CLASS_BASE, rdf.TYPES_BASE, rdf.PREFIXES["mk"]})
+    def test_class_templates_are_the_imkg_namespaces(self):
+        self.assertEqual(self.class_templates, {rdf.KYM_CLASS_BASE, rdf.TYPES_BASE})
 
     def test_sources_are_exactly_the_files_serialize_writes(self):
         read = {source_file(rule) for rule in self.doc["mappings"].values()}
@@ -115,10 +114,12 @@ class MappingCrosswalkTests(unittest.TestCase):
         headers.update(serialize.RML_CONCEPT_FILES)
         headers.update({name: header for name, header
                         in serialize.EDGE_TYPE_TO_RML_FILE.values()})
+        headers.update({name: header for name, header
+                        in serialize.OCCURRENCE_RML_FILES.values()})
         for rule_name, rule in self.doc["mappings"].items():
             header = headers[source_file(rule)]
-            texts = [rule["subjects"]] + [str(x) for po in rule.get("po") or []
-                                          for x in po]
+            subjects = rule["subjects"] if isinstance(rule["subjects"], str) else ""
+            texts = [subjects] + [str(x) for po in rule.get("po") or [] for x in po]
             for text in texts:
                 for column in _TEMPLATE.findall(text):
                     self.assertIn(column, header, f"{rule_name}: $({column})")
@@ -128,7 +129,29 @@ class MappingCrosswalkTests(unittest.TestCase):
         columns |= {c for _, c in serialize.RML_LIST_FILES.values()}
         columns |= {c for cols in serialize.RML_CONCEPT_FILES.values() for c in cols}
         columns |= {c for _, cols in serialize.EDGE_TYPE_TO_RML_FILE.values() for c in cols}
+        columns |= {c for _, cols in serialize.OCCURRENCE_RML_FILES.values() for c in cols}
         self.assertEqual(columns & serialize.RESERVED_COLUMNS, set())
+
+    def test_annotation_mappings_quote_an_edge_over_the_same_source(self):
+        mappings = self.doc["mappings"]
+        quoted_edges = set()
+        for name, rule in mappings.items():
+            if isinstance(rule["subjects"], str):
+                continue
+            (subject,) = rule["subjects"]
+            (target,) = subject.values()
+            self.assertIn(target, mappings, f"{name} quotes unknown mapping {target}")
+            self.assertEqual(source_file(rule), source_file(mappings[target]), name)
+            ((pred, _obj),) = mappings[target]["po"]
+            quoted_edges.add(expand(pred, self.prefixes))
+            for po in rule["po"]:
+                self.assertIn(expand(po[0], self.prefixes),
+                              {p for p, _ in rdf.OCCURRENCE_PREDICATES.values()}, name)
+        self.assertEqual(quoted_edges, {rdf.EDGE_PREDICATES[t][0]
+                                        for t in build.OCCURRENCE_EDGE_TYPES})
+
+    def test_every_occurrence_field_has_a_predicate(self):
+        self.assertEqual(set(rdf.OCCURRENCE_PREDICATES), set(build.OCCURRENCE_FIELDS))
 
     def test_every_edge_type_has_an_rml_file_and_a_predicate(self):
         ours = set(build.EDGE_TYPES) | set(taxonomy.CONCEPT_EDGE_TYPES)
@@ -182,9 +205,8 @@ class OntologyDeclarationTests(unittest.TestCase):
         self.assertEqual(self.emitted_mk - self.declared, set())
 
     def test_every_declared_term_is_emitted_or_structural(self):
-        # mk:Reference is the superclass of the two reference classes;
-        # the scheme is emitted as a resource, not a predicate or class.
-        structural = {self.MK + "Reference", rdf.SCHEME_IRI}
+        # The scheme is emitted as a resource, not a predicate or class.
+        structural = {rdf.SCHEME_IRI}
         self.assertEqual(self.declared - self.emitted_mk - structural, set())
 
     def test_ontology_parses_as_turtle(self):

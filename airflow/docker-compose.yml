@@ -105,11 +105,22 @@ x-airflow-common:
     FUSEKI_DATASET: kg
     FUSEKI_USER: admin
     FUSEKI_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-}
-    # --- Model server (kg/semantics.py; replaced by openwebui_client in Phase 4) ---
-    PAGODA_OLLAMA_URL: ${PAGODA_OLLAMA_URL:-}
+    # --- Model servers (modules/openwebui_client.py; used by kg/semantics.py) ---
+    # Hosts in priority order (empty = ollama-ccdd, then ollama-ui). Keys are
+    # per host — a key from one host is rejected by the other — with
+    # OPENWEBUI_API_KEY as the fallback. Every var here is optional; empty
+    # means "use the client's default".
+    OPENWEBUI_HOSTS: ${OPENWEBUI_HOSTS:-}
     OPENWEBUI_API_KEY: ${OPENWEBUI_API_KEY:-}
+    OPENWEBUI_API_KEY_OLLAMA_CCDD: ${OPENWEBUI_API_KEY_OLLAMA_CCDD:-}
+    OPENWEBUI_API_KEY_OLLAMA_UI: ${OPENWEBUI_API_KEY_OLLAMA_UI:-}
+    OPENWEBUI_ALLOW_CLOUD: ${OPENWEBUI_ALLOW_CLOUD:-}
+    OPENWEBUI_SPECIALIZATION_OVERRIDES: ${OPENWEBUI_SPECIALIZATION_OVERRIDES:-}
     KG_CHAT_MODEL: ${KG_CHAT_MODEL:-}
+    KG_CHAT_TIER: ${KG_CHAT_TIER:-}
+    KG_CHAT_SPECIALIZATION: ${KG_CHAT_SPECIALIZATION:-}
     KG_EMBED_MODEL: ${KG_EMBED_MODEL:-}
+    KG_EMBED_TIER: ${KG_EMBED_TIER:-}
 
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags

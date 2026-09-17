@@ -1,7 +1,9 @@
 # Semantic edge proposals for entry_type (approach 2: meaning-first, stats as audit)
 # ===================================================================================
 # Every edge is a PROPOSAL for review — nothing here is auto-applied beyond the
-# two `broader_*` buckets, which modules/kg/taxonomy.py turns into skos:broader.
+# two `broader_*` buckets, which modules/kg/taxonomy.py turns into subTypeOf
+# edges (RDF: rdfs:subClassOf between the kymt: classes; skos:broader is IMKG's
+# series relation between frames, so it is not reused here).
 #
 # Evidence key:
 #   agree      — stats and semantics point the same way

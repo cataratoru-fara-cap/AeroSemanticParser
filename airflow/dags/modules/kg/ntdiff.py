@@ -34,6 +34,14 @@ Two stages, cheap first
 Set semantics is the whole point: RDF is a set, so line order and repeats
 are not differences. Both sides are normalised before anything is compared.
 
+RDF-star
+--------
+KG 4.0.0 annotates edges with quoted triples:
+``<< <s> <p> <o> >> <annotation> "value" .`` A quoted triple is tokenised
+as its brackets plus its three terms, so the literals inside it are
+canonicalised like any other, and the predicate a line is reported under
+is the ANNOTATION's (``anchorText``), not the quoted edge's.
+
 No blank nodes
 --------------
 ``kg_mapping.yarrrml.yml`` states there are none anywhere, and kg/rdf.py emits
@@ -54,7 +62,6 @@ from typing import Any, Iterator
 
 __all__ = ["normalize_line", "predicate_of", "digest", "diff", "format_report"]
 
-_PREDICATE = re.compile(r">\s+<([^>]+)>\s")
 _XSD_STRING = "^^<http://www.w3.org/2001/XMLSchema#string>"
 
 # One N-Triples term: an IRI, or a quoted literal with its optional datatype
@@ -62,7 +69,8 @@ _XSD_STRING = "^^<http://www.w3.org/2001/XMLSchema#string>"
 # rather than split on whitespace because a literal may legally CONTAIN
 # whitespace, and that whitespace is significant.
 _TERM = re.compile(
-    r'<[^>]*>'                                   # IRI
+    r'<<|>>'                                     # RDF-star quoted-triple brackets
+    r'|<[^>]*>'                                  # IRI
     r'|"(?:[^"\\]|\\.)*"(?:\^\^<[^>]*>|@[A-Za-z0-9-]+)?'   # literal
     r'|\S+'                                      # fallback
 )
@@ -142,12 +150,31 @@ def normalize_line(line: str) -> str | None:
     return " ".join(terms) + " ."
 
 
+def _predicate_index(terms: list[str]) -> int | None:
+    """Index of the line's own predicate, skipping a quoted-triple subject."""
+    if not terms:
+        return None
+    if terms[0] != "<<":
+        return 1
+    depth = 0
+    for i, term in enumerate(terms):
+        if term == "<<":
+            depth += 1
+        elif term == ">>":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return None
+
+
 def predicate_of(triple: str) -> str:
-    """The predicate's local name, for reporting."""
-    match = _PREDICATE.search(triple)
-    if not match:
+    """The predicate's local name, for reporting. For an RDF-star
+    annotation that is the annotation predicate, not the quoted edge's."""
+    terms = _TERM.findall(triple)
+    index = _predicate_index(terms)
+    if index is None or index >= len(terms) or not terms[index].startswith("<"):
         return "(unparsed)"
-    iri = match.group(1)
+    iri = terms[index][1:-1]
     return iri.rsplit("/", 1)[-1].rsplit("#", 1)[-1]
 
 

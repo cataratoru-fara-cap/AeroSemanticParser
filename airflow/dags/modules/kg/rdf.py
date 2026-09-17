@@ -30,6 +30,23 @@ with its alignment to IMKG / schema.org / SKOS, in
 ``kg_config/memeatlas.ttl``. tests/test_kg_vocabulary.py asserts that every
 ``mk:`` term this module can emit is declared there.
 
+Occurrences are RDF-star annotations
+------------------------------------
+kg/build.py puts what is particular to one mention of a target — the anchor
+text of a link, the heading it sat under, a citation's text and number, an
+image's role, alt text and caption — in the ``occurrences`` list of the
+frame-level edge. RDF has no edge properties, so each distinct
+(field, value) becomes an annotation on the quoted edge::
+
+    <frame> mk:citesExternal <url> .
+    << <frame> mk:citesExternal <url> >> mk:citationText "Wikipedia – Doge" .
+
+The edge itself is still asserted, so a plain SPARQL query sees the same
+graph as before and ``<< ?f mk:citesExternal ?u >> mk:citationText ?t``
+reads the annotation (verified on Fuseki / Jena 5.1). Annotations are a
+set: when one frame mentions the same target twice, the property graph
+keeps which anchor text went with which heading; RDF keeps both values.
+
 Deliberate differences from IMKG, recorded so nobody rediscovers them:
   * ``m4s:year`` is typed ``xsd:integer`` (IMKG leaves it untyped) so SPARQL
     range filters work; ``m4s:added`` / ``m4s:last_update_source`` are
@@ -45,7 +62,7 @@ Deliberate differences from IMKG, recorded so nobody rediscovers them:
 Scope rules that keep this path and the RML path in agreement:
   * Only nodes with a declared class get node triples; ``frame_stub``,
     ``external_ref``, ``tag_concept`` and ``region_concept`` never do (the
-    latter two are literals in RDF).
+    latter two are literals in RDF). An ``image`` gets its class and size.
   * An absent value emits nothing — morph-kgc emits nothing for an empty
     CSV cell, verified by probe.
   * Set semantics: each distinct (s, p, o) once.
@@ -58,9 +75,9 @@ from typing import Any, Iterable, Iterator
 __all__ = [
     "PREFIXES", "TYPES_BASE", "KYM_CLASS_BASE", "SCHEME_IRI", "SCHEME_CLASS",
     "SCHEME_LABEL", "NODE_CLASSES", "NODE_LITERALS", "EDGE_PREDICATES",
-    "PROVENANCE_PREDICATES", "escape_literal", "concept_pref_label",
-    "category_class", "node_iri", "edge_object", "all_predicates",
-    "constant_classes", "iter_triples", "write_nt",
+    "OCCURRENCE_PREDICATES", "PROVENANCE_PREDICATES", "escape_literal",
+    "concept_pref_label", "category_class", "node_iri", "edge_object",
+    "quoted", "all_predicates", "constant_classes", "iter_triples", "write_nt",
 ]
 
 PREFIXES: dict[str, str] = {
@@ -90,17 +107,13 @@ SCHEME_IRI = MK + "EntryTypeScheme"
 SCHEME_CLASS = SKOS + "ConceptScheme"
 SCHEME_LABEL = "MemeAtlas entry-type taxonomy"
 
-# node kind -> classes every node of that kind has. ``reference`` takes its
-# class from its ``ref_class`` property; ``frame`` also gets kym:<Category>.
+# node kind -> classes every node of that kind has. ``frame`` also gets
+# kym:<Category>.
 NODE_CLASSES: dict[str, tuple[str, ...]] = {
     "frame": (M4S + "MediaFrame",),
     "entry_type_concept": (RDFS + "Class", SKOS + "Concept"),
-    "section": (MK + "Section",),
-    "link": (MK + "Link",),
     "image": (MK + "Image",),
-    "reference": (),
 }
-REFERENCE_CLASSES = ("ExternalReference", "AdditionalReference")
 
 # node kind -> (property, predicate, datatype | None). A list-valued
 # property yields one triple per item.
@@ -117,6 +130,7 @@ NODE_LITERALS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
         ("description", MK + "description", None),
         ("badges", MK + "badge", None),
         ("aliases", SKOS + "altLabel", None),
+        ("section_texts", MK + "sectionText", None),
         ("corpus_status", MK + "corpusStatus", None),
         ("corpus_missing", MK + "corpusMissing", None),
         ("parser_version", MK + "parserVersion", None),
@@ -126,24 +140,7 @@ NODE_LITERALS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
     "entry_type_concept": (
         ("label", SKOS + "prefLabel", None),       # rendered by concept_pref_label
     ),
-    "section": (
-        ("section_kind", MK + "sectionKind", None),
-        ("heading", MK + "heading", None),
-        ("position", MK + "position", XSD_INTEGER),
-        ("level", MK + "headingLevel", XSD_INTEGER),
-        ("text", MK + "text", None),
-    ),
-    "link": (
-        ("anchor_text", MK + "anchorText", None),
-    ),
-    "reference": (
-        ("index", MK + "citationIndex", XSD_INTEGER),
-        ("citation_text", MK + "citationText", None),
-        ("site_name", MK + "siteName", None),
-    ),
     "image": (
-        ("alt", MK + "altText", None),
-        ("caption", MK + "caption", None),
         ("width", MK + "width", XSD_INTEGER),
         ("height", MK + "height", XSD_INTEGER),
     ),
@@ -158,12 +155,20 @@ EDGE_PREDICATES: dict[str, tuple[str, bool, str | None]] = {
     "relatesToMeme": (MK + "relatesToMeme", False, None),
     "citesExternal": (MK + "citesExternal", False, None),
     "subTypeOf": (RDFS + "subClassOf", False, None),
-    "hasSection": (MK + "hasSection", False, None),
-    "hasLink": (MK + "hasLink", False, None),
-    "linksTo": (MK + "linksTo", False, None),
-    "hasReference": (MK + "hasReference", False, None),
-    "refersTo": (MK + "refersTo", False, None),
     "hasImage": (MK + "hasImage", False, None),
+}
+
+# occurrence field -> (annotation predicate, datatype | None). Annotates the
+# quoted frame-level edge; see "Occurrences are RDF-star annotations".
+OCCURRENCE_PREDICATES: dict[str, tuple[str, str | None]] = {
+    "anchor_text": (MK + "anchorText", None),
+    "in_section": (MK + "inSection", None),
+    "citation_text": (MK + "citationText", None),
+    "citation_index": (MK + "citationIndex", XSD_INTEGER),
+    "site_name": (MK + "siteName", None),
+    "role": (MK + "imageRole", None),
+    "alt_text": (MK + "altText", None),
+    "caption": (MK + "caption", None),
 }
 
 # Triples describing the build rather than the corpus. The RML path has no
@@ -226,9 +231,16 @@ def edge_object(etype: str, dst: str) -> str:
     return node_iri(dst)
 
 
+def quoted(s: str, pred: str, obj: str) -> str:
+    """An RDF-star quoted triple term: ``<< <s> <p> <o> >>``. IRIs only —
+    every annotated edge has an IRI object."""
+    return f"<< <{s}> <{pred}> <{obj}> >>"
+
+
 def all_predicates(include_provenance: bool = False) -> set[str]:
     """Every predicate IRI this module can emit (not counting rdf:type)."""
     preds = {p for rows in NODE_LITERALS.values() for _, p, _ in rows}
+    preds.update(p for p, _ in OCCURRENCE_PREDICATES.values())
     for pred, _, inverse in EDGE_PREDICATES.values():
         preds.add(pred)
         if inverse:
@@ -245,7 +257,6 @@ def constant_classes() -> set[str]:
     """Every class IRI emitted from a constant (not from a data value)."""
     classes = {c for cs in NODE_CLASSES.values() for c in cs}
     classes.add(SCHEME_CLASS)
-    classes.update(MK + c for c in REFERENCE_CLASSES)
     return classes
 
 
@@ -287,8 +298,6 @@ def iter_triples(nodes: Iterable[dict], edges: Iterable[dict], *,
             cat = category_class(node.get("category"))
             if cat:
                 classes.append(KYM + cat)
-        if kind == "reference" and node.get("ref_class") in REFERENCE_CLASSES:
-            classes.append(MK + node["ref_class"])
         for cls in classes:
             line = emit(f"<{s}> <{RDF_TYPE}> <{cls}> .")
             if line:
@@ -334,6 +343,20 @@ def iter_triples(nodes: Iterable[dict], edges: Iterable[dict], *,
             line = emit(f"<{o}> <{inverse}> <{s}> .")
             if line:
                 yield line
+        occurrences = edge.get("occurrences")
+        if occurrences and not is_literal:
+            subject = quoted(s, pred, o)
+            done: set[tuple[str, Any]] = set()      # a set per edge, always:
+            for occ in occurrences:                 # repeats are common here
+                for field, value in occ.items():
+                    if value in (None, "") or field not in OCCURRENCE_PREDICATES \
+                            or (field, value) in done:
+                        continue
+                    done.add((field, value))
+                    ann_pred, datatype = OCCURRENCE_PREDICATES[field]
+                    line = emit(f"{subject} <{ann_pred}> {_literal(value, datatype)} .")
+                    if line:
+                        yield line
 
     if stamps:
         for key, local in _STAMP_PREDICATES:

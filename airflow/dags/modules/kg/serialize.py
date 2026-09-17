@@ -20,9 +20,11 @@ RML CSV shape
 -------------
 One wide CSV per node kind (optional columns left empty — morph-kgc emits
 nothing for an empty cell, verified by probe), one CSV per list-valued frame
-property, one CSV per edge type. Every column is declared in the tables
-below; tests/test_kg_vocabulary.py asserts these files are exactly the
-sources the YARRRML mapping reads.
+property, one CSV per edge type, and one OCCURRENCE CSV per edge type that
+carries occurrences: a row per occurrence, which the mapping turns into
+RDF-star annotations on the quoted edge. Every column is declared in the
+tables below; tests/test_kg_vocabulary.py asserts these files are exactly
+the sources the YARRRML mapping reads.
 
 Inputs are factories, not iterables
 -----------------------------------
@@ -47,11 +49,13 @@ from collections import Counter
 from typing import Any, Callable, Iterable
 
 from modules.kg import rdf
-from modules.kg.build import EDGE_TYPES, NODE_KINDS
+from modules.kg.build import (EDGE_TYPES, NODE_KINDS, OCCURRENCE_EDGE_TYPES,
+                              OCCURRENCE_FIELDS)
 from modules.kg.taxonomy import CONCEPT_EDGE_TYPES
 
 __all__ = [
     "EDGE_TYPE_TO_RML_FILE", "RML_NODE_FILES", "RML_LIST_FILES", "RESERVED_COLUMNS",
+    "OCCURRENCE_RML_FILES",
     "RML_CONCEPT_FILES", "PG_NODES_HEADER", "PG_EDGES_HEADER", "RML_DIR",
     "all_rml_files", "write_build", "load_manifest",
 ]
@@ -71,22 +75,15 @@ RML_NODE_FILES: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
         ("description", "description"), ("corpus_status", "corpus_status"),
         ("parser_version", "parser_version"), ("parsed_at", "parsed_at"),
         ("scraped_at", "scraped_at"))),
-    "sections.csv": ("section", (
-        ("iri", "id"), ("section_kind", "section_kind"), ("heading", "heading"),
-        ("position", "position"), ("level", "level"), ("text", "text"))),
-    "links.csv": ("link", (("iri", "id"), ("anchor_text", "anchor_text"))),
-    "references.csv": ("reference", (
-        ("iri", "id"), ("ref_class", "ref_class"), ("citation_index", "index"),
-        ("citation_text", "citation_text"), ("site_name", "site_name"))),
     "images.csv": ("image", (
-        ("iri", "id"), ("alt", "alt"), ("caption", "caption"),
-        ("width", "width"), ("height", "height"))),
+        ("iri", "id"), ("width", "width"), ("height", "height"))),
 }
 
 # file -> (frame list property, value column)
 RML_LIST_FILES: dict[str, tuple[str, str]] = {
     "frame_badges.csv": ("badges", "badge"),
     "frame_aliases.csv": ("aliases", "alias"),
+    "frame_section_texts.csv": ("section_texts", "text"),
     "frame_corpus_missing.csv": ("corpus_missing", "missing"),
 }
 
@@ -107,12 +104,16 @@ EDGE_TYPE_TO_RML_FILE: dict[str, tuple[str, tuple[str, str]]] = {
     "relatesToMeme": ("relates_edges.csv",    ("url", "target_url")),
     "citesExternal": ("cites_edges.csv",      ("url", "target_url")),
     "subTypeOf":     ("subtype_edges.csv",    ("narrower", "broader")),
-    "hasSection":    ("section_edges.csv",    ("url", "section")),
-    "hasLink":       ("link_edges.csv",       ("section", "link")),
-    "linksTo":       ("links_to_edges.csv",   ("link", "target")),
-    "hasReference":  ("reference_edges.csv",  ("url", "reference")),
-    "refersTo":      ("refers_to_edges.csv",  ("reference", "target")),
-    "hasImage":      ("image_edges.csv",      ("holder", "image")),
+    "hasImage":      ("image_edges.csv",      ("url", "image")),
+}
+
+# edge type -> (occurrence csv, header): one row per occurrence, every
+# occurrence field a column (empty when absent). The mapping reads each as
+# a quotedNonAsserted edge plus one annotation per column.
+OCCURRENCE_RML_FILES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "relatesToMeme": ("relates_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
+    "citesExternal": ("cites_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
+    "hasImage": ("image_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
 }
 # Column names are also morph-kgc dataframe columns once read, and morph-kgc
 # uses some names itself: a CSV column called "subject" is silently
@@ -128,12 +129,15 @@ assert set(EDGE_TYPE_TO_RML_FILE) == set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES), 
 assert {k for k, _ in RML_NODE_FILES.values()} | {"frame_stub", "entry_type_concept",
         "tag_concept", "region_concept", "external_ref"} == set(NODE_KINDS), (
     "serialize.py's node file table drifted from NODE_KINDS")
+assert set(OCCURRENCE_RML_FILES) == set(OCCURRENCE_EDGE_TYPES), (
+    "serialize.py's occurrence file table drifted from OCCURRENCE_EDGE_TYPES")
 
 
 def all_rml_files() -> set[str]:
     """Every file under rml_data/ a build writes."""
     return (set(RML_NODE_FILES) | set(RML_LIST_FILES) | set(RML_CONCEPT_FILES)
-            | {name for name, _ in EDGE_TYPE_TO_RML_FILE.values()})
+            | {name for name, _ in EDGE_TYPE_TO_RML_FILE.values()}
+            | {name for name, _ in OCCURRENCE_RML_FILES.values()})
 
 
 _ID_PREFIXES = ("type:", "tag:", "region:", "image:")
@@ -265,11 +269,14 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
                     rows["types.csv"] += 1
         paths.update(files.paths)
 
-    # -- pass 2: RML edge CSVs ---------------------------------------------
+    # -- pass 2: RML edge and occurrence CSVs ---------------------------------
     with _AtomicFiles() as files:
         writers = {
             etype: files.open_csv(name, os.path.join(rml, name), header)
             for etype, (name, header) in EDGE_TYPE_TO_RML_FILE.items()}
+        occ_writers = {
+            etype: (name, files.open_csv(name, os.path.join(rml, name), header))
+            for etype, (name, header) in OCCURRENCE_RML_FILES.items()}
         seen_edges: set[tuple[str, str, str]] = set()
         for edge in edges():
             etype = edge.get("type")
@@ -284,6 +291,11 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
                 seen_edges.add(key)
             writers[etype].writerow(row)
             rows[EDGE_TYPE_TO_RML_FILE[etype][0]] += 1
+            if etype in occ_writers:
+                name, occ_writer = occ_writers[etype]
+                for occ in edge.get("occurrences") or ():
+                    occ_writer.writerow([*row, *(_cell(occ.get(f)) for f in OCCURRENCE_FIELDS)])
+                    rows[name] += 1
         paths.update(files.paths)
 
     # -- pass 3 (+4): property-graph view CSVs ------------------------------
