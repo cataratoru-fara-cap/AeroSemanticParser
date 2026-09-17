@@ -16,7 +16,7 @@ and each one gets worse the longer it sits.
   KG now faithfully reproduces that.
 - [04-fuseki-disk-growth-tdb2-compaction.md](04-fuseki-disk-growth-tdb2-compaction.md) —
   TDB2 never reclaims space when a build graph is replaced; already at 2.8G.
-- [05-postgres-weak-password-hardcoded.md](05-postgres-weak-password-hardcoded.md) —
+- ~~[05-postgres-weak-password-hardcoded.md](05-postgres-weak-password-hardcoded.md)~~ **(closed 2026-09-17)** —
   `POSTGRES_PASSWORD=airflow`, and it's hardcoded a second time, so editing
   `.env` alone won't even fix it.
 

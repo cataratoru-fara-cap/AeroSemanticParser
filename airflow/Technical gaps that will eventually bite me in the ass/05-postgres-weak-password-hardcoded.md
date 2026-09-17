@@ -1,6 +1,30 @@
 # `POSTGRES_PASSWORD=airflow`, and it's hardcoded a second time — changing `.env` alone won't fix it
 
-**Status:** open — confirmed live, 2026-09-17. Airflow's own admin password was rotated; Postgres's was not, and can't be via `.env` edit alone.
+**Status:** CLOSED 2026-09-17 — rotated and de-hardcoded. Kept for the decision trail.
+
+## Resolution
+
+- A 64-hex-char password was generated (URL-safe) and applied to the live role
+  with `ALTER ROLE airflow WITH PASSWORD ...` — `POSTGRES_PASSWORD` in `.env`
+  only initialises a *new* volume, so editing `.env` alone would not have
+  changed the password in the existing database.
+- `.env` updated to match; the previous `.env` was backed up (mode 600) to the
+  session scratchpad before editing.
+- Both connection strings in `docker-compose.yml` now interpolate
+  `${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}`, with a
+  comment explaining why and how to rotate next time. `.env.example` carries
+  the same rotation recipe.
+- Stack recreated with `docker compose up -d`; `airflow-init` migrated the
+  database with the new credentials, and the old password `airflow` is
+  refused over the network (scram-sha-256).
+- **Still manual:** pgAdmin keeps any server connection you saved in its own
+  volume. If one was saved with the old password, re-enter the new one there.
+  Local-socket connections inside the postgres container stay `trust` (the
+  image default), which is how the rotation was done without the old password.
+
+---
+
+*Original write-up:*
 
 ## What
 
