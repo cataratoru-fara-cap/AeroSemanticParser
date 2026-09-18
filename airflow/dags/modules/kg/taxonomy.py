@@ -122,15 +122,17 @@ class Taxonomy:
     missing_umbrellas: tuple[dict[str, Any], ...]
     notes: tuple[str, ...]                    # free-standing guidance entries
 
-    def concept_edges(self) -> list[dict[str, str]]:
+    def concept_edges(self, prefix: str = "type:") -> list[dict[str, str]]:
         """Concept-to-concept edges in kg/build.py's node-id vocabulary.
 
-        Node ids match build.py's ``type:<slug>`` convention so these drop
-        straight into the same node/edge stream as everything else — one
-        graph, one id space, no join step.
+        Node ids match build.py's ``type:<slug>`` convention by default, so
+        these drop straight into the same node/edge stream as everything
+        else — one graph, one id space, no join step. ``kg/origin.py``
+        passes ``prefix="origin:"`` to reuse this over the same bucket
+        shape for a different concept kind.
         """
-        return [{"src": f"type:{e.narrower}",
-                 "dst": f"type:{e.broader}",
+        return [{"src": f"{prefix}{e.narrower}",
+                 "dst": f"{prefix}{e.broader}",
                  "type": CONCEPT_EDGE_TYPE}
                 for e in self.edges]
 
@@ -188,6 +190,16 @@ def load(path: str) -> Taxonomy:
         # instead of letting a caller fall back to an empty taxonomy.
         raise TaxonomyError(f"{path} is not valid YAML: {exc}") from None
 
+    return _parse(doc, version=version, path=str(path))
+
+
+def _parse(doc: Any, *, version: str, path: str) -> Taxonomy:
+    """The part of ``load()`` with no file I/O: a parsed YAML dict in,
+    a validated ``Taxonomy`` out. Split out so ``kg/origin.py`` can parse
+    the bucket section of its own curated file (which sits alongside an
+    ``aliases:`` map ``load()`` itself knows nothing about) through this
+    exact same validation, instead of re-implementing it.
+    """
     if not isinstance(doc, dict):
         raise TaxonomyError(f"{path}: top level must be a mapping of buckets")
 
@@ -314,9 +326,10 @@ def validate(tax: Taxonomy, census: dict) -> dict[str, Any]:
     }
 
 
-def encodable_edges(tax: Taxonomy, census: dict) -> list[dict[str, str]]:
+def encodable_edges(tax: Taxonomy, census: dict,
+                    prefix: str = "type:") -> list[dict[str, str]]:
     """concept_edges(), restricted to slugs the corpus actually uses."""
     known = set(census.get("value_counts") or {})
-    return [{"src": f"type:{e.narrower}", "dst": f"type:{e.broader}",
+    return [{"src": f"{prefix}{e.narrower}", "dst": f"{prefix}{e.broader}",
              "type": CONCEPT_EDGE_TYPE}
             for e in tax.edges if e.narrower in known and e.broader in known]

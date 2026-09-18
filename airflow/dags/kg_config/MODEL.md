@@ -68,13 +68,43 @@ Neo4j and Mongo) to its RDF term.
 | edge `relatesToMeme` | `mk:relatesToMeme` | ⊑ `rdfs:seeAlso` | every KYM link on the page or in its references |
 | edge `citesExternal` | `mk:citesExternal` | ⊑ `rdfs:seeAlso` | every non-KYM link on the page or in its references |
 | `frame.description` | `mk:description` | ⊑ `schema:description` | `meta.description` |
-| `frame.badges` | `mk:badge` | | `badges` |
 | `frame.aliases` | `skos:altLabel` | | `aliases` |
 | `frame.section_texts` | `mk:sectionText "<heading>\n\n<paragraphs>"` | ⊑ `schema:articleBody` | `sections[]` with text, except About (`m4s:about`) and the deferred Origin/Spread |
 | `frame.corpus_status`, `corpus_missing` | `mk:corpusStatus`, `mk:corpusMissing` | | corpus grading |
 | `frame.parser_version`, `parsed_at`, `scraped_at` | `mk:parserVersion`, `mk:parsedAt`, `mk:scrapedAt` | ⊑ PROV | provenance |
 | node `image` | `<file url> a mk:Image`; `mk:width`, `mk:height` | `mk:Image` ⊑ `schema:ImageObject` | `og_image`, `template_image_url`, `sections[].images[]`, `og:image:width/height` |
 | edge `hasImage` | `mk:hasImage` | ⊑ `schema:image` | |
+| node `origin_concept` (5.0.0) | `mk:origin/<slug> a skos:Concept`; `skos:inScheme mk:OriginScheme`; `skos:prefLabel` | | `origin`, canonicalized (see below) |
+| edge `hasOrigin` (5.0.0) | `mk:hasOrigin` | | curated aliases + a fallback slug, `kg_config/origin_taxonomy.yaml` |
+| edge `subTypeOf` (origin) (5.0.0) | `rdfs:subClassOf` between `mk:origin/` concepts | | `origin_taxonomy.yaml`, platform-like slugs only |
+| node `badge_concept` (5.0.0) | `mk:badge/<slug> a skos:Concept`; `skos:inScheme mk:BadgeScheme`; `skos:prefLabel` | | the badge vocabulary |
+| edge `hasBadge` (5.0.0) | `mk:badge` (an `owl:ObjectProperty` as of 5.0.0 — was a literal in 4.0.0) | | `badges` |
+
+
+### `category` (5.0.0): no further work
+
+`category` is already fully handled by the reused-from-IMKG row above
+(`a kym:<Category>`, from the parsed `category` field): the real corpus has
+only 6 flat values (meme, event, subculture, person, site, culture), with
+no nesting left in the value itself once the URL path that produced it is
+discarded. Noted here explicitly so it isn't mistaken for an oversight.
+
+### `origin_concept` (5.0.0): canonicalizes ALL of `origin`, not just platforms
+
+`frame.from`/`m4s:from` (the infobox "Origin" line) is not a platform
+field — the real corpus holds genuine platforms (Twitter, YouTube, 4chan),
+countries (United States, Japan), franchises (The Simpsons, Avengers:
+Endgame), companies (Nintendo, Valve), games (Elden Ring) and people
+(Donald Trump), with real duplication in every category, not just platform
+casing ("United States" / "USA" / "America"; "Avengers: Endgame" /
+"Avengers: Endgame (Film)"). `kg/origin.py`'s curated alias map in
+`kg_config/origin_taxonomy.yaml` canonicalizes all of it into one
+`origin_concept` node per distinct referent; unreviewed long-tail values
+fall back to a deterministic slugify rather than a lossy generic "Other".
+The curated `subTypeOf` hierarchy on top (imageboard / social-network /
+video-platform / …) covers **only** the subset of canonical slugs that are
+actually platforms — a country, franchise, company or person is
+deduplicated but deliberately left with no forced parent.
 
 ### Occurrences: edge properties / RDF-star annotations
 
@@ -124,6 +154,15 @@ These nodes appear only in the property graph:
 - `tag_concept`, `region_concept`: in RDF, tags and regions are literals, as
   IMKG makes tags.
 
+`coOccursWith` (`kg/census.py` + `kg/cooccurs.py`, tags only as of 5.0.1
+— entry_type's statistical edges were judged needless alongside its
+curated `subTypeOf` hierarchy and removed) is property-graph-only,
+unconditionally: `tag_concept` has no IRI in RDF (`hasTag`'s object is a
+plain `m4s:tag` literal, matching IMKG's own convention), so a
+`coOccursWith` edge has no RDF projection at all — not a literal-object
+triple, not an RDF-star annotation, both need a resource on at least one
+side. Not declared as an `mk:` term at all. See "Not yet modelled".
+
 Build provenance is written into every graph as `mk:currentBuild`, with the
 predicates `mk:buildId`, `mk:snapshotAt`, `mk:kgBuildVersion` and
 `mk:taxonomyVersion`.
@@ -171,6 +210,11 @@ triples, with no parsed data dropped. The IMKG-comparable core is unchanged:
    `rdfs:seeAlso` covers only the Related Entries box. `mk:relatesToMeme`
    covers every KYM link on the page, and is declared a sub-property of
    `rdfs:seeAlso`.
+5. **`mk:badge` changed type in 5.0.0.** It was `owl:DatatypeProperty` (a
+   literal) in 4.0.0; badges are now `badge_concept` resources, so it is
+   `owl:ObjectProperty`. A documented ontology break, not a silent one —
+   there was exactly one distinct badge value in the whole corpus
+   ("Sensitive") at the time of the change, so this cost nothing to fix.
 
 ## Not yet modelled
 
@@ -178,6 +222,19 @@ triples, with no parsed data dropped. The IMKG-comparable core is unchanged:
   `build.py`) are left to the event-extraction task. They will map to IMKG's
   `m4s:origin` and `m4s:spread`. Links inside them already feed
   `mk:relatesToMeme` and `mk:citesExternal`.
+- **`coOccursWith` has no RDF representation, for any pair.** Originally
+  (5.0.0) both `entry_type` and tags got statistical `coOccursWith`
+  edges, with entry_type pairs reaching RDF and tag pairs not (tags have
+  no IRI in RDF — `hasTag`'s object is a plain `m4s:tag` literal). 5.0.1
+  removed entry_type's `coOccursWith` entirely (needless alongside its
+  curated `subTypeOf` hierarchy), leaving tags as the only source — so
+  the field is now uniformly property-graph-only. Promoting tags to RDF
+  resources to change that was considered and declined: it would make a
+  node's RDF "class-ness" depend on a runtime, frequency-ranked property
+  instead of `kind` alone, and 5.0.0/5.0.1 already explicitly defer
+  building any tag hierarchy. `coOccursWith` lives in Mongo and Neo4j
+  only — never in `graph.nt`, never in a validated RML mapping, and not
+  declared in `memeatlas.ttl`.
 - **Pipeline bookkeeping** (`dom_content_sha256`, `corpus_policy_version`,
   `schema_version`) stays in `entries`. It describes the pipeline, not the
   meme.

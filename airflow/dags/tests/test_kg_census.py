@@ -134,9 +134,69 @@ class TopKTests(unittest.TestCase):
 
     def test_field_defaults_differ_by_vocabulary_size(self):
         self.assertEqual(FIELDS["entry_type"].default_top_k, 0)
-        self.assertEqual(FIELDS["tags"].default_top_k, 300)
+        self.assertEqual(FIELDS["tags"].default_top_k, 1000)
         self.assertEqual(run_census(DOCS, "tags")["top_k_used_for_cooccurrence"],
-                         300)
+                         1000)
+
+
+class SingleValuedFieldTests(unittest.TestCase):
+    """origin: one string per frame, not a list — census.py's other real
+    behavioural difference, added in 5.0.0."""
+
+    ORIGIN_DOCS = [
+        {"origin": "Twitter"}, {"origin": "Twitter"}, {"origin": "4chan"},
+        {"origin": ""}, {},
+    ]
+
+    def test_a_string_field_does_not_explode_into_characters(self):
+        # The bug this guards: set("Twitter") == a set of 7 characters.
+        oc = run_census(self.ORIGIN_DOCS, "origin")
+        self.assertEqual(oc["value_counts"], {"Twitter": 2, "4chan": 1})
+
+    def test_pair_cooccurrence_is_always_empty(self):
+        # A single-valued field cannot co-occur with itself within one
+        # entry — not a bug, see kg/census.py's module docstring.
+        oc = run_census(self.ORIGIN_DOCS, "origin", min_pair_count=0)
+        self.assertEqual(oc["pair_cooccurrence"], [])
+        self.assertEqual(oc["total_pairs_seen"], 0)
+
+    def test_empty_and_missing_values_are_not_counted(self):
+        oc = run_census(self.ORIGIN_DOCS, "origin")
+        self.assertEqual(oc["entries_with_value"], 3)
+        self.assertEqual(oc["values_per_entry_distribution"], {0: 2, 1: 3})
+
+    def test_origin_is_registered_single_valued_and_unnormalized(self):
+        self.assertFalse(FIELDS["origin"].multi_valued)
+        self.assertIsNone(FIELDS["origin"].normalize)
+
+
+class NormalizeOverrideTests(unittest.TestCase):
+    """The override used by kg/cooccurs.py's pipeline to align the census's
+    value identity with kg/build.py's tag_concept node identity (folded,
+    not the curator-facing raw-lowercased default)."""
+
+    def test_override_replaces_the_fields_own_normalize(self):
+        docs = [{"tags": ["Catchphrases"]}]
+        default = run_census(docs, "tags")
+        folded = run_census(docs, "tags", normalize=lambda v: v.strip().lower()[:-1])
+        self.assertIn("catchphrases", default["value_counts"])
+        self.assertIn("catchphrase", folded["value_counts"])
+
+    def test_normalize_none_disables_normalization_even_for_tags(self):
+        docs = [{"tags": ["Doge"]}]
+        raw = run_census(docs, "tags", normalize=None)
+        self.assertIn("Doge", raw["value_counts"])
+
+
+class DeterminismTests(unittest.TestCase):
+    def test_pair_cooccurrence_is_order_independent(self):
+        import random
+        shuffled = list(DOCS)
+        random.Random(7).shuffle(shuffled)
+        a = run_census(DOCS, "tags", min_pair_count=1)
+        b = run_census(shuffled, "tags", min_pair_count=1)
+        self.assertEqual(a["pair_cooccurrence"], b["pair_cooccurrence"])
+        self.assertEqual(a["value_counts"], b["value_counts"])
 
 
 class LegacyLoaderTests(unittest.TestCase):

@@ -22,6 +22,9 @@ and each one gets worse the longer it sits.
 - ~~[06-type-semantics-artifacts-are-stale.md](06-type-semantics-artifacts-are-stale.md)~~ **(closed 2026-09-17)** —
   the definitions are prompt v1 under a v2 prompt, and the stored embeddings and
   semantic-similarity report weren't computed from the current definitions.
+- ~~[07-tag-cooccurs-has-no-rdf-resource.md](07-tag-cooccurs-has-no-rdf-resource.md)~~ **(closed 2026-09-18, superseded)** —
+  entry_type's `coOccursWith` was removed entirely as needless statistical noise,
+  so the tag-vs-entry_type RDF asymmetry this described no longer exists.
 
 Update the status line at the top of a file when a gap is closed; leave the
 file (don't delete it) so the decision trail survives.

@@ -16,6 +16,7 @@ import unittest
 
 from modules.kg import loaders as L
 from modules.kg.build import EDGE_TYPES
+from modules.kg.cooccurs import COOCCURS_EDGE_TYPES
 from modules.kg.taxonomy import CONCEPT_EDGE_TYPES
 
 BUILD = "kg_20260916T134720Z_manual"
@@ -134,8 +135,21 @@ class Neo4jLoadTests(unittest.TestCase):
     def test_every_vocabulary_type_is_accepted(self):
         d = StubDriver()
         edges = [{"src": F1, "type": t, "dst": F2}
-                 for t in set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES)]
+                 for t in set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES) | set(COOCCURS_EDGE_TYPES)]
         self.assertEqual(L.neo4j_load(d, CFG, BUILD, [], edges)["edges"], len(edges))
+
+    def test_cooccurs_with_loads_for_both_type_and_tag_prefixed_uids(self):
+        # No RDF restriction in the property graph -- kg/rdf.py's tag:
+        # exclusion is an RDF-path-only guard, not a loader-level one.
+        d = StubDriver()
+        edges = [{"src": "type:streamer", "type": "coOccursWith", "dst": "type:creator"},
+                {"src": "tag:meme", "type": "coOccursWith", "dst": "tag:dank-meme"}]
+        counts = L.neo4j_load(d, CFG, BUILD, [], edges)
+        self.assertEqual(counts["edges"], 2)
+        cooccurs_calls = [c for c in d.calls if "coOccursWith" in c[0]]
+        uids = {r["suid"] for c in cooccurs_calls for r in c[1]["rows"]} |               {r["duid"] for c in cooccurs_calls for r in c[1]["rows"]}
+        self.assertEqual(uids, {f"{BUILD}|type:streamer", f"{BUILD}|type:creator",
+                               f"{BUILD}|tag:meme", f"{BUILD}|tag:dank-meme"})
 
     def test_unknown_kind_or_type_is_refused(self):
         with self.assertRaises(L.LoaderError):

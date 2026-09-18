@@ -58,11 +58,24 @@ Deliberate differences from IMKG, recorded so nobody rediscovers them:
   * ``kym:<Category>`` casing follows the paper's ``kym:Meme``; IMKG's raw
     category values are not published, so exact byte-equality with IMKG's
     class IRIs is unverified.
+  * ``mk:badge`` (5.0.0) is an ``owl:ObjectProperty`` to a ``badge_concept``
+    resource, not the ``owl:DatatypeProperty`` literal it was in 4.0.0 — a
+    documented ontology break, not a silent one.
 
 Scope rules that keep this path and the RML path in agreement:
   * Only nodes with a declared class get node triples; ``frame_stub``,
-    ``external_ref``, ``tag_concept`` and ``region_concept`` never do (the
-    latter two are literals in RDF). An ``image`` gets its class and size.
+    ``external_ref`` and ``tag_concept`` never do (the latter is a literal
+    in RDF, per IMKG's own tag-as-literal convention). ``region_concept``
+    is likewise a literal. ``origin_concept``/``badge_concept`` (5.0.0) DO
+    get node triples (``skos:Concept``, no ``rdfs:Class``) — unlike tags,
+    these are MemeAtlas's own concepts with no IMKG literal convention to
+    match. An ``image`` gets its class and size.
+  * ``coOccursWith`` (kg/cooccurs.py) never reaches RDF (5.0.1): tags are
+    its only source now (entry_type's was removed — needless alongside
+    its curated subTypeOf hierarchy) and tag_concept has no RDF resource
+    for a triple to attach to. Property-graph-only, unconditionally; not
+    in EDGE_PREDICATES at all. See ``kg_config/MODEL.md``'s
+    "Not yet modelled".
   * An absent value emits nothing — morph-kgc emits nothing for an empty
     CSV cell, verified by probe.
   * Set semantics: each distinct (s, p, o) once.
@@ -74,8 +87,10 @@ from typing import Any, Iterable, Iterator
 
 __all__ = [
     "PREFIXES", "TYPES_BASE", "KYM_CLASS_BASE", "SCHEME_IRI", "SCHEME_CLASS",
-    "SCHEME_LABEL", "NODE_CLASSES", "NODE_LITERALS", "EDGE_PREDICATES",
-    "OCCURRENCE_PREDICATES", "PROVENANCE_PREDICATES", "escape_literal",
+    "SCHEME_LABEL", "ORIGIN_SCHEME_IRI", "ORIGIN_SCHEME_LABEL",
+    "BADGE_SCHEME_IRI", "BADGE_SCHEME_LABEL", "NODE_SCHEMES", "NODE_CLASSES",
+    "NODE_LITERALS", "EDGE_PREDICATES", "OCCURRENCE_PREDICATES",
+    "PROVENANCE_PREDICATES", "escape_literal",
     "concept_pref_label", "category_class", "node_iri", "edge_object",
     "quoted", "all_predicates", "constant_classes", "iter_triples", "write_nt",
 ]
@@ -107,11 +122,33 @@ SCHEME_IRI = MK + "EntryTypeScheme"
 SCHEME_CLASS = SKOS + "ConceptScheme"
 SCHEME_LABEL = "MemeAtlas entry-type taxonomy"
 
+# 5.0.0: two more concept kinds, each with their own scheme (see
+# NODE_SCHEMES below) — origin_concept/badge_concept are MemeAtlas
+# inventions (unlike entry_type_concept's kymt:, IMKG's own namespace), so
+# their scheme IRIs live under mk: too.
+ORIGIN_SCHEME_IRI = MK + "OriginScheme"
+ORIGIN_SCHEME_LABEL = "MemeAtlas origin taxonomy"
+BADGE_SCHEME_IRI = MK + "BadgeScheme"
+BADGE_SCHEME_LABEL = "MemeAtlas badge taxonomy"
+
+# concept node kind -> (scheme IRI, scheme label). Generalizes the single
+# entry_type scheme above to every concept kind that has one; iter_triples
+# declares each scheme once, on first sight of a node of its kind.
+NODE_SCHEMES: dict[str, tuple[str, str]] = {
+    "entry_type_concept": (SCHEME_IRI, SCHEME_LABEL),
+    "origin_concept": (ORIGIN_SCHEME_IRI, ORIGIN_SCHEME_LABEL),
+    "badge_concept": (BADGE_SCHEME_IRI, BADGE_SCHEME_LABEL),
+}
+
 # node kind -> classes every node of that kind has. ``frame`` also gets
-# kym:<Category>.
+# kym:<Category>. origin_concept/badge_concept get no rdfs:Class (unlike
+# entry_type_concept): hasOrigin/hasBadge are plain object properties to a
+# concept resource, not rdf:type class-membership.
 NODE_CLASSES: dict[str, tuple[str, ...]] = {
     "frame": (M4S + "MediaFrame",),
     "entry_type_concept": (RDFS + "Class", SKOS + "Concept"),
+    "origin_concept": (SKOS + "Concept",),
+    "badge_concept": (SKOS + "Concept",),
     "image": (MK + "Image",),
 }
 
@@ -128,7 +165,6 @@ NODE_LITERALS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
         ("added", M4S + "added", XSD_DATETIME),
         ("last_updated", M4S + "last_update_source", XSD_DATETIME),
         ("description", MK + "description", None),
-        ("badges", MK + "badge", None),
         ("aliases", SKOS + "altLabel", None),
         ("section_texts", MK + "sectionText", None),
         ("corpus_status", MK + "corpusStatus", None),
@@ -139,6 +175,12 @@ NODE_LITERALS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
     ),
     "entry_type_concept": (
         ("label", SKOS + "prefLabel", None),       # rendered by concept_pref_label
+    ),
+    "origin_concept": (
+        ("label", SKOS + "prefLabel", None),
+    ),
+    "badge_concept": (
+        ("label", SKOS + "prefLabel", None),
     ),
     "image": (
         ("width", MK + "width", XSD_INTEGER),
@@ -151,11 +193,20 @@ EDGE_PREDICATES: dict[str, tuple[str, bool, str | None]] = {
     "hasEntryType": (RDF_TYPE, False, None),
     "hasTag": (M4S + "tag", True, None),
     "hasRegion": (MK + "region", True, None),
+    "hasOrigin": (MK + "hasOrigin", False, None),
+    "hasBadge": (MK + "badge", False, None),      # was a literal; see memeatlas.ttl
     "partOfSeries": (SKOS + "broader", False, SKOS + "narrower"),
     "relatesToMeme": (MK + "relatesToMeme", False, None),
     "citesExternal": (MK + "citesExternal", False, None),
     "subTypeOf": (RDFS + "subClassOf", False, None),
     "hasImage": (MK + "hasImage", False, None),
+    # coOccursWith is NOT here (5.0.1): entry_type's statistical edges were
+    # removed (needless alongside its curated subTypeOf hierarchy), and
+    # tags — the only remaining source — have no RDF resource to attach a
+    # triple to (tag_concept; hasTag's object is a literal). So
+    # coOccursWith is property-graph-only, unconditionally, and needs no
+    # entry in this table: the edge loop below skips any type not listed
+    # here, same as it always has for an unrecognized type.
 }
 
 # occurrence field -> (annotation predicate, datatype | None). Annotates the
@@ -215,6 +266,10 @@ def node_iri(node_id: str) -> str:
     """The IRI for a property-graph node id."""
     if node_id.startswith("type:"):
         return KYMT + node_id[len("type:"):]
+    if node_id.startswith("origin:"):
+        return MK + "origin/" + node_id[len("origin:"):]
+    if node_id.startswith("badge:"):
+        return MK + "badge/" + node_id[len("badge:"):]
     if node_id.startswith("image:"):
         return node_id[len("image:"):]
     return node_id
@@ -285,7 +340,7 @@ def iter_triples(nodes: Iterable[dict], edges: Iterable[dict], *,
             seen.add(h)
         return line
 
-    scheme_declared = False
+    scheme_declared: set[str] = set()   # scheme IRIs already declared, by kind's scheme
 
     for node in nodes:
         kind = node.get("kind")
@@ -303,15 +358,17 @@ def iter_triples(nodes: Iterable[dict], edges: Iterable[dict], *,
             if line:
                 yield line
 
-        if kind == "entry_type_concept":
-            if not scheme_declared:
-                scheme_declared = True
-                for line in (f"<{SCHEME_IRI}> <{RDF_TYPE}> <{SCHEME_CLASS}> .",
-                             f"<{SCHEME_IRI}> <{RDFS}label> {_literal(SCHEME_LABEL, None)} ."):
+        scheme = NODE_SCHEMES.get(kind)
+        if scheme:
+            scheme_iri, scheme_label = scheme
+            if scheme_iri not in scheme_declared:
+                scheme_declared.add(scheme_iri)
+                for line in (f"<{scheme_iri}> <{RDF_TYPE}> <{SCHEME_CLASS}> .",
+                             f"<{scheme_iri}> <{RDFS}label> {_literal(scheme_label, None)} ."):
                     line = emit(line)
                     if line:
                         yield line
-            line = emit(f"<{s}> <{SKOS}inScheme> <{SCHEME_IRI}> .")
+            line = emit(f"<{s}> <{SKOS}inScheme> <{scheme_iri}> .")
             if line:
                 yield line
 
@@ -319,8 +376,8 @@ def iter_triples(nodes: Iterable[dict], edges: Iterable[dict], *,
             value = node.get(prop)
             if value in (None, "", []):
                 continue
-            if kind == "entry_type_concept" and prop == "label":
-                value = concept_pref_label(value)
+            if kind in ("entry_type_concept", "origin_concept") and prop == "label":
+                value = concept_pref_label(value)     # "united-states" -> "united states"
             for v in (value if isinstance(value, list) else [value]):
                 if v in (None, ""):
                     continue
@@ -331,6 +388,9 @@ def iter_triples(nodes: Iterable[dict], edges: Iterable[dict], *,
     for edge in edges:
         etype = edge.get("type")
         if etype not in EDGE_PREDICATES:
+            # coOccursWith always lands here (not a recognized predicate;
+            # property-graph-only, see the module docstring) — same path
+            # as any other type this module doesn't know.
             continue
         pred, is_literal, inverse = EDGE_PREDICATES[etype]
         s = node_iri(edge["src"])

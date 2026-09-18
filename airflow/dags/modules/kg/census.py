@@ -2,11 +2,22 @@
 kg/census.py — frequency + co-occurrence census over one corpus field
 ========================================================================
 Pure: no Mongo, no Airflow. Takes an iterable of `entries` docs and emits
-the raw counts needed to derive a hierarchy over a multi-valued field —
-per-value frequency, the per-entry value-count distribution, and pairwise
+the raw counts needed to derive a hierarchy over a field — per-value
+frequency, the per-entry value-count distribution, and pairwise
 co-occurrence. Deliberately does NOT compute containment/PMI: those
 derivations happen from this output so every threshold choice stays
 visible and reviewable instead of hidden in a script default.
+
+Single-valued fields (``origin``)
+----------------------------------
+Most censused fields are list-valued (``entry_type``, ``tags``) — a frame
+can have several. ``origin`` (the infobox platform/franchise/etc. string,
+``frame.from`` in the KG) is a single string per frame. ``FieldSpec.
+multi_valued=False`` routes it through the same counting logic without
+exploding the string into characters (``set("Twitter")`` is not what
+anyone wants). A single-valued field's ``pair_cooccurrence`` is always
+``[]`` by construction — a value cannot co-occur with itself within one
+entry — which is correct, not a bug in either the field or this module.
 
 One implementation, two fields
 ------------------------------
@@ -59,8 +70,10 @@ from typing import Callable, Iterable
 __all__ = ["FieldSpec", "FIELDS", "run_census", "load_census", "CENSUS_VERSION"]
 
 # Bumped when the emitted key set changes, so a stale census on disk is
-# detectable rather than silently mismatched against new code.
-CENSUS_VERSION = "2"
+# detectable rather than silently mismatched against new code. "3": added
+# the "origin" field (single-valued) and widened tags' default_top_k
+# 300 -> 1000 — old tag censuses at top_k=300 are a different, smaller view.
+CENSUS_VERSION = "3"
 
 
 def _lower_strip(value: str) -> str:
@@ -75,9 +88,19 @@ class FieldSpec:
     original modules: tags are a folksonomy and were lowercased/stripped,
     entry_type slugs are a controlled vocabulary and were taken verbatim.
     Encoding it here keeps that distinction visible instead of implicit in
-    which file you happened to run.
+    which file you happened to run. It is deliberately just
+    ``_lower_strip`` for tags, not the plural-folded form kg/build.py's
+    graph nodes use — a curator needs to see the RAW fragmentation
+    (``catchphrase`` vs ``catchphrases``) to know folding is needed at
+    all. The pipeline that feeds ``coOccursWith`` edges passes the folded
+    form explicitly via ``run_census(..., normalize=...)``, so the graph's
+    node identity and the co-occurrence edges built from it stay aligned.
+
+    ``multi_valued=False`` is for a field that holds one string per frame
+    (``origin``), not a list — see the module docstring.
     """
     normalize: Callable[[str], str] | None = None
+    multi_valued: bool = True
     default_top_k: int = 0
     default_min_pair_count: int = 3
 
@@ -89,18 +112,38 @@ FIELDS: dict[str, FieldSpec] = {
     # Folksonomy, 100k+ values with heavy singular/plural duplication. A full
     # pairwise matrix would be statistically noisy (83k tags occur exactly
     # once) and impractically large to review, hence the top-K restriction.
-    "tags": FieldSpec(normalize=_lower_strip, default_top_k=300,
+    # top_k=1000 (was 300): kg/tag_normalize.py folding needs to see enough
+    # of the distribution to be worth curating a denylist against.
+    "tags": FieldSpec(normalize=_lower_strip, default_top_k=1000,
                       default_min_pair_count=5),
+    # Single string per frame (the infobox "Origin" field — platform,
+    # country, franchise, company, person; see kg/origin.py). normalize=None:
+    # the census must show curators the RAW fragmentation ("Twitter" vs
+    # "Twitter / X" vs "twitter.com") so the alias file can be written
+    # against real data, not a pre-cleaned view of it.
+    "origin": FieldSpec(normalize=None, multi_valued=False,
+                        default_top_k=0, default_min_pair_count=0),
 }
+
+
+_UNSET = object()   # distinguishes "use the field's own normalize" from normalize=None
 
 
 def run_census(docs: Iterable[dict], field: str, *,
                top_k: int | None = None,
-               min_pair_count: int | None = None) -> dict:
-    """Census one multi-valued field across ``docs``.
+               min_pair_count: int | None = None,
+               normalize: Callable[[str], str] | None | object = _UNSET) -> dict:
+    """Census one field across ``docs``.
 
     ``docs`` is any iterable of `entries` documents — a Mongo cursor, a
     list, a generator. The caller owns the connection; this stays pure.
+
+    ``normalize`` overrides ``FIELDS[field].normalize`` for this call —
+    used by the pipeline that builds ``coOccursWith`` edges to pass the
+    plural-folded form (kg/tag_normalize.py, with its curated denylist)
+    so the census's value identity matches the graph's ``tag_concept``
+    node identity. Left at its sentinel default, the field's own spec is
+    used unchanged; passing ``None`` explicitly disables normalization.
     """
     try:
         spec = FIELDS[field]
@@ -111,6 +154,7 @@ def run_census(docs: Iterable[dict], field: str, *,
     top_k = spec.default_top_k if top_k is None else top_k
     min_pair_count = (spec.default_min_pair_count if min_pair_count is None
                       else min_pair_count)
+    norm = spec.normalize if normalize is _UNSET else normalize
 
     corpus_size = 0
     with_value = 0
@@ -121,9 +165,11 @@ def run_census(docs: Iterable[dict], field: str, *,
 
     for doc in docs:
         corpus_size += 1
-        raw = doc.get(field) or []
-        if spec.normalize is not None:
-            values = sorted({v for v in (spec.normalize(x) for x in raw) if v})
+        value = doc.get(field)
+        raw = (value or []) if spec.multi_valued else (
+            [value] if value not in (None, "") else [])
+        if norm is not None:
+            values = sorted({v for v in (norm(x) for x in raw) if v})
         else:
             values = sorted(set(raw))
         if not values:

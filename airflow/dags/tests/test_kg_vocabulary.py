@@ -30,7 +30,7 @@ import re
 import unittest
 from pathlib import Path
 
-from modules.kg import build, rdf, serialize, taxonomy
+from modules.kg import build, cooccurs, rdf, serialize, taxonomy
 
 CONFIG = Path(__file__).resolve().parents[1] / "kg_config"
 # .yarrrml.yml, not .yarrrml: yatter refuses any extension but .yml/.yaml.
@@ -116,6 +116,8 @@ class MappingCrosswalkTests(unittest.TestCase):
                         in serialize.EDGE_TYPE_TO_RML_FILE.values()})
         headers.update({name: header for name, header
                         in serialize.OCCURRENCE_RML_FILES.values()})
+        origin_subtype_name, origin_subtype_header = serialize.ORIGIN_SUBTYPE_RML_FILE
+        headers[origin_subtype_name] = origin_subtype_header
         for rule_name, rule in self.doc["mappings"].items():
             header = headers[source_file(rule)]
             subjects = rule["subjects"] if isinstance(rule["subjects"], str) else ""
@@ -154,6 +156,10 @@ class MappingCrosswalkTests(unittest.TestCase):
         self.assertEqual(set(rdf.OCCURRENCE_PREDICATES), set(build.OCCURRENCE_FIELDS))
 
     def test_every_edge_type_has_an_rml_file_and_a_predicate(self):
+        # coOccursWith deliberately excluded (5.0.1): tags are its only
+        # source (entry_type's was removed) and tag_concept has no RDF
+        # resource, so it has no RML file and no rdf.py predicate at all —
+        # property-graph-only, checked separately in test_kg_loaders.py.
         ours = set(build.EDGE_TYPES) | set(taxonomy.CONCEPT_EDGE_TYPES)
         self.assertEqual(set(serialize.EDGE_TYPE_TO_RML_FILE), ours)
         self.assertEqual(set(rdf.EDGE_PREDICATES), ours)
@@ -161,6 +167,10 @@ class MappingCrosswalkTests(unittest.TestCase):
     def test_edge_types_and_concept_types_do_not_overlap(self):
         self.assertEqual(
             set(build.EDGE_TYPES) & set(taxonomy.CONCEPT_EDGE_TYPES), set())
+        self.assertEqual(
+            set(build.EDGE_TYPES) & set(cooccurs.COOCCURS_EDGE_TYPES), set())
+        self.assertEqual(
+            set(taxonomy.CONCEPT_EDGE_TYPES) & set(cooccurs.COOCCURS_EDGE_TYPES), set())
 
 
 class ImkgAlignmentTests(unittest.TestCase):
@@ -205,8 +215,8 @@ class OntologyDeclarationTests(unittest.TestCase):
         self.assertEqual(self.emitted_mk - self.declared, set())
 
     def test_every_declared_term_is_emitted_or_structural(self):
-        # The scheme is emitted as a resource, not a predicate or class.
-        structural = {rdf.SCHEME_IRI}
+        # Each scheme is emitted as a resource, not a predicate or class.
+        structural = {rdf.SCHEME_IRI, rdf.ORIGIN_SCHEME_IRI, rdf.BADGE_SCHEME_IRI}
         self.assertEqual(self.declared - self.emitted_mk - structural, set())
 
     def test_ontology_parses_as_turtle(self):

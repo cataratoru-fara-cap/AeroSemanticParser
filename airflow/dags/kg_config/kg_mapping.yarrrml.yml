@@ -29,6 +29,17 @@
 #   - The curated entry-type hierarchy is rdfs:subClassOf between the kymt:
 #     classes. IMKG uses skos:broader between FRAMES for "Part of a series
 #     on", and this mapping keeps that meaning for skos:broader alone.
+#   - mk:badge (5.0.0) is an object property to a badge_concept resource,
+#     not the literal it was in 4.0.0.
+#
+# 5.0.0: origin (frame.from) gets an ADDED canonicalization layer,
+# origin_concept/mk:hasOrigin — NOT a "platform" concept; see
+# kg_config/origin_taxonomy.yaml's header. badges move from a frame literal
+# to badge_concept/mk:badge. tags get statistical mk:coOccursWith edges
+# (kg/cooccurs.py) alongside plural-folding; entry_type does NOT (5.0.1 —
+# judged needless alongside its curated subTypeOf hierarchy). Either way
+# coOccursWith has no RDF mapping at all: tags are m4s:tag literals, no
+# resource to attach a triple to — property-graph-only, unconditionally.
 #
 # Not yet mapped: the Origin and Spread sections (text, images, anchor text),
 # deferred to the event-extraction task — they will map to IMKG's m4s:origin
@@ -82,13 +93,6 @@ mappings:
       - [mk:parserVersion, $(parser_version)]
       - [mk:parsedAt, $(parsed_at), xsd:dateTime]
       - [mk:scrapedAt, $(scraped_at), xsd:dateTime]
-
-  frame_badge:
-    sources:
-      - [rml_data/frame_badges.csv~csv]
-    subjects: $(url)
-    po:
-      - [mk:badge, $(badge)]
 
   frame_alias:
     sources:
@@ -154,7 +158,10 @@ mappings:
       - [skos:inScheme, mk:EntryTypeScheme~iri]
       - [skos:prefLabel, $(label)]
 
-  entry_type_scheme:
+  # One mapping, three rows: scheme.csv holds entry_type's, origin's and
+  # badge's concept scheme, one row each (kg/serialize.py). The mapping
+  # itself doesn't care which scheme a row is -- $(iri)/$(label) alone.
+  concept_scheme:
     sources:
       - [rml_data/scheme.csv~csv]
     subjects: $(iri)
@@ -168,6 +175,59 @@ mappings:
     subjects: https://knowyourmeme.com/types/$(narrower)
     po:
       - [rdfs:subClassOf, https://knowyourmeme.com/types/$(broader)~iri]
+
+  # coOccursWith (kg/cooccurs.py) has no mapping here at all (5.0.1):
+  # entry_type's statistical edges were removed (needless alongside its
+  # curated subTypeOf hierarchy above), and tags -- the only remaining
+  # source -- have no RDF resource (tags are m4s:tag literals). So
+  # coOccursWith is property-graph-only, unconditionally; see MODEL.md.
+
+  # ---- MemeAtlas: the origin taxonomy (kg/origin.py) ----------------------
+  # NOT a "platform" concept: origin values include countries, franchises,
+  # companies and people, all canonicalized here. The curated subClassOf
+  # hierarchy below covers only the platform-like subset -- see
+  # kg_config/origin_taxonomy.yaml's header and kg/origin.py's docstring.
+
+  origin_concept:
+    sources:
+      - [rml_data/origin_concepts.csv~csv]
+    subjects: https://meme4.science/atlas/origin/$(slug)
+    po:
+      - [a, skos:Concept]
+      - [skos:inScheme, mk:OriginScheme~iri]
+      - [skos:prefLabel, $(label)]
+
+  origin_subtype:
+    sources:
+      - [rml_data/origin_subtype_edges.csv~csv]
+    subjects: https://meme4.science/atlas/origin/$(narrower)
+    po:
+      - [rdfs:subClassOf, https://meme4.science/atlas/origin/$(broader)~iri]
+
+  has_origin:
+    sources:
+      - [rml_data/origin_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:hasOrigin, https://meme4.science/atlas/origin/$(origin)~iri]
+
+  # ---- MemeAtlas: the badge taxonomy ---------------------------------------
+
+  badge_concept:
+    sources:
+      - [rml_data/badge_concepts.csv~csv]
+    subjects: https://meme4.science/atlas/badge/$(slug)
+    po:
+      - [a, skos:Concept]
+      - [skos:inScheme, mk:BadgeScheme~iri]
+      - [skos:prefLabel, $(label)]
+
+  has_badge:
+    sources:
+      - [rml_data/badge_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:badge, https://meme4.science/atlas/badge/$(badge)~iri]
 
   # ---- MemeAtlas: relations IMKG does not model ---------------------------
 

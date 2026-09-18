@@ -72,14 +72,16 @@ class VocabularyTests(unittest.TestCase):
     def test_constants_are_exported(self):
         self.assertEqual(set(build.NODE_KINDS),
                          {"frame", "frame_stub", "entry_type_concept",
-                          "tag_concept", "region_concept", "external_ref", "image"})
+                          "tag_concept", "region_concept", "origin_concept",
+                          "badge_concept", "external_ref", "image"})
         self.assertEqual(set(build.EDGE_TYPES),
-                         {"hasEntryType", "hasTag", "hasRegion", "partOfSeries",
-                          "relatesToMeme", "citesExternal", "hasImage"})
+                         {"hasEntryType", "hasTag", "hasRegion", "hasOrigin",
+                          "hasBadge", "partOfSeries", "relatesToMeme",
+                          "citesExternal", "hasImage"})
         self.assertLessEqual(set(build.OCCURRENCE_EDGE_TYPES), set(build.EDGE_TYPES))
 
     def test_version_is_stamped(self):
-        self.assertEqual(build.KG_BUILD_VERSION, "4.0.0")
+        self.assertEqual(build.KG_BUILD_VERSION, "5.0.1")
 
     def test_emitted_kinds_types_and_occurrence_fields_stay_in_the_vocabulary(self):
         nodes, edges = build.build_nodes_and_edges(entry(
@@ -114,7 +116,7 @@ class FrameNodeTests(unittest.TestCase):
         self.assertEqual((frame["category"], frame["status"]), ("meme", "confirmed"))
         self.assertEqual(frame["year"], 2013)
         self.assertEqual(frame["from"], "Tumblr")          # the infobox origin FIELD
-        self.assertEqual(frame["badges"], ["Sensitive"])
+        self.assertNotIn("badges", frame)     # 5.0.0: an edge now, not a literal
         self.assertEqual(frame["aliases"], ["Shibe"])
         self.assertEqual(frame["added"], "2011-03-13T07:06:40Z")
         self.assertEqual(frame["last_updated"], "2023-11-14T22:13:20Z")
@@ -192,6 +194,48 @@ class ConceptTests(unittest.TestCase):
         self.assertEqual(nodes_by_id(nodes)["region:Japan"]["kind"], "region_concept")
         self.assertEqual([e for e in edges if e["type"] == "hasRegion"],
                          [{"src": URL, "type": "hasRegion", "dst": "region:Japan"}])
+
+    def test_badges_become_concepts(self):
+        nodes, edges = build.build_nodes_and_edges(
+            entry(badges=[" Sensitive ", ""]))
+        self.assertEqual(nodes_by_id(nodes)["badge:sensitive"]["kind"], "badge_concept")
+        self.assertEqual(nodes_by_id(nodes)["badge:sensitive"]["label"], "Sensitive")
+        self.assertEqual([e for e in edges if e["type"] == "hasBadge"],
+                         [{"src": URL, "type": "hasBadge", "dst": "badge:sensitive"}])
+
+    def test_no_origin_edge_without_a_resolver(self):
+        """The default (no origin_resolver given): back-compat with every
+        existing caller that doesn't know about origin_concept."""
+        nodes, edges = build.build_nodes_and_edges(entry(origin="Twitter"))
+        self.assertEqual([n for n in nodes if n["kind"] == "origin_concept"], [])
+        self.assertEqual([e for e in edges if e["type"] == "hasOrigin"], [])
+        self.assertEqual(nodes_by_id(nodes)[URL]["from"], "Twitter")
+
+    def test_origin_becomes_a_concept_via_the_resolver(self):
+        nodes, edges = build.build_nodes_and_edges(
+            entry(origin="Twitter"), origin_resolver=lambda raw: raw.lower())
+        self.assertEqual(nodes_by_id(nodes)["origin:twitter"]["kind"], "origin_concept")
+        self.assertEqual([e for e in edges if e["type"] == "hasOrigin"],
+                         [{"src": URL, "type": "hasOrigin", "dst": "origin:twitter"}])
+        # "from" (the raw literal) is untouched -- origin_concept is an
+        # ADDED layer, not a replacement.
+        self.assertEqual(nodes_by_id(nodes)[URL]["from"], "Twitter")
+
+    def test_no_origin_edge_for_an_empty_origin(self):
+        nodes, edges = build.build_nodes_and_edges(
+            entry(origin=""), origin_resolver=lambda raw: raw.lower())
+        self.assertEqual([e for e in edges if e["type"] == "hasOrigin"], [])
+
+    def test_tags_are_plural_folded(self):
+        nodes, edges = build.build_nodes_and_edges(
+            entry(tags=["Catchphrases"]))
+        self.assertIn("tag:catchphrase", nodes_by_id(nodes))
+        self.assertIn((URL, "hasTag", "tag:catchphrase"), edge_set(edges))
+
+    def test_tag_denylist_exempts_a_tag_from_folding(self):
+        nodes, edges = build.build_nodes_and_edges(
+            entry(tags=["News"]), tag_denylist=frozenset({"news"}))
+        self.assertIn("tag:news", nodes_by_id(nodes))
 
 
 class LinkClassificationTests(unittest.TestCase):
@@ -347,6 +391,21 @@ class FullRecordTests(unittest.TestCase):
         for field in ("label", "category", "status", "year", "from", "about",
                       "added", "last_updated"):
             self.assertIn(field, frame, field)
+
+    def test_every_badge_becomes_an_edge(self):
+        self.assertEqual(len([e for e in self.edges if e["type"] == "hasBadge"]),
+                         len(self.doc.get("badges") or []))
+
+    def test_origin_becomes_an_edge_when_a_resolver_is_supplied(self):
+        # cls.edges (no resolver) already covers "from" staying a literal
+        # (test_frame_fields) and no hasOrigin edge without one
+        # (ConceptTests.test_no_origin_edge_without_a_resolver); this
+        # covers the real fixture's actual origin value end to end.
+        _, edges = build.build_nodes_and_edges(
+            self.doc, origin_resolver=lambda raw: raw.lower())
+        has_origin = [e for e in edges if e["type"] == "hasOrigin"]
+        self.assertEqual(len(has_origin), 1)
+        self.assertEqual(has_origin[0]["dst"], f"origin:{self.doc['origin'].lower()}")
 
 
 class StubNodeTests(unittest.TestCase):

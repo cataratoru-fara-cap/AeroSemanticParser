@@ -1,0 +1,542 @@
+# origin_taxonomy.yaml — canonicalization + platform hierarchy for `origin`
+# ============================================================================
+# `frame.from` (parsed field `origin`) is KYM's free-text infobox "Origin"
+# line — NOT a platform field. Querying the real corpus directly (23,882
+# entries, 2026-09-17) shows it holds genuine platforms (Twitter, YouTube,
+# 4chan...), countries (United States, Japan...), franchises (The Simpsons,
+# Avengers: Endgame...), companies (Nintendo, Valve...), games (Elden
+# Ring...) and people (Donald Trump). `aliases:` below canonicalizes the
+# real duplication found in the top ~200 most frequent raw values, across
+# EVERY one of those categories — not just platform-name casing. It is
+# curated over the head of the distribution (roughly the top 150-250 raw
+# strings by frequency, covering the large majority of entries by volume);
+# the long tail of ~5,700 rarer values is left to kg/origin.py's
+# deterministic slugify fallback, which still mints each one its own node
+# rather than collapsing them into a lossy "Other".
+#
+# Below `aliases:`, the file switches to entry_type_taxonomy.yaml's bucket
+# shape (`broader_confirmed`, `broader_semantic_only`, ...), parsed by the
+# SAME code (kg/taxonomy.py's `_parse`, via kg/origin.py) — but populated
+# ONLY with canonical slugs that are actually platforms (twitter, 4chan,
+# youtube, ...). A country, franchise, company or person has no single
+# natural parent; giving one a fake umbrella would be exactly the
+# fabricated relation entry_type_taxonomy.yaml's own `demoted` /
+# `do_not_encode_as_broader` buckets exist to reject. Those origin concepts
+# get deduplication via `aliases:` and nothing else — no forced hierarchy.
+#
+# No PMI/co-occurrence evidence is possible for this field, unlike
+# entry_type's: `origin` is ONE STRING PER FRAME (kg/census.py's
+# `FieldSpec(multi_valued=False)`), so two origin values never co-occur —
+# there is no statistic to agree or disagree with a semantic judgement.
+# Every hierarchy edge below is judgement alone (`evidence: curated`), and
+# `contested` (stats vs. semantics disagreement) is structurally empty for
+# this reason, not because nothing was reviewed.
+
+aliases:
+  # -- platforms -------------------------------------------------------
+  Twitter: twitter
+  "Twitter / X": twitter
+  "X / Twitter": twitter
+  X: twitter
+  twitter.com: twitter
+  YouTube: youtube
+  Youtube: youtube
+  youtube: youtube
+  TikTok: tiktok
+  Tiktok: tiktok
+  Reddit: reddit
+  reddit: reddit
+  Tumblr: tumblr
+  tumblr: tumblr
+  4chan: 4chan
+  "/pol/": 4chan
+  "/v/": 4chan
+  "/tv/": 4chan
+  "/mu/": 4chan
+  "/r9k/": 4chan
+  Instagram: instagram
+  Facebook: facebook
+  iFunny: ifunny
+  "Urban Dictionary": urban-dictionary
+  Vine: vine
+  Twitch: twitch
+  DeviantArt: deviantart
+  Imgur: imgur
+  niconico: niconico
+  Niconico: niconico
+  YTMND: ytmnd
+  Discord: discord
+  "Something Awful": something-awful
+  "United States of America": united-states
+  America: united-states
+  American: united-states
+  USA: united-states
+  "United States": united-states
+  Netflix: netflix
+  Steam: steam
+  Newgrounds: newgrounds
+  Usenet: usenet
+  Canada: canada
+  "2channel": 2channel
+  "Futaba Channel (2chan)": 2channel
+  FunnyJunk: funnyjunk
+  Funnyjunk: funnyjunk
+  Google: google
+  Flickr: flickr
+  Snapchat: snapchat
+  9GAG: 9gag
+  9gag: 9gag
+  Quickmeme: quickmeme
+  "Meme Generator": meme-generator
+  "United Kingdom": united-kingdom
+  England: united-kingdom
+  "London, England": london
+  Weibo: weibo
+  "The Simpsons": the-simpsons
+  "Game of Thrones": game-of-thrones
+  "Game of Thrones (Television Series)": game-of-thrones
+  Blogspot: blogspot
+  Soundcloud: soundcloud
+  SoundCloud: soundcloud
+  "Avengers: Endgame": avengers-endgame
+  "Avengers: Endgame (Film)": avengers-endgame
+  "Fox News": fox-news
+  Disney: disney
+  Brazil: brazil
+  Australia: australia
+  Douyin: douyin
+  "Washington, D.C.": washington-dc
+  "Washington, DC": washington-dc
+  "White House": washington-dc
+  "The White House": washington-dc
+  "South Korea": south-korea
+  "New York City": new-york-city
+  "New York City, New York, United States": new-york-city
+  "New York City, NY": new-york-city
+  "New York, United States": new-york-city
+  Nintendo: nintendo
+  Apple: apple
+  Russia: russia
+  "Elden Ring": elden-ring
+  "Team Fortress 2": team-fortress-2
+  pixiv: pixiv
+  Pixiv: pixiv
+  France: france
+  Minecraft: minecraft
+  Telegram: telegram
+  "Saturday Night Live": snl
+  SNL: snl
+  Amazon: amazon
+  Wikipedia: wikipedia
+  "South Park": south-park
+  "Getty Images": getty-images
+  "Family Guy": family-guy
+  Pokemon: pokemon
+  Pokémon: pokemon
+  Roblox: roblox
+  Microsoft: microsoft
+  Pinterest: pinterest
+  Overwatch: overwatch
+  "It's Always Sunny in Philadelphia": its-always-sunny-in-philadelphia
+  "It's Always Sunny In Philadelphia": its-always-sunny-in-philadelphia
+  LiveJournal: livejournal
+  "Donald Trump": donald-trump
+  Valve: valve
+  "Los Angeles, California": los-angeles
+  "Los Angeles": los-angeles
+  China: china
+  Nickelodeon: nickelodeon
+  Vimeo: vimeo
+  Unicode: unicode
+  Capcom: capcom
+  "Soyjak.party": soyjak-party
+  "Square Enix": square-enix
+  "BodyBuilding.com": bodybuilding-com
+  Futurama: futurama
+  "Tenor": tenor
+  Researching: researching
+  "My Little Pony: Friendship is Magic": my-little-pony-friendship-is-magic
+  HBO: hbo
+  VK: vk
+  iOS: ios
+  "Marvel Comics": marvel-comics
+  "Star Wars": star-wars
+  Ubisoft: ubisoft
+  MySpace: myspace
+  WWE: wwe
+  "Rick and Morty": rick-and-morty
+  "Adult Swim": adult-swim
+  "Pokémon Sword and Shield": pokemon-sword-and-shield
+  "Cover Corp": cover-corp
+  Sweden: sweden
+  "The Onion": the-onion
+  Bluesky: bluesky
+  OnlyFans: onlyfans
+  "Dark Souls": dark-souls
+  Gawker: gawker
+  Indonesia: indonesia
+  India: india
+  Fortnite: fortnite
+  Italy: italy
+  Florida: florida
+  "Cartoon Network": cartoon-network
+  "The Washington Post": washington-post
+  "SCP Foundation": scp-foundation
+  California: california
+  Kick: kick
+  "The Eric Andre Show": the-eric-andre-show
+  Shutterstock: shutterstock
+  Texas: texas
+  Doom: doom
+  CBS: cbs
+  "Daily Mail": daily-mail
+  Lucasfilm: lucasfilm
+  BBC: bbc
+  "Internet": internet
+  "The Internet": internet
+  "Owl Turd": owl-turd
+  Chicago: chicago
+  Spotify: spotify
+  Memedroid: memedroid
+  "Truth Social": truth-social
+  "2017": unknown
+  Imgflip: imgflip
+  "Mr. Lovenstein": mr-lovenstein
+  Sega: sega
+  IGN: ign
+  "Ctrl+Alt+Del": ctrl-alt-del
+  "Yahoo Answers": yahoo-answers
+  "Know Your Meme": know-your-meme
+  Dragon Ball: dragon-ball
+  Germany: germany
+  Ukraine: ukraine
+  LazyTown: lazytown
+  Pornhub: pornhub
+  BuzzFeed: buzzfeed
+  Sony: sony
+  "Disney+": disney-plus
+  E3: e3
+  "Fanfiction.net": fanfiction-net
+  Kickstarter: kickstarter
+  "Electronic Arts": electronic-arts
+  Unknown: unknown
+
+  # -- expanded 2026-09-18: ranks 201-800 by frequency, systematic
+  # normalized-duplicate detection (casing/parenthetical-suffix
+  # variants) plus manual review of new platforms/franchises found --
+  twitter: twitter
+  facebook: facebook
+  unknown: unknown
+  IFunny: ifunny
+  deviantArt: deviantart
+  DeviantART: deviantart
+  imgur: imgur
+  United States Of America: united-states
+  Washington D.C.: washington-dc
+  Team Fortress 2 (Game): team-fortress-2
+  Livejournal: livejournal
+  Fortnite (Video Game): fortnite
+  fanfiction.net: fanfiction-net
+  Buzzfeed: buzzfeed
+  4Chan: 4chan
+  4chan.org: 4chan
+  4chan.org/pol/: 4chan
+  4chan /pol/: 4chan
+  4chan /v/: 4chan
+  4Chan - /qa/: 4chan
+  youtube.com: youtube
+  Kickstarter.com: kickstarter
+  QuickMeme: quickmeme
+  MemeDroid: memedroid
+  Twitch.tv: twitch
+  Twitter/X: twitter
+  "Twitter (@shoe0nhead)": twitter
+  "Twitter & Philae landing event": twitter
+  SpongeBob SquarePants: spongebob-squarepants
+  SpongeBob Squarepants (TV): spongebob-squarepants
+  The Simpsons (TV Show): the-simpsons
+  The Simpsons (Television Show): the-simpsons
+  BodyBuilding Forums: bodybuilding-com
+  Washington Post: washington-post
+  "JoJo's Bizarre Adventure": jojos-bizarre-adventure
+  "Jojo's Bizarre Adventure": jojos-bizarre-adventure
+  "JoJo's Bizarre Adventure: Stardust Crusaders": jojos-bizarre-adventure
+  Rick and Morty (Television Series): rick-and-morty
+  Rick and Morty (TV Series): rick-and-morty
+  The Office: the-office
+  The Office (TV Series): the-office
+  Time Magazine: time-magazine
+  TIME Magazine: time-magazine
+  StoneToss: stonetoss
+  Stonetoss: stonetoss
+  "Chappelle's Show": chappelles-show
+  "Chappelle's Show (Television Series)": chappelles-show
+  King of the Hill: king-of-the-hill
+  King of the Hill (TV Show): king-of-the-hill
+  The Dark Knight: the-dark-knight
+  The Dark Knight (Film): the-dark-knight
+  FrankerFacez: frankerfacez
+  FrankerFaceZ: frankerfacez
+  Wikileaks: wikileaks
+  WikiLeaks: wikileaks
+  The Incredibles: the-incredibles
+  The Incredibles (Film): the-incredibles
+  Ed, Edd n Eddy: ed-edd-n-eddy
+  Ed Edd n Eddy: ed-edd-n-eddy
+  E-Mail: email
+  E-mail: email
+  Email: email
+  Starcraft: starcraft
+  StarCraft: starcraft
+  Nico Nico Douga: niconico
+  Amino: amino
+  Amino Apps: amino
+  FARK: fark
+  Fark.com: fark
+  Geocities: geocities
+  Angelfire: angelfire
+  Miiverse: miiverse
+  Photobucket: photobucket
+  Cinemassacre.com: cinemassacre
+  OpenSea: opensea
+  GoFundMe: gofundme
+  Whisper: whisper
+  Patreon: patreon
+  Bandcamp: bandcamp
+  Bilibili: bilibili
+  Change.org: change-org
+  Google+: google-plus
+  Douyin / TikTok: tiktok
+  Musical.ly: tiktok
+  Instagram Reels: instagram
+  youtube.com/watch: youtube
+  Facebook.com: facebook
+  Amazon.com: amazon
+  pump.fun: pump-fun
+  Stable Diffusion: stable-diffusion
+  Midjourney: midjourney
+  OpenAI: openai
+  Pikabu: pikabu
+  Ylilauta: ylilauta
+  Krautchan: krautchan
+  8chan: 8chan
+  Slate: slate
+  Vice: vice
+  The Guardian: the-guardian
+  The New York Times: new-york-times
+  The New Yorker: new-yorker
+  GQ: gq
+  Vogue: vogue
+  NME: nme
+  Reuters: reuters
+  Associated Press: associated-press
+  Axios: axios
+  TMZ: tmz
+  Deadspin: deadspin
+  SB Nation: sb-nation
+  Drudge Report: drudge-report
+  InfoWars: infowars
+  Uncyclopedia: uncyclopedia
+  WikiHow: wikihow
+
+# ---------------------------------------------------------------------------
+# subTypeOf hierarchy, over platform-like canonical slugs only (see header).
+# ---------------------------------------------------------------------------
+
+broader_confirmed:
+  - broader: social-network
+    narrower: twitter
+    evidence: curated
+    rationale: "a microblogging social network"
+  - broader: social-network
+    narrower: facebook
+    evidence: curated
+    rationale: "a general-purpose social network"
+  - broader: social-network
+    narrower: instagram
+    evidence: curated
+    rationale: "a photo/video-sharing social network"
+  - broader: social-network
+    narrower: tumblr
+    evidence: curated
+    rationale: "a microblogging social network"
+  - broader: social-network
+    narrower: snapchat
+    evidence: curated
+    rationale: "a social network built on ephemeral media"
+  - broader: social-network
+    narrower: vk
+    evidence: curated
+    rationale: "Russia's largest social network, Facebook-equivalent"
+  - broader: social-network
+    narrower: myspace
+    evidence: curated
+    rationale: "an early general-purpose social network"
+  - broader: social-network
+    narrower: weibo
+    evidence: curated
+    rationale: "China's microblogging social network, Twitter-equivalent"
+  - broader: social-network
+    narrower: bluesky
+    evidence: curated
+    rationale: "a decentralized microblogging social network, Twitter-successor"
+  - broader: social-network
+    narrower: truth-social
+    evidence: curated
+    rationale: "a microblogging social network"
+  - broader: imageboard
+    narrower: 4chan
+    evidence: curated
+    rationale: "the archetypal anonymous imageboard"
+  - broader: imageboard
+    narrower: 2channel
+    evidence: curated
+    rationale: "the Japanese anonymous imageboard 4chan itself was modeled on"
+  - broader: imageboard
+    narrower: soyjak-party
+    evidence: curated
+    rationale: "a 4chan-style anonymous imageboard"
+  - broader: video-platform
+    narrower: youtube
+    evidence: curated
+    rationale: "video hosting/sharing"
+  - broader: video-platform
+    narrower: tiktok
+    evidence: curated
+    rationale: "short-form video hosting/sharing"
+  - broader: video-platform
+    narrower: vimeo
+    evidence: curated
+    rationale: "video hosting/sharing"
+  - broader: video-platform
+    narrower: niconico
+    evidence: curated
+    rationale: "video hosting/sharing, Japan's YouTube-equivalent"
+  - broader: livestreaming-platform
+    narrower: twitch
+    evidence: curated
+    rationale: "the dominant livestreaming platform"
+  - broader: livestreaming-platform
+    narrower: kick
+    evidence: curated
+    rationale: "a livestreaming platform, Twitch-competitor"
+  - broader: messaging-platform
+    narrower: discord
+    evidence: curated
+    rationale: "chat/community messaging platform"
+  - broader: messaging-platform
+    narrower: telegram
+    evidence: curated
+    rationale: "chat/community messaging platform"
+  - broader: meme-site
+    narrower: 9gag
+    evidence: curated
+    rationale: "a dedicated meme-sharing site"
+  - broader: meme-site
+    narrower: ifunny
+    evidence: curated
+    rationale: "a dedicated meme-sharing site"
+  - broader: meme-site
+    narrower: quickmeme
+    evidence: curated
+    rationale: "a meme-image-generator site"
+  - broader: meme-site
+    narrower: meme-generator
+    evidence: curated
+    rationale: "a meme-image-generator site"
+  - broader: meme-site
+    narrower: imgflip
+    evidence: curated
+    rationale: "a meme-image-generator site"
+  - broader: meme-site
+    narrower: memedroid
+    evidence: curated
+    rationale: "a dedicated meme-sharing site"
+  - broader: image-hosting-site
+    narrower: imgur
+    evidence: curated
+    rationale: "general-purpose image hosting"
+  - broader: image-hosting-site
+    narrower: flickr
+    evidence: curated
+    rationale: "general-purpose image hosting"
+  - broader: art-platform
+    narrower: deviantart
+    evidence: curated
+    rationale: "art-sharing community platform"
+  - broader: art-platform
+    narrower: pixiv
+    evidence: curated
+    rationale: "art-sharing community platform, Japan-centric"
+  - broader: forum
+    narrower: something-awful
+    evidence: curated
+    rationale: "a long-running web forum, origin of many early meme formats"
+  - broader: forum
+    narrower: funnyjunk
+    evidence: curated
+    rationale: "a forum/image-sharing community"
+  - broader: news-media
+    narrower: fox-news
+    evidence: curated
+    rationale: "a news outlet"
+  - broader: news-media
+    narrower: daily-mail
+    evidence: curated
+    rationale: "a news outlet"
+  - broader: news-media
+    narrower: washington-post
+    evidence: curated
+    rationale: "a news outlet"
+  - broader: news-media
+    narrower: bbc
+    evidence: curated
+    rationale: "a news outlet"
+  - broader: news-media
+    narrower: buzzfeed
+    evidence: curated
+    rationale: "a news/entertainment outlet"
+  - broader: music-platform
+    narrower: soundcloud
+    evidence: curated
+    rationale: "audio hosting/streaming"
+  - broader: music-platform
+    narrower: spotify
+    evidence: curated
+    rationale: "audio streaming"
+  - broader: encyclopedia
+    narrower: wikipedia
+    evidence: curated
+    rationale: "a collaboratively-edited encyclopedia"
+
+broader_semantic_only:
+  - broader: encyclopedia
+    narrower: urban-dictionary
+    evidence: invisible
+    rationale: >-
+      a crowdsourced slang dictionary — "encyclopedia" is a loose fit but
+      the closest existing umbrella; flag for a dedicated "dictionary"
+      umbrella if more slug-reference sites are added later
+
+contested: []          # no co-occurrence statistic is possible for a
+                        # single-valued field — see header
+
+demoted: []
+
+do_not_encode_as_broader:
+  - pair: [avengers-endgame, marvel-comics]
+    relation: >-
+      produced-by / part-of a franchise, not is-a — Avengers: Endgame is not
+      a KIND of Marvel Comics, it is a film Marvel produced
+
+crosscutting_qualifiers: []   # no adjectival origin qualifiers identified
+
+missing_umbrellas:
+  - note: >-
+      Countries/locations (united-states, japan, ...), franchises
+      (the-simpsons, star-wars, ...), companies (nintendo, valve, ...) and
+      people (donald-trump) are deliberately NOT given a parent here — see
+      the file header. Revisit only if a real query need for e.g.
+      "all country-of-origin concepts" shows up; until then a forced
+      "country"/"franchise"/"company"/"person" umbrella would be
+      unreviewed guesswork, not curation.

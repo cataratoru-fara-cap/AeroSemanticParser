@@ -1,0 +1,38 @@
+# tag_normalization_exceptions.yaml — do-not-fold list for kg/tag_normalize.py
+# ============================================================================
+# kg/tag_normalize.py::fold() strips a plain "+s"/"+es" plural suffix to
+# merge tag variants (catchphrase/catchphrases, exploitable/exploitables).
+# That rule is wrong for two kinds of tag:
+#
+#   1. A word that ends in "s" but is not a regular plural at all
+#      (coronavirus, news, politics, anonymous, christmas, trans).
+#   2. A proper noun / title that happens to end in "s" — folding it merges
+#      the title with an unrelated common word, or mangles it outright
+#      (Star Wars -> "star war", The Simpsons -> "the simpson", SpongeBob
+#      SquarePants -> "...squarepant", Game of Thrones -> "...throne",
+#      Avengers -> "avenger", United States -> "united state").
+#
+# Seeded 2026-09-17 by scanning the real top-300 tag census
+# (data/kg_census_tags.json) for every tag `fold()` would touch and reading
+# each one — not guessed. Re-scan this list once the census is regenerated
+# at top_k=1000 (kg/census.py FIELDS["tags"].default_top_k); this file only
+# ever grows, since a tag added here later does not retroactively change
+# nodes already merged under an old graph build — it just stops a future
+# build from applying a fold that was reviewed and rejected.
+#
+# Entries are lowercased, matching the form kg/build.py and kg/census.py
+# already normalize tags to before calling fold().
+
+do_not_fold:
+  - politics
+  - anonymous
+  - christmas
+  - news
+  - trans
+  - coronavirus
+  - star wars
+  - the simpsons
+  - spongebob squarepants
+  - avengers
+  - game of thrones
+  - united states

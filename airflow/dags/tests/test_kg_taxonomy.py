@@ -128,6 +128,66 @@ class ConceptEdgeTests(unittest.TestCase):
                        "type": "subTypeOf"}, self.edges)
 
 
+class PrefixParameterTests(unittest.TestCase):
+    """5.0.0: concept_edges()/encodable_edges() gained a prefix= parameter
+    so kg/origin.py can reuse them for a different concept-id namespace.
+    The default must stay byte-identical to pre-5.0.0 behaviour."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tax = tx.load(str(CURATED))
+
+    def test_default_prefix_is_unchanged(self):
+        self.assertEqual(self.tax.concept_edges(), self.tax.concept_edges(prefix="type:"))
+
+    def test_custom_prefix_replaces_the_default(self):
+        edges = self.tax.concept_edges(prefix="origin:")
+        self.assertTrue(edges)
+        for e in edges:
+            self.assertTrue(e["src"].startswith("origin:"))
+            self.assertTrue(e["dst"].startswith("origin:"))
+            self.assertFalse(e["src"].startswith("type:"))
+
+    def test_encodable_edges_default_prefix_is_unchanged(self):
+        census = {"value_counts": {s: 1 for s in self.tax.slugs()}}
+        default = tx.encodable_edges(self.tax, census)
+        explicit = tx.encodable_edges(self.tax, census, prefix="type:")
+        self.assertEqual(default, explicit)
+
+    def test_encodable_edges_custom_prefix(self):
+        census = {"value_counts": {s: 1 for s in self.tax.slugs()}}
+        edges = tx.encodable_edges(self.tax, census, prefix="origin:")
+        self.assertTrue(all(e["src"].startswith("origin:") for e in edges))
+
+
+class ParseFromDictTests(unittest.TestCase):
+    """``_parse`` is the file-I/O-free half of ``load()`` — kg/origin.py
+    reuses it directly for the bucket section of its own curated file."""
+
+    def test_parse_accepts_a_plain_dict(self):
+        doc = {"broader_confirmed": [
+            {"broader": "creator", "narrower": "streamer", "rationale": "x"}]}
+        tax = tx._parse(doc, version="v1", path="<memory>")
+        self.assertEqual(tax.version, "v1")
+        self.assertEqual({e.pair for e in tax.edges}, {("streamer", "creator")})
+
+    def test_parse_still_runs_check_consistency(self):
+        doc = {"broader_confirmed": [
+                  {"broader": "b", "narrower": "n", "rationale": "x"}],
+              "contested": [{"pair": ["b", "n"]}]}
+        with self.assertRaises(tx.TaxonomyError):
+            tx._parse(doc, version="v1", path="<memory>")
+
+    def test_load_and_parse_agree_on_the_real_file(self):
+        via_load = tx.load(str(CURATED))
+        with open(CURATED, "rb") as fh:
+            raw = fh.read()
+        import yaml
+        doc = yaml.safe_load(raw.decode("utf-8"))
+        via_parse = tx._parse(doc, version=via_load.version, path=str(CURATED))
+        self.assertEqual(via_load.edges, via_parse.edges)
+
+
 class ConsistencyGuardTests(unittest.TestCase):
     """The guards that make the shipped bug unrepresentable."""
 

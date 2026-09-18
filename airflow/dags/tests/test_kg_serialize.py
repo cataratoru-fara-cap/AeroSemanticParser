@@ -45,6 +45,9 @@ NODES = [
     {"id": EXT, "kind": "external_ref", "label": None},
     {"id": "region:Japan", "kind": "region_concept", "label": "Japan"},
     {"id": "image:" + IMG, "kind": "image", "width": 600, "height": 400},
+    {"id": "origin:twitter", "kind": "origin_concept", "label": "twitter"},
+    {"id": "origin:social-network", "kind": "origin_concept", "label": "social-network"},
+    {"id": "badge:sensitive", "kind": "badge_concept", "label": "Sensitive"},
 ]
 EDGES = [
     {"src": F1, "type": "hasEntryType", "dst": "type:image-macro"},
@@ -62,6 +65,9 @@ EDGES = [
     {"src": F1, "type": "hasImage", "dst": "image:" + IMG, "occurrences": [
         {"role": "page"},
         {"role": "section", "in_section": "Notes", "alt_text": "doge", "caption": "wow"}]},
+    {"src": F1, "type": "hasOrigin", "dst": "origin:twitter"},
+    {"src": F1, "type": "hasBadge", "dst": "badge:sensitive"},
+    {"src": "origin:twitter", "type": "subTypeOf", "dst": "origin:social-network"},
 ]
 
 
@@ -138,7 +144,8 @@ class RmlValueMappingTests(Built):
         self.assertEqual(rows[F2]["year"], "")
 
     def test_list_properties_get_one_row_per_value(self):
-        self.assertEqual(self.rml("frame_badges.csv"), [{"url": F1, "badge": "Sensitive"}])
+        # badges left out: 5.0.0 moved it to hasBadge/badge_concept, not a
+        # frame literal -- see ConceptFileTests.
         self.assertEqual({r["missing"] for r in self.rml("frame_corpus_missing.csv")},
                          {"region", "tags"})
         self.assertEqual(self.rml("frame_aliases.csv"), [])
@@ -197,9 +204,24 @@ class ProjectionsAgreeTests(Built):
     """The drift regression: every representation, the same edges."""
 
     def test_rml_rows_equal_input_edges_per_type(self):
+        # subTypeOf is one property-graph edge type split across TWO RML
+        # files by id-prefix -- see serialize.py's ORIGIN_SUBTYPE_RML_FILE.
+        # coOccursWith isn't in EDGE_TYPE_TO_RML_FILE at all (5.0.1: no
+        # RDF representation for any pair), so this loop never sees it.
+        # Every other type is a straight 1:1 count.
         for etype, (name, _) in serialize.EDGE_TYPE_TO_RML_FILE.items():
-            expected = sum(1 for e in EDGES if e["type"] == etype)
+            if etype == "subTypeOf":
+                expected = sum(1 for e in EDGES if e["type"] == etype
+                              and not e["src"].startswith("origin:"))
+            else:
+                expected = sum(1 for e in EDGES if e["type"] == etype)
             self.assertEqual(len(self.rml(name)), expected, etype)
+
+        origin_subtype_name = serialize.ORIGIN_SUBTYPE_RML_FILE[0]
+        expected_origin_subtype = sum(
+            1 for e in EDGES if e["type"] == "subTypeOf"
+            and e["src"].startswith("origin:"))
+        self.assertEqual(len(self.rml(origin_subtype_name)), expected_origin_subtype)
 
     def test_property_graph_view_equals_input_edges_per_type(self):
         counts = Counter(r["type"] for r in
@@ -295,8 +317,71 @@ class AtomicityTests(unittest.TestCase):
                              mb["files"][name]["sha256"], name)
 
 
+class ConceptFileTests(Built):
+    """origin_concept/badge_concept RML files, the 3-row scheme.csv, and
+    origin's platform-only subTypeOf edges routing to their own file."""
+
+    def test_origin_and_badge_concepts_get_their_own_rml_files(self):
+        origins = {r["slug"]: r["label"] for r in self.rml("origin_concepts.csv")}
+        # label is rdf.concept_pref_label(slug): "-" -> " ", matching
+        # entry_type's types.csv convention (rdf.py's iter_triples applies
+        # the same transform for origin_concept, unlike badge_concept).
+        self.assertEqual(origins, {"twitter": "twitter", "social-network": "social network"})
+        badges = {r["slug"]: r["label"] for r in self.rml("badge_concepts.csv")}
+        self.assertEqual(badges, {"sensitive": "Sensitive"})
+
+    def test_scheme_csv_has_one_row_per_scheme(self):
+        rows = {r["iri"]: r["label"] for r in self.rml("scheme.csv")}
+        self.assertEqual(set(rows), {rdf.SCHEME_IRI, rdf.ORIGIN_SCHEME_IRI,
+                                     rdf.BADGE_SCHEME_IRI})
+        self.assertEqual(rows[rdf.ORIGIN_SCHEME_IRI], rdf.ORIGIN_SCHEME_LABEL)
+
+    def test_has_origin_and_has_badge_edges(self):
+        self.assertEqual(self.rml("origin_edges.csv"),
+                         [{"url": F1, "origin": "twitter"}])
+        self.assertEqual(self.rml("badge_edges.csv"),
+                         [{"url": F1, "badge": "sensitive"}])
+
+    def test_origin_subtype_routes_to_its_own_file_not_entry_types(self):
+        self.assertEqual(self.rml("origin_subtype_edges.csv"),
+                         [{"narrower": "twitter", "broader": "social-network"}])
+        # subtype_edges.csv keeps only the entry_type pair from EDGES.
+        self.assertEqual(self.rml("subtype_edges.csv"),
+                         [{"narrower": "image-macro", "broader": "meme"}])
+
+
+class CooccursRdfScopeTests(unittest.TestCase):
+    """Isolated (not the shared Built fixture): a coOccursWith edge fails
+    Built's generic "every edge produces some RDF" invariant by design
+    (ProjectionsAgreeTests.test_every_input_edge_and_occurrence_is_in_the_
+    rdf), so it is exercised here on its own instead. 5.0.1: this now
+    applies to EVERY coOccursWith pair, not just tag ones -- entry_type's
+    was removed, so tags are the only source and they never reach RDF."""
+
+    def test_coOccursWith_is_always_property_graph_only(self):
+        nodes = [{"id": "tag:meme", "kind": "tag_concept", "label": "meme"},
+                {"id": "tag:dank-meme", "kind": "tag_concept", "label": "dank meme"}]
+        edges = [{"src": "tag:meme", "type": "coOccursWith", "dst": "tag:dank-meme"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = serialize.write_build(lambda: iter(nodes), lambda: iter(edges),
+                                             tmp, build_id="b", assume_unique=True)
+            # No RML file is ever created for coOccursWith at all now.
+            self.assertFalse(os.path.exists(os.path.join(
+                tmp, serialize.RML_DIR, "entry_type_cooccurs_edges.csv")))
+            view_edges = read_csv(os.path.join(tmp, "kg_view_edges.csv"))
+            self.assertEqual(view_edges, [{"source": "tag:meme", "target": "tag:dank-meme",
+                                          "type": "coOccursWith"}])
+            graph = Path(tmp, "graph.nt").read_text(encoding="utf-8")
+            self.assertNotIn("coOccursWith", graph)
+        # Still counted, even though absent from RML/RDF.
+        self.assertEqual(manifest["counts"]["edges_by_type"]["coOccursWith"], 1)
+
+
 class VocabularyTests(unittest.TestCase):
     def test_rml_table_covers_exactly_the_edge_vocabulary(self):
+        # coOccursWith deliberately excluded (5.0.1): no RDF/RML
+        # representation for any pair -- see EDGE_TYPE_TO_RML_FILE's
+        # module-level assert in serialize.py for the same equality.
         self.assertEqual(set(serialize.EDGE_TYPE_TO_RML_FILE),
                          set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES))
 

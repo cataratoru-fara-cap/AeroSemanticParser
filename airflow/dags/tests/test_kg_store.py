@@ -167,6 +167,38 @@ class MaterializeStubsTests(unittest.TestCase):
         self.assertEqual(
             self.store.nodes.count_documents({"build_id": OTHER_BUILD}), 1)
 
+    def test_dangling_concept_gets_its_real_kind_not_external_ref(self):
+        # 5.0.0: kg/origin.py's synthetic umbrella parents (e.g.
+        # origin:social-network) are referenced ONLY by a subTypeOf edge --
+        # build_chunk never creates them directly, since no raw origin
+        # value ever aliases to one. Before the fix, this fell through to
+        # the generic {"kind": "external_ref"} branch, which made the
+        # concept invisible to kg/rdf.py's NODE_CLASSES lookup (no
+        # skos:Concept, no scheme, no prefLabel -- silently incomplete
+        # RDF for a real, intentional part of the graph).
+        self.store.save_graph(BUILD, [frame_node()],
+                              [edge("origin:twitter", "subTypeOf", "origin:social-network")])
+        self.store.materialize_stubs(BUILD)
+        parent = self.store.nodes.find_one({"node_id": "origin:social-network"})
+        self.assertEqual(parent["kind"], "origin_concept")
+        self.assertEqual(parent["label"], "social-network")
+        child = self.store.nodes.find_one({"node_id": "origin:twitter"})
+        self.assertEqual(child["kind"], "origin_concept")
+
+    def test_every_concept_prefix_gets_its_matching_kind(self):
+        cases = [("type:", "entry_type_concept"), ("tag:", "tag_concept"),
+                 ("region:", "region_concept"), ("origin:", "origin_concept"),
+                 ("badge:", "badge_concept")]
+        for prefix, expected_kind in cases:
+            with self.subTest(prefix=prefix):
+                store = fresh_store()
+                store.save_graph(BUILD, [frame_node()],
+                                 [edge(FRAME, "hasTag", f"{prefix}dangling")])
+                store.materialize_stubs(BUILD)
+                node = store.nodes.find_one({"node_id": f"{prefix}dangling"})
+                self.assertEqual(node["kind"], expected_kind)
+                self.assertEqual(node["label"], "dangling")
+
 
 class PointerTests(unittest.TestCase):
     def setUp(self):
@@ -318,6 +350,7 @@ class CountsAndPruneTests(unittest.TestCase):
         self.assertEqual(counts["edges"], 1)
         self.assertEqual(counts["frames"], 1)
         self.assertEqual(counts["edges_by_type"], {"hasTag": 1})
+
 
     def test_prune_keeps_the_published_build_even_if_old(self):
         self.store.begin_build(BUILD, {})

@@ -55,7 +55,7 @@
 MemeAtlas describes the full parsed record of each Know Your Meme entry —
 its section text, links, references, images, regions and corpus grading —
 on top of IMKG's model of media frames, which it reuses unchanged.""" ;
-    owl:versionInfo "4.0.0" ;
+    owl:versionInfo "5.0.1" ;
     rdfs:seeAlso <https://doi.org/10.1007/978-3-031-33455-9_21> ,
                  <https://github.com/riccardotommasini/imkg> ;
     prov:wasDerivedFrom <https://doi.org/10.5281/zenodo.7457166> .
@@ -72,6 +72,14 @@ mk:Image a owl:Class ;
 mk:EntryTypeScheme a skos:ConceptScheme ;
     rdfs:label "MemeAtlas entry-type taxonomy" ;
     rdfs:comment "The Know Your Meme entry types (IMKG's kymt: classes), also treated as SKOS concepts, with a curated rdfs:subClassOf hierarchy between them." .
+
+mk:OriginScheme a skos:ConceptScheme ;
+    rdfs:label "MemeAtlas origin taxonomy" ;
+    rdfs:comment "Canonicalized values of the entry's infobox Origin field (m4s:from) -- platforms, countries, franchises, companies, games, people. A curated rdfs:subClassOf hierarchy exists only over the subset that is actually a platform (e.g. mk:origin/twitter subClassOf mk:origin/social-network); see kg/origin.py." .
+
+mk:BadgeScheme a skos:ConceptScheme ;
+    rdfs:label "MemeAtlas badge taxonomy" ;
+    rdfs:comment "Content-warning badges Know Your Meme shows on an entry (e.g. Sensitive)." .
 
 # ---------------------------------------------------------------------------
 # Relations between resources
@@ -96,6 +104,18 @@ mk:hasImage a owl:ObjectProperty ;
     rdfs:label "has image" ;
     rdfs:comment "An image shown on the entry's page: its page image or one shown in a section. Each showing may be annotated (mk:imageRole, mk:inSection, mk:altText, mk:caption)." .
 
+mk:hasOrigin a owl:ObjectProperty ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:range mk:OriginScheme ;
+    rdfs:label "has origin" ;
+    rdfs:comment "The canonicalized concept behind m4s:from. NOT platform-only: many origin values are countries, franchises, companies or people, canonicalized (e.g. 'United States' / 'USA' / 'America' -> one concept) the same way a genuine platform's variant spellings are ('Twitter' / 'X / Twitter' / 'twitter.com')." .
+
+mk:badge a owl:ObjectProperty ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:range mk:BadgeScheme ;
+    rdfs:label "badge" ;
+    rdfs:comment "A badge Know Your Meme shows on the entry, e.g. Sensitive. owl:ObjectProperty as of 5.0.0 (was owl:DatatypeProperty in 4.0.0, a literal) -- see MODEL.md's Deliberate differences." .
+
 # ---------------------------------------------------------------------------
 # Media frame attributes IMKG does not model
 # ---------------------------------------------------------------------------
@@ -116,11 +136,6 @@ mk:sectionText a owl:DatatypeProperty ;
     rdfs:domain m4s:MediaFrame ;
     rdfs:label "section text" ;
     rdfs:comment "One section of the entry page that has text, as its heading, a blank line, then its paragraphs. About is m4s:about; Origin and Spread are not yet modelled (they will be m4s:origin / m4s:spread)." .
-
-mk:badge a owl:DatatypeProperty ;
-    rdfs:domain m4s:MediaFrame ;
-    rdfs:label "badge" ;
-    rdfs:comment "A badge Know Your Meme shows on the entry, e.g. Sensitive." .
 
 mk:corpusStatus a owl:DatatypeProperty ;
     rdfs:domain m4s:MediaFrame ;

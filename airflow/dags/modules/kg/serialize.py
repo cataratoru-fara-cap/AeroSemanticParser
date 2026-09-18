@@ -79,27 +79,37 @@ RML_NODE_FILES: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
         ("iri", "id"), ("width", "width"), ("height", "height"))),
 }
 
-# file -> (frame list property, value column)
+# file -> (frame list property, value column). "badges" left 5.0.0: it is
+# now an edge (hasBadge, see EDGE_TYPE_TO_RML_FILE), not a frame literal.
 RML_LIST_FILES: dict[str, tuple[str, str]] = {
-    "frame_badges.csv": ("badges", "badge"),
     "frame_aliases.csv": ("aliases", "alias"),
     "frame_section_texts.csv": ("section_texts", "text"),
     "frame_corpus_missing.csv": ("corpus_missing", "missing"),
 }
 
-# Concept/scheme sources with their own shape.
+# Concept/scheme sources with their own shape. "scheme.csv" holds one row
+# per concept scheme (entry_type, origin, badge) — the mapping that reads
+# it (entry_type_scheme in kg_mapping.yarrrml.yml) is generic over rows,
+# so no per-scheme mapping or file is needed.
 RML_CONCEPT_FILES: dict[str, tuple[str, ...]] = {
     "types.csv": ("slug", "label"),
+    "origin_concepts.csv": ("slug", "label"),
+    "badge_concepts.csv": ("slug", "label"),
     "scheme.csv": ("iri", "label"),
 }
 
 # edge type -> (RML csv name, header). Values: ids are rendered through
-# _rml_id, so type:/tag:/region:/image: prefixes become the slug, literal,
-# or IRI the mapping expects.
+# _rml_id, so type:/tag:/region:/origin:/badge:/image: prefixes become the
+# slug, literal, or IRI the mapping expects. coOccursWith is deliberately
+# NOT here (5.0.1): entry_type's was removed and tags — its only
+# remaining source — have no RDF resource (kg/rdf.py), so it is
+# property-graph-only unconditionally and needs no RML file at all.
 EDGE_TYPE_TO_RML_FILE: dict[str, tuple[str, tuple[str, str]]] = {
     "hasEntryType":  ("entry_type_edges.csv", ("url", "slug")),
     "hasTag":        ("tag_edges.csv",        ("url", "tag")),
     "hasRegion":     ("region_edges.csv",     ("url", "region")),
+    "hasOrigin":     ("origin_edges.csv",     ("url", "origin")),
+    "hasBadge":      ("badge_edges.csv",      ("url", "badge")),
     "partOfSeries":  ("series_edges.csv",     ("url", "parent_url")),
     "relatesToMeme": ("relates_edges.csv",    ("url", "target_url")),
     "citesExternal": ("cites_edges.csv",      ("url", "target_url")),
@@ -121,13 +131,25 @@ OCCURRENCE_RML_FILES: dict[str, tuple[str, tuple[str, ...]]] = {
 # Found by the end-to-end probe; the vocabulary test forbids these names.
 RESERVED_COLUMNS = frozenset({"subject", "predicate", "object", "graph"})
 
+# subTypeOf is ONE property-graph edge type shared by two concept
+# namespaces (kg/taxonomy.py's entry_type hierarchy, kg/origin.py's
+# platform-only hierarchy) with two DIFFERENT RDF subject/object
+# templates (kymt:<slug> vs mk:origin/<slug>). One CSV can't feed both
+# YARRRML mappings correctly, so origin:-prefixed subTypeOf edges are
+# routed to their own file instead of EDGE_TYPE_TO_RML_FILE["subTypeOf"]'s
+# ("subtype_edges.csv", entry_type's).
+ORIGIN_SUBTYPE_RML_FILE: tuple[str, tuple[str, str]] = (
+    "origin_subtype_edges.csv", ("narrower", "broader"))
+
 PG_NODES_HEADER = ("id", "label", "kind", "category", "status")
 PG_EDGES_HEADER = ("source", "target", "type")
 
-assert set(EDGE_TYPE_TO_RML_FILE) == set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES), (
+assert set(EDGE_TYPE_TO_RML_FILE) == (
+    set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES)), (
     "serialize.py's RML file table drifted from the edge vocabulary")
 assert {k for k, _ in RML_NODE_FILES.values()} | {"frame_stub", "entry_type_concept",
-        "tag_concept", "region_concept", "external_ref"} == set(NODE_KINDS), (
+        "tag_concept", "region_concept", "origin_concept", "badge_concept",
+        "external_ref"} == set(NODE_KINDS), (
     "serialize.py's node file table drifted from NODE_KINDS")
 assert set(OCCURRENCE_RML_FILES) == set(OCCURRENCE_EDGE_TYPES), (
     "serialize.py's occurrence file table drifted from OCCURRENCE_EDGE_TYPES")
@@ -137,10 +159,11 @@ def all_rml_files() -> set[str]:
     """Every file under rml_data/ a build writes."""
     return (set(RML_NODE_FILES) | set(RML_LIST_FILES) | set(RML_CONCEPT_FILES)
             | {name for name, _ in EDGE_TYPE_TO_RML_FILE.values()}
-            | {name for name, _ in OCCURRENCE_RML_FILES.values()})
+            | {name for name, _ in OCCURRENCE_RML_FILES.values()}
+            | {ORIGIN_SUBTYPE_RML_FILE[0]})
 
 
-_ID_PREFIXES = ("type:", "tag:", "region:", "image:")
+_ID_PREFIXES = ("type:", "tag:", "region:", "origin:", "badge:", "image:")
 
 
 def _rml_id(value: str) -> str:
@@ -241,12 +264,32 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
             for name, (prop, column) in RML_LIST_FILES.items()}
         types_w = files.open_csv("types.csv", os.path.join(rml, "types.csv"),
                                  RML_CONCEPT_FILES["types.csv"])
+        origins_w = files.open_csv("origin_concepts.csv",
+                                   os.path.join(rml, "origin_concepts.csv"),
+                                   RML_CONCEPT_FILES["origin_concepts.csv"])
+        badges_w = files.open_csv("badge_concepts.csv",
+                                  os.path.join(rml, "badge_concepts.csv"),
+                                  RML_CONCEPT_FILES["badge_concepts.csv"])
         scheme_w = files.open_csv("scheme.csv", os.path.join(rml, "scheme.csv"),
                                   RML_CONCEPT_FILES["scheme.csv"])
-        scheme_w.writerow([rdf.SCHEME_IRI, rdf.SCHEME_LABEL])
-        rows["scheme.csv"] = 1
+        # Written lazily, one row per scheme actually used in THIS build --
+        # matching rdf.py's iter_triples, which only declares a scheme's
+        # ConceptScheme triples on first sight of a node of its kind. A
+        # build with e.g. zero badge_concept nodes must not declare
+        # mk:BadgeScheme either, or morph-kgc (which reads every row
+        # unconditionally) would emit 2 triples rdf.py never does.
+        scheme_written: set[str] = set()
+
+        def ensure_scheme(kind: str) -> None:
+            scheme = rdf.NODE_SCHEMES.get(kind)
+            if scheme and scheme[0] not in scheme_written:
+                scheme_written.add(scheme[0])
+                scheme_w.writerow([scheme[0], scheme[1]])
+                rows["scheme.csv"] += 1
 
         seen_types: set[str] = set()
+        seen_origins: set[str] = set()
+        seen_badges: set[str] = set()
         for node in nodes():
             kind = node.get("kind")
             nodes_by_kind[kind or "(none)"] += 1
@@ -262,11 +305,26 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
                             writer.writerow([url, value])
                             rows[name] += 1
             elif kind == "entry_type_concept":
+                ensure_scheme(kind)
                 slug = _rml_id(node["id"])
                 if slug not in seen_types:
                     seen_types.add(slug)
                     types_w.writerow([slug, rdf.concept_pref_label(slug)])
                     rows["types.csv"] += 1
+            elif kind == "origin_concept":
+                ensure_scheme(kind)
+                slug = _rml_id(node["id"])
+                if slug not in seen_origins:
+                    seen_origins.add(slug)
+                    origins_w.writerow([slug, rdf.concept_pref_label(slug)])
+                    rows["origin_concepts.csv"] += 1
+            elif kind == "badge_concept":
+                ensure_scheme(kind)
+                slug = _rml_id(node["id"])
+                if slug not in seen_badges:
+                    seen_badges.add(slug)
+                    badges_w.writerow([slug, node.get("label") or slug])
+                    rows["badge_concepts.csv"] += 1
         paths.update(files.paths)
 
     # -- pass 2: RML edge and occurrence CSVs ---------------------------------
@@ -274,6 +332,10 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
         writers = {
             etype: files.open_csv(name, os.path.join(rml, name), header)
             for etype, (name, header) in EDGE_TYPE_TO_RML_FILE.items()}
+        origin_subtype_name, origin_subtype_header = ORIGIN_SUBTYPE_RML_FILE
+        origin_subtype_writer = files.open_csv(
+            origin_subtype_name, os.path.join(rml, origin_subtype_name),
+            origin_subtype_header)
         occ_writers = {
             etype: (name, files.open_csv(name, os.path.join(rml, name), header))
             for etype, (name, header) in OCCURRENCE_RML_FILES.items()}
@@ -282,6 +344,11 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
             etype = edge.get("type")
             edges_by_type[etype or "(none)"] += 1
             if etype not in writers or not edge.get("src") or not edge.get("dst"):
+                # coOccursWith always lands here now (5.0.1): not in
+                # EDGE_TYPE_TO_RML_FILE at all (tags are its only source,
+                # and tag_concept has no RDF resource — see kg/rdf.py).
+                # Still counted in edges_by_type above, and still reaches
+                # kg_view_edges.csv in pass 3/4 below (property-graph-only).
                 continue
             row = (_rml_id(edge["src"]), _rml_id(edge["dst"]))
             if not assume_unique:
@@ -289,8 +356,12 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
                 if key in seen_edges:
                     continue            # RDF is a set; so is each RML file
                 seen_edges.add(key)
-            writers[etype].writerow(row)
-            rows[EDGE_TYPE_TO_RML_FILE[etype][0]] += 1
+            if etype == "subTypeOf" and edge["src"].startswith("origin:"):
+                origin_subtype_writer.writerow(row)
+                rows[origin_subtype_name] += 1
+            else:
+                writers[etype].writerow(row)
+                rows[EDGE_TYPE_TO_RML_FILE[etype][0]] += 1
             if etype in occ_writers:
                 name, occ_writer = occ_writers[etype]
                 for occ in edge.get("occurrences") or ():

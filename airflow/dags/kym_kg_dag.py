@@ -63,6 +63,15 @@ Pipeline:
     census              entry_type frequency + co-occurrence for the taxonomy
     load_taxonomy       kg_config/entry_type_taxonomy.yaml, validated against it
     write_concept_edges subTypeOf edges (rdfs:subClassOf) into the same generation
+    census_origin        raw `origin` values (5.0.0) -- for origin's taxonomy only
+    load_origin_taxonomy kg_config/origin_taxonomy.yaml -- canonicalization +
+                         a platform-only subClassOf hierarchy (kg/origin.py)
+    write_origin_concept_edges  origin's subTypeOf edges into the same generation
+    census_tags          plural-folded tag frequency + co-occurrence (5.0.0)
+    write_cooccurs_edges statistical coOccursWith edges (kg/cooccurs.py), tags only
+                         (5.0.1: removed for entry_type -- needless alongside its
+                         curated subTypeOf). Property-graph-only always
+                         (tag_concept has no RDF resource)
     write_exports       kg/serialize.py: one stream -> every file representation
     load_fuseki         graph.nt -> the build's named graph; ontology -> its own
     load_neo4j          nodes/edges -> Neo4j, tagged with build_id
@@ -117,6 +126,8 @@ DEFAULT_ARGS = {
 KG_DATA_DIR = os.getenv("KG_DATA_DIR", "/opt/airflow/data/kg")
 KG_CONFIG_DIR = os.getenv("KG_CONFIG_DIR", "/opt/airflow/dags/kg_config")
 TAXONOMY_PATH = os.path.join(KG_CONFIG_DIR, "entry_type_taxonomy.yaml")
+ORIGIN_TAXONOMY_PATH = os.path.join(KG_CONFIG_DIR, "origin_taxonomy.yaml")
+TAG_DENYLIST_PATH = os.path.join(KG_CONFIG_DIR, "tag_normalization_exceptions.yaml")
 ONTOLOGY_PATH = os.path.join(KG_CONFIG_DIR, "memeatlas.ttl")
 
 # The subgraph kg/metrics.py measures: the shape IMKG publishes numbers for
@@ -227,15 +238,21 @@ def kym_kg_dag():
     # -- Phase 1: what generation of the corpus are we building from? -------
     @task
     def snapshot(params: dict | None = None, run_id: str | None = None) -> dict:
-        from modules.kg import taxonomy
+        import hashlib
+        from modules.kg import origin, taxonomy
 
         p = params or {}
         snap = store.snapshot(ready_only=p.get("ready_only", False),
                               limit=p.get("batch_size", 0))
         tax = taxonomy.load(TAXONOMY_PATH)
+        origin_tax = origin.load(ORIGIN_TAXONOMY_PATH)
+        with open(TAG_DENYLIST_PATH, "rb") as fh:
+            tag_denylist_version = hashlib.sha256(fh.read()).hexdigest()
         stamps = {
             "kg_build_version": kg_build.KG_BUILD_VERSION,
             "taxonomy_version": tax.version,
+            "origin_taxonomy_version": origin_tax.version,
+            "tag_denylist_version": tag_denylist_version,
             "entries_count": snap["entries_count"],
             "parser_versions": snap["parser_versions"],
             "corpus_policy_versions": snap["corpus_policy_versions"],
@@ -331,7 +348,15 @@ def kym_kg_dag():
         if not chunk:
             return {"entries": 0, "nodes_written": 0, "edges_written": 0,
                     "stubs_deferred": 0}
+        import functools
+        from modules.kg import origin, tag_normalize
         snapshot_at = datetime.fromisoformat(proceed["snapshot_at"])
+        # Loaded fresh per chunk (cheap: two small YAML files, no Mongo) —
+        # same pattern as load_taxonomy loading entry_type's YAML fresh
+        # rather than threading it through XCom.
+        origin_tax = origin.load(ORIGIN_TAXONOMY_PATH)
+        origin_resolver = functools.partial(origin.resolve, aliases=origin_tax.aliases)
+        tag_denylist = tag_normalize.load_denylist(TAG_DENYLIST_PATH)
         # iter_entries streams projected docs one at a time; a chunk's nodes
         # and edges (~500 entries -> ~20k small dicts) are buffered so
         # save_graph can bulk_write them in 1000-op batches. Re-running the
@@ -341,7 +366,8 @@ def kym_kg_dag():
         seen = 0
         for entry in store.iter_entries(chunk, snapshot_at):
             seen += 1
-            n, e = kg_build.build_nodes_and_edges(entry)
+            n, e = kg_build.build_nodes_and_edges(
+                entry, origin_resolver=origin_resolver, tag_denylist=tag_denylist)
             nodes.extend(n)
             edges.extend(e)
         written = store.save_graph(proceed["build_id"], nodes, edges)
@@ -377,9 +403,60 @@ def kym_kg_dag():
     def write_concept_edges(proceed: dict, tax: dict) -> dict:
         return store.save_concept_edges(proceed["build_id"], tax["edges"])
 
+    @task
+    def census_origin(proceed: dict) -> dict:
+        """Raw origin values — normalize=None, so curators (and
+        origin.validate's canonical_census) see the actual fragmentation,
+        not a pre-cleaned view. Always empty pair_cooccurrence: origin is
+        one string per frame (kg/census.py's module docstring)."""
+        from modules.kg import census as kg_census
+        snapshot_at = datetime.fromisoformat(proceed["snapshot_at"])
+        return kg_census.run_census(
+            store.iter_field("origin", snapshot_at), "origin")
+
+    @task
+    def load_origin_taxonomy(proceed: dict, origin_census: dict) -> dict:
+        from modules.kg import origin
+        tax = origin.load(ORIGIN_TAXONOMY_PATH)
+        report = origin.validate(tax, origin_census)
+        if report["slugs_missing_from_census"]:
+            log.warning("Origin hierarchy narrower slugs absent from the "
+                       "corpus: %s", report["slugs_missing_from_census"])
+        return {**report, "edges": origin.encodable_edges(tax, origin_census)}
+
+    @task
+    def write_origin_concept_edges(proceed: dict, origin_tax: dict) -> dict:
+        return store.save_concept_edges(proceed["build_id"], origin_tax["edges"])
+
+    @task
+    def census_tags(proceed: dict) -> dict:
+        """Same folded normalize kg/build.py's tag-minting loop uses
+        (kg/tag_normalize.py, same curated denylist), so a coOccursWith
+        edge's endpoints are exactly the tag_concept node ids the graph
+        actually has — not the raw, unfolded strings census.py's own
+        default FIELDS["tags"].normalize (curator-facing) would give."""
+        from modules.kg import census as kg_census, tag_normalize
+        snapshot_at = datetime.fromisoformat(proceed["snapshot_at"])
+        denylist = tag_normalize.load_denylist(TAG_DENYLIST_PATH)
+        def normalize(v: str) -> str:
+            return tag_normalize.fold(v.strip().lower(), denylist)
+        return kg_census.run_census(
+            store.iter_field("tags", snapshot_at), "tags", normalize=normalize)
+
+    @task
+    def write_cooccurs_edges(proceed: dict, tags_census: dict) -> dict:
+        """Tags only (5.0.1) — entry_type's coOccursWith was removed:
+        needless alongside its curated subTypeOf hierarchy. Tags keep it;
+        they have no curated alternative. Property-graph-only either way
+        (tag_concept has no RDF resource) — see kg/rdf.py."""
+        from modules.kg import cooccurs
+        edges = cooccurs.edges_from_census(tags_census, "tag:")
+        return store.save_concept_edges(proceed["build_id"], edges)
+
     # -- Phase 4: every file representation, from the same stream ------------
     @task(execution_timeout=timedelta(minutes=30))
     def write_exports(snap: dict, proceed: dict, stubs: dict, concepts: dict,
+                      origin_concepts: dict, cooccurs_written: dict,
                       params: dict | None = None) -> dict:
         from modules.kg import serialize
         p = params or {}
@@ -416,7 +493,8 @@ def kym_kg_dag():
                 "ontology_graph": loaders.ONTOLOGY_GRAPH}
 
     @task(execution_timeout=timedelta(minutes=45))
-    def load_neo4j(proceed: dict, stubs: dict, concepts: dict) -> dict:
+    def load_neo4j(proceed: dict, stubs: dict, concepts: dict,
+                   origin_concepts: dict, cooccurs_written: dict) -> dict:
         if not _neo4j_enabled():
             raise AirflowSkipException("NEO4J_PASSWORD unset — Neo4j follower disabled")
         bid = proceed["build_id"]
@@ -456,8 +534,22 @@ def kym_kg_dag():
             problems.append(f"edges: mongo={counts['edges']} manifest={mc['edges']}")
         files = manifest["files"]
         for etype, (name, _) in serialize.EDGE_TYPE_TO_RML_FILE.items():
-            mongo_n = counts["edges_by_type"].get(etype, 0)
-            rml_n = files.get(name, {}).get("rows", 0)
+            if etype == "subTypeOf":
+                # Also one property-graph edge type, two id namespaces
+                # (type:/origin:) — but unlike coOccursWith, BOTH reach RDF,
+                # just through two different files with two different
+                # subject/object templates (kymt:<slug> vs
+                # mk:origin/<slug>) — see serialize.py's
+                # ORIGIN_SUBTYPE_RML_FILE. The row count to compare against
+                # Mongo's total is the sum of both files, not just
+                # subtype_edges.csv's entry_type share.
+                mongo_n = counts["edges_by_type"].get(etype, 0)
+                origin_subtype_name = serialize.ORIGIN_SUBTYPE_RML_FILE[0]
+                rml_n = (files.get(name, {}).get("rows", 0)
+                        + files.get(origin_subtype_name, {}).get("rows", 0))
+            else:
+                mongo_n = counts["edges_by_type"].get(etype, 0)
+                rml_n = files.get(name, {}).get("rows", 0)
             if mongo_n != rml_n:
                 problems.append(f"{etype}: mongo={mongo_n} rml_rows={rml_n}")
         if files["frames.csv"]["rows"] != counts["frames"]:
@@ -563,7 +655,17 @@ def kym_kg_dag():
         bid = published["build_id"]
         nodes = {n["id"]: n for n in store.iter_nodes(
             bid, kinds=METRICS_NODE_KINDS, fields=METRICS_NODE_FIELDS)}
-        edges = list(store.iter_edges(bid, types=METRICS_EDGE_TYPES, occurrences=False))
+        # subTypeOf is ONE property-graph edge type shared by entry_type's
+        # curated hierarchy (in the core) and origin's (5.0.0, NOT part of
+        # the IMKG-comparable core — origin_concept isn't in
+        # METRICS_NODE_KINDS). types=METRICS_EDGE_TYPES can't tell the two
+        # apart by type name alone, so origin:-prefixed subTypeOf edges are
+        # dropped here — otherwise they'd show up as dangling (their
+        # origin_concept endpoints were never loaded into `nodes`) and
+        # inflate edge/degree counts the core is supposed to stay stable
+        # against.
+        edges = [e for e in store.iter_edges(bid, types=METRICS_EDGE_TYPES, occurrences=False)
+                if not (e["type"] == "subTypeOf" and e["src"].startswith("origin:"))]
         m = metrics.compute_metrics(nodes, edges)
         del nodes, edges
         out = os.path.join(_build_dir(bid), "metrics.json")
@@ -581,7 +683,9 @@ def kym_kg_dag():
                   manifest: dict | None = None, fuseki: dict | None = None,
                   neo4j: dict | None = None, verified: dict | None = None,
                   published: dict | None = None,
-                  metrics: dict | None = None) -> dict:
+                  metrics: dict | None = None,
+                  origin_tax: dict | None = None,
+                  cooccurs_written: dict | None = None) -> dict:
         if not snap["stale"]:
             summary = {"skipped": True, "reason": snap["reason"],
                        "build": {"build_id": None, "stamps": snap["stamps"]}}
@@ -623,6 +727,11 @@ def kym_kg_dag():
             "taxonomy": {k: (tax or {}).get(k) for k in (
                 "taxonomy_version", "broader_edges", "edges_encoded",
                 "slugs_missing_from_census", "withheld_pairs", "buckets")},
+            "origin_taxonomy": {k: (origin_tax or {}).get(k) for k in (
+                "taxonomy_version", "aliases_declared", "edges_declared",
+                "edges_encoded", "slugs_missing_from_census", "buckets")},
+            "cooccurs": {"edges_written":
+                        (cooccurs_written or {}).get("concept_edges_written")},
             "stores": {
                 "fuseki": ({"triples": fuseki.get("triples"), "graph": fuseki.get("graph")}
                            if fuseki else None),
@@ -659,15 +768,22 @@ def kym_kg_dag():
     cen = census(proceed)
     tax = load_taxonomy(proceed, cen)
     concepts = write_concept_edges(proceed, tax)
-    manifest = write_exports(snap, proceed, stubs, concepts)
+    origin_cen = census_origin(proceed)
+    origin_tax = load_origin_taxonomy(proceed, origin_cen)
+    origin_concepts = write_origin_concept_edges(proceed, origin_tax)
+    tags_cen = census_tags(proceed)
+    cooccurs_written = write_cooccurs_edges(proceed, tags_cen)
+    manifest = write_exports(snap, proceed, stubs, concepts, origin_concepts,
+                             cooccurs_written)
     fus = load_fuseki(proceed, manifest)
-    neo = load_neo4j(proceed, stubs, concepts)
+    neo = load_neo4j(proceed, stubs, concepts, origin_concepts, cooccurs_written)
     verified = verify(proceed, manifest, fus, neo)
     published = publish(proceed, manifest, verified)
     pruned = prune(published, verified)
     measured = compute_metrics(published, pruned)
     summary = summarize(snap, built, stubs, tax, manifest, fus, neo, verified,
-                        published, measured)
+                        published, measured, origin_tax=origin_tax,
+                        cooccurs_written=cooccurs_written)
     record_summary(summary)
 
 

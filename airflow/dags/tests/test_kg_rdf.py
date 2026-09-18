@@ -87,11 +87,13 @@ class ImkgFrameTests(unittest.TestCase):
         self.assertTrue(any(f"<{M4S}about>" in t for t in got))
 
     def test_list_properties_emit_one_triple_per_value(self):
+        # badges left out: 5.0.0 moved it to an edge (hasBadge -> a
+        # badge_concept resource), not a frame literal — see
+        # ConceptSchemeTests below.
         got = triples([{"id": FRAME, "kind": "frame",
-                        "badges": ["Sensitive", "NSFW"], "aliases": ["Shibe"],
+                        "aliases": ["Shibe", "Such Wow"],
                         "corpus_missing": ["region"]}], [])
-        self.assertEqual(sum(f"<{MK}badge>" in t for t in got), 2)
-        self.assertEqual(sum("altLabel" in t for t in got), 1)
+        self.assertEqual(sum("altLabel" in t for t in got), 2)
         self.assertEqual(sum(f"<{MK}corpusMissing>" in t for t in got), 1)
 
     def test_unknown_category_gets_no_category_class(self):
@@ -172,6 +174,50 @@ class FrameContentTests(unittest.TestCase):
     def test_region_concept_gets_no_triples(self):
         self.assertEqual(triples([{"id": "region:Japan", "kind": "region_concept",
                                    "label": "Japan"}], []), [])
+
+
+class ConceptSchemeTests(unittest.TestCase):
+    """5.0.0 generalized ONE hardcoded scheme (entry_type's) to a table of
+    three (NODE_SCHEMES); this pins that each is declared once, on first
+    sight of its kind, and that the three don't bleed into each other."""
+
+    def test_origin_concept_gets_skos_concept_and_its_own_scheme(self):
+        got = set(triples([{"id": "origin:twitter", "kind": "origin_concept",
+                            "label": "twitter"}], []))
+        self.assertEqual(got, {
+            f"<{MK}origin/twitter> <{RDF_TYPE}> <{rdf.SKOS}Concept> .",
+            f"<{rdf.ORIGIN_SCHEME_IRI}> <{RDF_TYPE}> <{rdf.SCHEME_CLASS}> .",
+            f'<{rdf.ORIGIN_SCHEME_IRI}> <{rdf.RDFS}label> "{rdf.ORIGIN_SCHEME_LABEL}" .',
+            f"<{MK}origin/twitter> <{rdf.SKOS}inScheme> <{rdf.ORIGIN_SCHEME_IRI}> .",
+            f'<{MK}origin/twitter> <{rdf.SKOS}prefLabel> "twitter" .'})
+
+    def test_origin_concept_gets_no_rdfs_class(self):
+        # Unlike entry_type_concept: hasOrigin is a plain object property,
+        # not rdf:type class-membership.
+        got = " ".join(triples([{"id": "origin:twitter", "kind": "origin_concept",
+                                 "label": "twitter"}], []))
+        self.assertNotIn(f"<{rdf.RDFS}Class>", got)
+
+    def test_badge_concept_gets_its_own_scheme(self):
+        got = set(triples([{"id": "badge:sensitive", "kind": "badge_concept",
+                            "label": "Sensitive"}], []))
+        self.assertIn(f"<{rdf.BADGE_SCHEME_IRI}> <{RDF_TYPE}> <{rdf.SCHEME_CLASS}> .", got)
+        self.assertIn(f"<{MK}badge/sensitive> <{rdf.SKOS}inScheme> "
+                      f"<{rdf.BADGE_SCHEME_IRI}> .", got)
+
+    def test_each_scheme_is_declared_once_across_many_nodes_of_its_kind(self):
+        got = triples([{"id": "origin:twitter", "kind": "origin_concept", "label": "twitter"},
+                       {"id": "origin:4chan", "kind": "origin_concept", "label": "4chan"}], [])
+        self.assertEqual(sum(f"<{rdf.ORIGIN_SCHEME_IRI}> <{RDF_TYPE}>" in t
+                             for t in got), 1)
+
+    def test_three_schemes_coexist_without_cross_contamination(self):
+        got = " ".join(triples([
+            {"id": "type:creator", "kind": "entry_type_concept", "label": "creator"},
+            {"id": "origin:twitter", "kind": "origin_concept", "label": "twitter"},
+            {"id": "badge:sensitive", "kind": "badge_concept", "label": "Sensitive"}], []))
+        for iri in (rdf.SCHEME_IRI, rdf.ORIGIN_SCHEME_IRI, rdf.BADGE_SCHEME_IRI):
+            self.assertIn(f"<{iri}>", got)
 
 
 class OccurrenceAnnotationTests(unittest.TestCase):
@@ -269,6 +315,37 @@ class EdgeTripleTests(unittest.TestCase):
         self.assertEqual(got, [f"<{rdf.TYPES_BASE}model> "
                                f"<{rdf.PREFIXES['rdfs']}subClassOf> "
                                f"<{rdf.TYPES_BASE}influencer> ."])
+
+    def test_origin_hierarchy_points_at_the_origin_namespace_not_types(self):
+        # Confirms subTypeOf's RDF projection dispatches on the id prefix,
+        # not the edge type name -- origin: and type: share one edge type.
+        got = triples([], [{"src": "origin:twitter", "type": "subTypeOf",
+                            "dst": "origin:social-network"}])
+        self.assertEqual(got, [f"<{MK}origin/twitter> "
+                               f"<{rdf.PREFIXES['rdfs']}subClassOf> "
+                               f"<{MK}origin/social-network> ."])
+
+    def test_has_origin_points_at_the_origin_concept(self):
+        got = triples([], [{"src": FRAME, "type": "hasOrigin",
+                            "dst": "origin:twitter"}])
+        self.assertEqual(got, [f"<{FRAME}> <{MK}hasOrigin> <{MK}origin/twitter> ."])
+
+    def test_has_badge_points_at_the_badge_concept(self):
+        got = triples([], [{"src": FRAME, "type": "hasBadge",
+                            "dst": "badge:sensitive"}])
+        self.assertEqual(got, [f"<{FRAME}> <{MK}badge> <{MK}badge/sensitive> ."])
+
+    def test_cooccurs_with_never_reaches_rdf(self):
+        # 5.0.1: entry_type's coOccursWith was removed (needless alongside
+        # its curated subTypeOf), so tags are the only source left, and
+        # tag_concept has no RDF resource -- unconditionally empty now,
+        # not just for tag: pairs. Not in EDGE_PREDICATES at all.
+        self.assertNotIn("coOccursWith", rdf.EDGE_PREDICATES)
+        for src, dst in (("type:streamer", "type:creator"),
+                         ("tag:meme", "tag:dank-meme"),
+                         ("type:streamer", "tag:dank-meme")):
+            got = triples([], [{"src": src, "type": "coOccursWith", "dst": dst}])
+            self.assertEqual(got, [], (src, dst))
 
     def test_unknown_edge_type_is_skipped(self):
         self.assertEqual(triples([], [{"src": FRAME, "type": "nope",

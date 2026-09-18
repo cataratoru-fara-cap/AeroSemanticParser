@@ -94,6 +94,16 @@ ENTRY_PROJECTION = {
     "schema_version": 0,
 }
 
+# id prefix -> node kind, for materialize_stubs: a concept referenced only
+# by a concept-to-concept edge (kg/taxonomy.py's subTypeOf, kg/origin.py's,
+# kg/cooccurs.py's coOccursWith) still needs its correct kind, not the
+# generic external_ref every other dangling target gets.
+_CONCEPT_KIND_FOR_PREFIX = {
+    "type:": "entry_type_concept", "tag:": "tag_concept",
+    "region:": "region_concept", "origin:": "origin_concept",
+    "badge:": "badge_concept",
+}
+
 
 class KGStore(MongoStoreBase):
     """Owner of ``kg_nodes``, ``kg_edges`` and ``kg_builds``; reads ``entries``."""
@@ -231,8 +241,10 @@ class KGStore(MongoStoreBase):
             return True, "force_rebuild"
         if published is None:
             return True, "no published build"
-        for key in ("kg_build_version", "taxonomy_version", "entries_count",
-                    "parser_versions", "corpus_policy_versions", "max_parsed_at"):
+        for key in ("kg_build_version", "taxonomy_version",
+                    "origin_taxonomy_version", "tag_denylist_version",
+                    "entries_count", "parser_versions",
+                    "corpus_policy_versions", "max_parsed_at"):
             if stamps.get(key) != published.get(key):
                 return True, (f"{key} changed: "
                               f"{published.get(key)!r} -> {stamps.get(key)!r}")
@@ -352,9 +364,20 @@ class KGStore(MongoStoreBase):
         missing = sorted(wanted - have)
         ops = []
         for node_id in missing:
-            if (node_id.startswith(("type:", "tag:", "region:", "image:"))
-                    or not _is_kym_url(node_id)):
-                # Not a KYM page: a concept or an outbound citation target.
+            concept_kind = next((k for p, k in _CONCEPT_KIND_FOR_PREFIX.items()
+                                 if node_id.startswith(p)), None)
+            if concept_kind is not None:
+                # A concept referenced only by a concept-to-concept edge —
+                # e.g. kg/origin.py's synthetic umbrella parents
+                # ("social-network", "imageboard", ...), which no raw
+                # origin value ever aliases to directly, so build_chunk
+                # never creates them. Typed correctly (not external_ref)
+                # so it still gets its skos:Concept/scheme/prefLabel
+                # triples in kg/rdf.py.
+                node = {"id": node_id, "kind": concept_kind,
+                       "label": node_id.split(":", 1)[1]}
+            elif node_id.startswith("image:") or not _is_kym_url(node_id):
+                # Not a KYM page: an outbound citation target.
                 node = {"id": node_id, "kind": "external_ref", "label": None}
             else:
                 node = guess_stub_node(node_id)
