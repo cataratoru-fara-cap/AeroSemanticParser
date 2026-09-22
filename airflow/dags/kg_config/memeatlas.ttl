@@ -63,7 +63,7 @@
 MemeAtlas describes the full parsed record of each Know Your Meme entry —
 its section text, links, references, images, regions and corpus grading —
 on top of IMKG's model of media frames, which it reuses unchanged.""" ;
-    owl:versionInfo "6.0.0" ;
+    owl:versionInfo "6.1.0" ;
     rdfs:seeAlso <https://doi.org/10.1007/978-3-031-33455-9_21> ,
                  <https://github.com/riccardotommasini/imkg> ;
     prov:wasDerivedFrom <https://doi.org/10.5281/zenodo.7457166> .
@@ -353,6 +353,50 @@ mk:extractionVersion a owl:DatatypeProperty ;
     rdfs:domain mk:Event ;
     rdfs:label "extraction version" ;
     rdfs:comment "Version of the extraction contract (prompt, schema and validation rules) this event was produced under." .
+
+# ---------------------------------------------------------------------------
+# Wikidata entities (6.1.0) — recognised in the title, tags and About section
+# by NLP and linked to Wikidata from a local copy of its dump.
+#
+# Like events, DERIVED rather than parsed: a linker's reading of the page.
+# IMKG's own predicates carry the About and tag links, verbatim — they are
+# IMKG's, so they are not redeclared here:
+#
+#   <frame> m4s:fromAbout <http://www.wikidata.org/entity/Q…> .
+#   <frame> m4s:fromTags  <http://www.wikidata.org/entity/Q…> .
+#
+# IMKG never linked titles; mk:fromTitle is the same idea for the title. The
+# object is Wikidata's canonical entity IRI (IMKG used the /wiki/ page URL;
+# see MODEL.md, Deliberate differences), labelled with rdfs:label and given
+# no class. Each MENTION annotates the quoted edge, like a link's anchor
+# text does:
+#
+#   << <frame> m4s:fromAbout wd:Q39315 >> mk:mentionText "Shiba Inus" ;
+#                                         mk:linkScore 0.83 ;
+#                                         mk:linkMethod "ner" .
+# ---------------------------------------------------------------------------
+
+mk:fromTitle a owl:ObjectProperty ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:label "from title" ;
+    rdfs:comment "A Wikidata item named by the entry's title — the title's counterpart of IMKG's m4s:fromAbout and m4s:fromTags, which IMKG did not have. When Wikidata records this very page as the item's Know Your Meme slug (P13484), the link is certain (mk:linkMethod \"kym_id\", mk:linkScore 1.0): the item IS the meme." .
+
+mk:mentionText a rdf:Property ;
+    rdfs:label "mention text" ;
+    rdfs:comment "The words on the page a linked Wikidata item was recognised in, verbatim (annotates a quoted m4s:fromAbout, m4s:fromTags or mk:fromTitle triple)." .
+
+mk:linkScore a rdf:Property ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "link score" ;
+    rdfs:comment "How strongly the linker preferred this item for that mention, 0 to 1: Wikipedia popularity, overlap between the item's description and the entry's text, a label (not alias) match, agreement with the NER type, and whether the item is itself on Know Your Meme. Not a probability. Links under the linker's threshold are not emitted; which of the rest matter to the meme is a later curation step." .
+
+mk:linkMethod a rdf:Property ;
+    rdfs:label "link method" ;
+    rdfs:comment "How the mention was found: kym_id (the item's Know Your Meme slug is this page), title (the whole title), tag (a whole tag), ner (a named entity), propn (a run of proper nouns), noun_chunk (a noun phrase or its head — often a common-noun concept)." .
+
+mk:nerLabel a rdf:Property ;
+    rdfs:label "NER label" ;
+    rdfs:comment "The named-entity type the NLP model gave the mention (PERSON, ORG, GPE, ...), when it gave one. A hint the linker used, never a filter: the model is often wrong about internet names." .
 
 # ---------------------------------------------------------------------------
 # Build provenance (describes the published graph, not the corpus)

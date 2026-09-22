@@ -43,7 +43,7 @@ During the initial backfill every kym_events run moves the KG's event
 stamps, so kym_kg rebuilds the whole graph afterwards. That is correct but
 expensive — and kym_kg publishes by default — so the backfill should run
 with ``trigger_kg=false`` and build once at the end. Outside a backfill
-(parse -> events -> kg on new pages) the default stays on.
+(parse -> entities -> events -> kg on new pages) the default stays on.
 
 Pipeline:
     select_units     entries -> pending (frame, section) units
@@ -108,7 +108,7 @@ def _slug(run_id: str) -> str:
 
 @dag(
     dag_id="kym_events",
-    schedule=None,          # run after parse; triggered by kym_parse
+    schedule=None,          # triggered by kym_entities (parse -> entities -> events)
     catchup=False,
     max_active_runs=1,
     default_args=DEFAULT_ARGS,

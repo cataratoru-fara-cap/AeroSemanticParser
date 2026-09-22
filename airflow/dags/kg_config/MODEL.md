@@ -59,6 +59,8 @@ Neo4j and Mongo) to its RDF term.
 | edge `hasEntryType` | `rdf:type kymt:<slug>` | `entry_type` |
 | edge `hasTag` | `m4s:tag "<tag>"` | `tags` |
 | edge `partOfSeries` | `skos:broader` plus the inverse `skos:narrower` | `series_parent` |
+| edge `fromAbout` (6.1.0) | `m4s:fromAbout` → a Wikidata item | entities recognised in the About section (see [Entities](#entities-linked-to-wikidata-as-imkg-did-61)) |
+| edge `fromTags` (6.1.0) | `m4s:fromTags` → a Wikidata item | `tags`, each looked up whole |
 
 ### MemeAtlas extensions
 
@@ -97,6 +99,8 @@ Neo4j and Mongo) to its RDF term.
 | edge `eventCitation` (6.0.0) | `mk:eventCitation` | ⊑ `rdfs:seeAlso` | the reference an `[n]` marker in the event's sentences cites |
 | edge `eventEmbed` (6.0.0) | `mk:eventEmbed` | ⊑ `rdfs:seeAlso` | an embedded post shown right after a paragraph narrating the event (parser 1.6.0 embeds) |
 | edge `eventImage` (6.0.0) | `mk:eventImage` | ⊑ `schema:image` | a photo shown right after a paragraph narrating the event |
+| node `wikidata_entity` (6.1.0) | `<http://www.wikidata.org/entity/Q…>` with its `rdfs:label`; **no class** | | the `entities` collection (see [Entities](#entities-linked-to-wikidata-as-imkg-did-61)) |
+| edge `fromTitle` (6.1.0) | `mk:fromTitle` → a Wikidata item | | entities recognised in the title, or the item whose KYM slug (P13484) is this page |
 
 
 ### `category` (5.0.0): no further work
@@ -147,6 +151,10 @@ annotation on the quoted edge:
 | `role` | `mk:imageRole` (`page` / `section`) | `roles` | `hasImage` | `og_image` / `sections[].images[]` |
 | `alt_text` | `mk:altText` | `alt_texts` | `hasImage` | `sections[].images[].alt` |
 | `caption` | `mk:caption` ⊑ `schema:caption` | `captions` | `hasImage` | `sections[].images[].caption` |
+| `mention_text` (6.1.0) | `mk:mentionText` | `mention_texts` | `fromTitle`, `fromTags`, `fromAbout` | the words on the page the item was recognised in |
+| `link_score` (6.1.0) | `mk:linkScore` (`xsd:decimal`) | `link_scores` (`-1.0` = absent) | `fromTitle`, `fromTags`, `fromAbout` | the linker's score, 0–1 |
+| `link_method` (6.1.0) | `mk:linkMethod` | `link_methods` | `fromTitle`, `fromTags`, `fromAbout` | how the span was found (`kym_id`, `title`, `tag`, `ner`, `propn`, `noun_chunk`) |
+| `ner_label` (6.1.0) | `mk:nerLabel` | `ner_labels` | `fromTitle`, `fromTags`, `fromAbout` | the spaCy entity type, when there was one |
 
 - Neo4j lists are aligned by position: entry *i* of every list is the same
   mention. A missing value is `""`, or `-1` for `citation_indexes`, because a
@@ -266,6 +274,14 @@ inside morph-kgc). It is minted once, in `kg/events.py`, and stored.
    beside them under `mk:`, rather than re-typing IMKG's terms into object
    properties. The `mk:` namespace grows by 20 terms (see gap 01).
 
+7. **Wikidata items are their canonical entity IRIs** (6.1.0),
+   `http://www.wikidata.org/entity/Q42`. IMKG emitted the HTML page URL,
+   `https://www.wikidata.org/wiki/Q42` (kym.media.frames.textual.enrichment
+   in its repository), which names a document *about* the item and which
+   no Wikidata dump or query uses. With the entity IRI, a federated
+   `SERVICE <https://query.wikidata.org/sparql>` joins with no rewriting.
+   The predicates, `m4s:fromAbout` and `m4s:fromTags`, are IMKG's own.
+
 ## Events: drawn from EventKG, not copied from it
 
 EventKG (built on SEM, the Simple Event Model) is where the shape came from.
@@ -289,7 +305,71 @@ The pipeline is its own stage, `kym_events`, between parse and kg:
 `data/kg/events/` → the `events` collection (`modules/event_store.py`, one
 doc per frame and section) → `kg/build.py` as data.
 
+## Entities: linked to Wikidata, as IMKG did (6.1.0)
+
+IMKG enriched each KYM media frame with the Wikidata entities its text
+names: it sent the About section and the tags to **DBpedia Spotlight**
+(confidence 0.5), mapped the DBpedia resources it returned to Wikidata
+QIDs, and emitted `m4s:fromAbout` / `m4s:fromTags` from the frame to each
+(`kym/tags/spotlight.py`, `kym/KYM.Enrichment.ipynb`,
+`kym/mappings/kym.media.frames.textual.enrichment.yaml` in its
+repository). It joined the frame *itself* to Wikidata on KYM's own ID, and
+pulled Wikidata statements between the linked items from downloaded dumps
+through KGTK.
+
+| IMKG | MemeAtlas 6.1.0 |
+|---|---|
+| About and tags annotated | **Taken**, with IMKG's predicates verbatim — plus the **title** (`mk:fromTitle`), which IMKG did not link |
+| DBpedia Spotlight, a remote API, then DBpedia → Wikidata | **Replaced** by local NLP (spaCy: NER, noun chunks, proper-noun runs) and a lexicon built from the **full Wikidata dump** (`kg/wikidata.py`): the same answer every time for the same dump, no quota, no second knowledge base in between |
+| Object `https://www.wikidata.org/wiki/Q…` | **Changed** to the entity IRI — Deliberate difference 7 |
+| Frame ↔ item on KYM's numeric ID (P6760) | **Changed** to the KYM slug (P13484): the numeric ID is not on the page and the parser does not extract it; the slug is the URL's last segment. The item found this way is the title's entity at score 1.0 (`mk:linkMethod "kym_id"`), and wins every other span that could name it |
+| Confidence threshold, not recorded | **Recorded** per mention (`mk:linkScore`, `mk:linkMethod`, `mk:nerLabel`, RDF-star on the quoted edge) |
+| 1-hop Wikidata statements between linked items (KGTK) | **Not in 6.1.0** — see Not yet modelled |
+| Google Vision labels → `m4s:fromImage` | **Not in 6.1.0** |
+
+How a link is made (`kg/entities.py` has the reasoning at length):
+
+- **Recognition.** Candidate spans are spaCy's named entities (never a
+  date, time or amount), its noun chunks and every suffix of one, runs of
+  proper nouns, the whole title, and each whole tag.
+- **Lookup.** The lexicon holds every item with an English or `mul` label
+  and at least one Wikipedia article — or a KYM identifier, whatever its
+  sitelinks — minus Wikimedia bookkeeping (disambiguation pages,
+  categories, lists, scholarly articles). Longest span first; a span that
+  links claims its characters.
+- **Ranking and acceptance.** Candidates are ranked on popularity, context
+  overlap with the frame's text, label match, NER-type agreement (a hint,
+  never a veto) and whether the item is itself on KYM; the winner's score
+  adds its lead over the runner-up. Under `MIN_LINK_SCORE` (0.50,
+  provisional) nothing is linked.
+- **Grounded.** Every mention stores the exact characters it came from;
+  `audit()` refuses a record that does not match its page.
+
+A Wikidata item is a node other frames share, like an image — but its IRI
+is Wikidata's, so MemeAtlas mints nothing for it and asserts no class on
+it: it gets its `rdfs:label` (the one it was linked under) and nothing
+else. The node exists in Mongo and Neo4j with its description too.
+
+These links are **derived** — a linker's reading, like events — and
+recall-oriented: a common noun links as readily as a name ("hair",
+"mug"). Which links matter to the meme is the next task, gap 09.
+
+The pipeline is its own stage, `kym_entities`, between parse and events:
+`kg/entities.py` over the lexicon at `WIKIDATA_LEXICON` → the `entities`
+collection (`modules/entity_store.py`, one doc per frame, with every
+link's features for curation) → `kg/build.py` as data.
+
 ## Not yet modelled
+
+- **Curation of the entity layer** (gap 09). Every recognised entity is
+  linked; incidental common nouns dominate the About links.
+- **Wikidata statements between linked items.** IMKG added the Wikidata
+  edges between the items in its graph (KGTK over dumps). The lexicon has
+  P31/P279 already; the rest would need the claims table from the same
+  dump, and a decision about which properties are worth importing.
+- **Entities from Origin/Spread, and event actors as items.** Only title,
+  tags and About are linked; `mk:eventActor` stays a literal.
+- **Image entities** (IMKG's `m4s:fromImage`, from Google Vision).
 
 - **Cross-frame event identity.** Two entries narrating the same real
   happening get two `mk:Event` IRIs. See the EventKG table above for why,
@@ -341,3 +421,7 @@ doc per frame and section) → `kg/build.py` as data.
 | `sem:` is aligned to in the ontology and never emitted | `tests/test_kg_vocabulary.py` |
 | An event's `source_text` is really in the section the model saw; its date matches its precision | `tests/test_kg_events.py` |
 | A re-extraction replaces a section's events, never merges them; a failing section is not retried until something changes | `tests/test_event_store.py` |
+| The lexicon keeps exactly what the filter says (no disambiguation pages; KYM-slug items kept without sitelinks; `mul` labels count) and frames join on P13484 | `tests/test_kg_wikidata.py` |
+| Every entity mention is the page's own words at its offsets; the KYM-slug item wins; context separates senses; an NER label never vetoes | `tests/test_kg_entities.py` |
+| A Wikidata item is an object only — never typed, never a predicate — and `fromAbout`/`fromTags` are IMKG's own | `tests/test_kg_vocabulary.py` |
+| A re-link replaces a frame's mentions; every staleness stamp re-queues on its own | `tests/test_entity_store.py` |

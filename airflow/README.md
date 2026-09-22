@@ -5,14 +5,14 @@ structured corpus, orchestrated by Airflow, with a Streamlit dashboard
 over the results.
 
 ```
-kym_discovery ─▶ kym_scrape ─▶ kym_parse ─▶ kym_events ─▶ kym_kg   (each triggers the next)
-   urls           doms          entries      events         kg_nodes / kg_edges / kg_builds
-                                parse_       event_         data/kg/builds/<build_id>/
-                                failures     failures          graph.nt  rml_data/*.csv
-                                             data/kg/events/   kg_view_*.csv  manifest.json
-                                             (LLM, JSONL)            ▲
-                                              kym_kg_validate ───────┘  (weekly: re-derive
-                                                                        the RDF via RML, diff it)
+kym_discovery ─▶ kym_scrape ─▶ kym_parse ─▶ kym_entities ─▶ kym_events ─▶ kym_kg   (each triggers the next)
+   urls           doms          entries      entities         events         kg_nodes / kg_edges / kg_builds
+                                parse_       (NLP + local     event_         data/kg/builds/<build_id>/
+                                failures     Wikidata         failures          graph.nt  rml_data/*.csv
+                                             lexicon)         data/kg/events/   kg_view_*.csv  manifest.json
+                                                              (LLM, JSONL)            ▲
+                                                               kym_kg_validate ───────┘  (weekly: re-derive
+                                                                                         the RDF via RML, diff it)
 
                      run_summaries  ◀── every stage records its run
                             │
@@ -74,7 +74,24 @@ validation land in `parse_failures`, a dead-letter collection carrying the
 same staleness stamps as `entries`, so a deterministic failure is not
 retried until the parser version or the page content actually changes.
 
-**`kym_events`** (triggered by parse) — extracts spatio-temporal events
+**`kym_entities`** (triggered by parse) — recognises the named entities
+(and the common-noun concepts) in every frame's title, tags and About
+section with spaCy, and links each to a **Wikidata** item, as IMKG did with
+DBpedia Spotlight (`m4s:fromAbout`, `m4s:fromTags`, plus `mk:fromTitle`).
+The linking runs against a local lexicon built from the **full Wikidata
+dump**, not an API: `python -m modules.kg.wikidata build` streams the
+~156 GB `latest-all.json.gz` into a SQLite file (`WIKIDATA_LEXICON`,
+default `data/wikidata/lexicon.sqlite`; download and build steps in
+`dags/modules/kg/wikidata.py`). Local and deterministic: the corpus links
+in minutes, and a frame is re-linked only when its text, the linker, the
+lexicon or the spaCy model changes. Every link is grounded to the
+characters it came from and keeps the features it was scored on, so the
+planned curation step — most links today are incidental nouns like
+"hair" or "mug", gap 09 — needs no re-run. With no lexicon the stage links
+nothing and triggers the next one anyway. MODEL.md's "Entities" section
+has what was taken from IMKG and what was changed.
+
+**`kym_events`** (triggered by entities) — extracts spatio-temporal events
 from every Origin and Spread section (36,011 of them), one LLM call per
 section through `modules/openwebui_client.py`, validated against
 `dags/kg_config/event_extraction_schema.json`. **Extractive only**: the
@@ -134,7 +151,7 @@ saying so are warnings, not trivia.
 
 ```
 dags/
-  kym_{discovery,scrape,parse,events,kg}_dag.py   orchestration only — no logic
+  kym_{discovery,scrape,parse,entities,events,kg}_dag.py   orchestration only — no logic
   kym_kg_validate_dag.py                   the RDF diff gate, its own DAG
   modules/
     mongo_base.py        shared client/_id/UTC plumbing for the stores
@@ -142,6 +159,7 @@ dags/
     dom_store.py         owns `doms`
     parse_store.py       owns `entries`, `parse_failures`
     event_store.py       owns `events`, `event_failures`
+    entity_store.py      owns `entities`
     kg_store.py          owns `kg_nodes`, `kg_edges`, `kg_builds` (generational)
     summary_store.py     owns `run_summaries`
     kym_discover.py      pure discovery library + CLI   (no Mongo, no Airflow)
@@ -159,6 +177,8 @@ dags/
       metrics.py           IMKG-comparable graph statistics (pure stdlib)
       semantics.py         LLM definition-embedding analysis of types (CLI)
       events.py            LLM event extraction from Origin/Spread (+ CLI)
+      wikidata.py          the Wikidata dump -> a local entity lexicon (+ CLI)
+      entities.py          NER + linking of title/tags/About to Wikidata (+ CLI)
   kg_config/             curated KG inputs, tracked: the entry-type taxonomy,
                          the YARRRML mapping, the MemeAtlas ontology
                          (memeatlas.ttl), MODEL.md (the IMKG crosswalk),
@@ -221,10 +241,15 @@ extracts dated, placed events with named actors, and each becomes an
 node in the graph that is a model's reading rather than parsed fact, and
 marked as such (`mk:extractionModel`, `mk:sourceText`). MODEL.md's
 "Events: drawn from EventKG, not copied from it" has what was taken from
-EventKG and what deliberately was not.
+EventKG and what deliberately was not. The other derived layer (6.1.0) is
+the Wikidata links from `kym_entities`: the items are Wikidata's own
+resources (`http://www.wikidata.org/entity/Q…`, labelled, never typed),
+and the frame's `m4s:fromAbout` / `m4s:fromTags` / `mk:fromTitle` edges to
+them are a linker's reading — each mention annotated with how sure it was
+(`mk:linkScore`) and how it was found (`mk:linkMethod`).
 
-**`kym_kg`** (triggered by events) — lifts `entries`, and the events
-extracted from them, into a knowledge graph
+**`kym_kg`** (triggered by events) — lifts `entries`, the events
+extracted from them and their Wikidata links, into a knowledge graph
 and publishes it in every representation at once:
 
 - **Neo4j** — the property graph: typed nodes (`Frame`, `TagConcept`, …)

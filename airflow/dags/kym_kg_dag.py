@@ -59,7 +59,8 @@ Pipeline:
     gate                skip the rest if nothing that affects the graph moved
     chunk_entries       split into mapped workloads
     build_chunk         (mapped) stream entries + their extracted events
-                        (6.0.0, kym_events) -> kg/build.py -> kg_store.save_graph
+                        (6.0.0, kym_events) + their Wikidata links (6.1.0,
+                        kym_entities) -> kg/build.py -> kg_store.save_graph
     materialize_stubs   one pass: a stub node for every edge target with no node
     census              entry_type frequency + co-occurrence for the taxonomy
     load_taxonomy       kg_config/entry_type_taxonomy.yaml, validated against it
@@ -210,7 +211,7 @@ def _files_current() -> str | None:
 
 @dag(
     dag_id="kym_kg",
-    schedule=None,  # triggered by kym_parse
+    schedule=None,  # triggered by kym_events (parse -> entities -> events -> kg)
     catchup=False,
     max_active_runs=1,
     default_args=DEFAULT_ARGS,
@@ -264,6 +265,9 @@ def kym_kg_dag():
             # 6.0.0: what the event stage has extracted, frozen at the same
             # instant — a re-extraction moves these and rebuilds the graph.
             **store.extraction_stamps(snap["snapshot_at"]),
+            # 6.1.0: likewise for the entity stage — a re-link (new text, a
+            # new lexicon, a new linker) moves these.
+            **store.linking_stamps(snap["snapshot_at"]),
         }
         stale, reason = store.KGStore.is_stale(
             stamps, store.published_stamps(), force=p.get("force_rebuild", False))
@@ -351,7 +355,8 @@ def kym_kg_dag():
     def build_chunk(chunk: list[str], proceed: dict) -> dict:
         if not chunk:
             return {"entries": 0, "nodes_written": 0, "edges_written": 0,
-                    "stubs_deferred": 0, "frames_with_events": 0}
+                    "stubs_deferred": 0, "frames_with_events": 0,
+                    "frames_with_entities": 0}
         import functools
         from modules.kg import origin, tag_normalize
         snapshot_at = datetime.fromisoformat(proceed["snapshot_at"])
@@ -369,6 +374,9 @@ def kym_kg_dag():
         # streamed entries carry no _id — see kg_store.events_for). Small:
         # a few KB per entry, unlike the entries themselves.
         events_by_url = store.events_for(chunk, snapshot_at)
+        # 6.1.0: and its Wikidata links, the same way — one query, keyed by
+        # url, only the fields build.py uses.
+        entities_by_url = store.entity_links_for(chunk, snapshot_at)
         nodes: list[dict] = []
         edges: list[dict] = []
         seen = 0
@@ -376,12 +384,14 @@ def kym_kg_dag():
             seen += 1
             n, e = kg_build.build_nodes_and_edges(
                 entry, origin_resolver=origin_resolver, tag_denylist=tag_denylist,
-                events=events_by_url.get(entry.get("url"), ()))
+                events=events_by_url.get(entry.get("url"), ()),
+                entities=entities_by_url.get(entry.get("url"), ()))
             nodes.extend(n)
             edges.extend(e)
         written = store.save_graph(proceed["build_id"], nodes, edges)
         written["entries"] = seen
         written["frames_with_events"] = len(events_by_url)
+        written["frames_with_entities"] = len(entities_by_url)
         log.info("Chunk done — %s", written)
         return written
 

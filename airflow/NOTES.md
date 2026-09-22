@@ -19,6 +19,15 @@ whether it was a shopping list or a decision.
   copied from it"). Aligning KYM events against EventKG's own events
   (Wikidata-anchored) is still open, and would be the natural first
   consumer of cross-frame event identity.
+- **Wikidata / DBpedia Spotlight / spaCy** — now in use for the 6.1.0
+  entity layer. IMKG linked About text and tags with the DBpedia Spotlight
+  API and mapped the results to Wikidata; MemeAtlas does the recognition
+  locally with spaCy (`en_core_web_sm`) and the linking against a lexicon
+  built from the full Wikidata JSON dump (`kg/wikidata.py`), following the
+  suggestion to download all of Wikidata rather than call an API. Still to
+  review for the curation step (gap 09): class-based filtering over
+  P31/P279, corpus salience, embedding relevance, and heavier linkers
+  (REL, ReFinED, BLINK) if the lexicon approach tops out.
 - **Streamlit** — now in use: the analytics dashboard (`dashboard/`).
 - **Railway** — hosting option, not evaluated yet.
 

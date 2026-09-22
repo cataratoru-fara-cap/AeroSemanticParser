@@ -41,6 +41,14 @@ jsonschema>=4.26         # kg/events.py validates model output against the
                          # rule as PyYAML above: transitive via Airflow,
                          # declared because we import it.
 
+# Entity layer (kym_entities, 6.1.0): NER + noun chunks over the title and
+# About, linked to Wikidata through a local lexicon (kg/wikidata.py, stdlib
+# sqlite3 — no extra dependency). The model is a pip package whose version
+# is part of every link's staleness stamp (kg/entities.model_stamp), so it
+# is pinned exactly: a new model version re-links the corpus, deliberately.
+spacy>=3.8,<3.9          # kg/entities.py: tokenizer, tagger, parser, NER
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+
 # RML validation path only (kym_kg_validate). The product RDF is serialized
 # in-process by kg/rdf.py with no dependency at all; these two exist to
 # re-derive the same graph independently through the YARRRML mapping and

@@ -28,6 +28,15 @@ orchestration to `dags/kym_kg_dag.py`.
                    back to build.py as data, so this module stays pure and
                    build.py never imports an HTTP client.
 
+    wikidata.py    a downloaded Wikidata JSON dump -> a local SQLite lexicon
+                   (labels, aliases, popularity, classes, KYM slugs), and
+                   the read-only lookups over it. Stdlib only.
+    entities.py    title, tags and About -> Wikidata entities: spaCy NER +
+                   noun chunks, looked up in that lexicon, scored, grounded
+                   to their characters. Persisted by modules/entity_store.py
+                   and handed to build.py as data, like events. Neither
+                   reaches the network: the dump is downloaded once, by hand.
+
 The two LLM modules are the only ones here that reach the network, and
 they do it exclusively through modules/openwebui_client.py. Both take the
 client as an argument rather than constructing one, so importing either

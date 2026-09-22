@@ -436,6 +436,55 @@ class EventTripleTests(unittest.TestCase):
         self.assertIn(f'<{self.IRI}> <{self.MK}datePrecision> "none" .', out)
 
 
+class WikidataEntityTripleTests(unittest.TestCase):
+    """6.1.0: a linked Wikidata item — somebody else's resource."""
+
+    MK = rdf.PREFIXES["mk"]
+    M4S = rdf.PREFIXES["m4s"]
+    IRI = "http://www.wikidata.org/entity/Q39315"
+
+    def entity(self, **over):
+        node = {"id": "wd:Q39315", "kind": "wikidata_entity", "qid": "Q39315",
+                "label": "Shiba Inu", "description": "dog breed"}
+        node.update(over)
+        return node
+
+    def edge(self, etype="fromAbout", **occ):
+        occ = occ or {"mention_text": "Shiba Inus", "link_score": 0.83,
+                      "link_method": "ner", "ner_label": "ORG"}
+        return {"src": FRAME, "type": etype, "dst": "wd:Q39315",
+                "occurrences": [occ]}
+
+    def test_the_iri_is_wikidatas_canonical_entity_iri(self):
+        # Not IMKG's https://www.wikidata.org/wiki/Q… page URL — see rdf.py.
+        self.assertEqual(rdf.node_iri("wd:Q39315"), self.IRI)
+
+    def test_the_item_gets_its_label_and_no_class(self):
+        out = triples([frame(), self.entity()], [])
+        mine = [t for t in out if t.startswith(f"<{self.IRI}>")]
+        self.assertEqual(mine, [f'<{self.IRI}> <{rdf.RDFS}label> "Shiba Inu" .'])
+
+    def test_about_and_tags_use_imkgs_own_predicates(self):
+        out = triples([frame(), self.entity()],
+                      [self.edge("fromAbout"), self.edge("fromTags"),
+                       self.edge("fromTitle")])
+        self.assertIn(f"<{FRAME}> <{self.M4S}fromAbout> <{self.IRI}> .", out)
+        self.assertIn(f"<{FRAME}> <{self.M4S}fromTags> <{self.IRI}> .", out)
+        self.assertIn(f"<{FRAME}> <{self.MK}fromTitle> <{self.IRI}> .", out)
+
+    def test_each_mention_annotates_the_quoted_edge(self):
+        out = triples([frame(), self.entity()], [self.edge()])
+        q = f"<< <{FRAME}> <{self.M4S}fromAbout> <{self.IRI}> >>"
+        self.assertIn(f'{q} <{self.MK}mentionText> "Shiba Inus" .', out)
+        self.assertIn(f'{q} <{self.MK}linkScore> "0.83"^^<{rdf.XSD_DECIMAL}> .', out)
+        self.assertIn(f'{q} <{self.MK}linkMethod> "ner" .', out)
+        self.assertIn(f'{q} <{self.MK}nerLabel> "ORG" .', out)
+
+    def test_the_description_stays_in_the_property_graph(self):
+        out = triples([frame(), self.entity()], [])
+        self.assertFalse([t for t in out if "dog breed" in t])
+
+
 class SetSemanticsTests(unittest.TestCase):
     """RDF is a set; the property-graph edge list is a bag."""
 

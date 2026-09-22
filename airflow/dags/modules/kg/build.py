@@ -123,15 +123,35 @@ Node kinds
     image               "image:<src url>"
     event               "event:<id>"          (6.0.0; mk:Event, DERIVED —
                         see kg/events.py and "What becomes a node" below)
+    wikidata_entity     "wd:<QID>"            (6.1.0; a Wikidata item, linked
+                        from the title, tags and About — see below)
 
 Edge types
     hasEntryType  hasTag  hasRegion  hasOrigin  hasBadge  partOfSeries
     relatesToMeme  citesExternal  hasImage  hasEvent
+    fromTitle  fromTags  fromAbout                      (6.1.0, to a wikidata_entity)
   and, from an event node: eventLink  eventCitation  eventEmbed  eventImage
   eventDateAnchor
   plus the concept edges ``subTypeOf`` (kg/taxonomy.py, kg/origin.py) and
   ``coOccursWith`` (kg/cooccurs.py, tags only as of 5.0.1) — neither
   emitted by this function.
+
+6.1.0: Wikidata entities
+------------------------
+The entities kg/entities.py recognised in the title, the tags and the
+About section and linked to Wikidata (modules/entity_store.py), passed in
+as data exactly like events. One ``wikidata_entity`` node per QID, shared
+by every frame that mentions it — the first node kind whose IRI is
+somebody else's (Wikidata's), which is why it mints nothing and why it
+carries only the label and description it was linked under. The frame's
+edge to it is named after the FIELD the mention was read from, as IMKG
+names them (m4s:fromAbout, m4s:fromTags; fromTitle is MemeAtlas's), and
+each mention is an occurrence on that edge: the words on the page, the
+link score, how the span was found, and the NER label if any.
+
+Like events, these are DERIVED — a linker's reading, not a parsed value —
+and the occurrence says how sure it was. Which of them are worth keeping
+is a later curation step (gap 09); this function carries them all.
 
 Images are "image:"-prefixed: a body link may point straight at an image
 file, and without the prefix that url would be both an ``external_ref`` and
@@ -148,6 +168,10 @@ from . import tag_normalize
 
 _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 
+# 6.1.0: the entity layer. Entities recognised in the title, tags and About
+# (kg/entities.py, modules/entity_store.py) become `wikidata_entity` nodes
+# with fromTitle / fromTags / fromAbout edges from their frame. MINOR:
+# additive, and unlike events it mints no IRI — a Wikidata item has its own.
 # 6.0.0: the event layer. Events extracted from the Origin/Spread
 # narrative (kg/events.py, modules/event_store.py) become `event` nodes
 # with an mk:hasEvent edge from their frame. MAJOR because it amends the
@@ -164,18 +188,18 @@ _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 # and origin promoted from frame literals / a literal string to concepts
 # (badge_concept/hasBadge, origin_concept/hasOrigin); tags plural-folded
 # (kg/tag_normalize.py). Bumping this makes the staleness gate rebuild.
-KG_BUILD_VERSION = "6.0.0"
+KG_BUILD_VERSION = "6.1.0"
 
 NODE_KINDS: tuple[str, ...] = (
     "frame", "frame_stub", "entry_type_concept", "tag_concept",
     "region_concept", "origin_concept", "badge_concept", "external_ref",
-    "image", "event",
+    "image", "event", "wikidata_entity",
 )
 EDGE_TYPES: tuple[str, ...] = (
     "hasEntryType", "hasTag", "hasRegion", "hasOrigin", "hasBadge",
     "partOfSeries", "relatesToMeme", "citesExternal", "hasImage", "hasEvent",
     "eventLink", "eventCitation", "eventEmbed", "eventImage",
-    "eventDateAnchor",
+    "eventDateAnchor", "fromTitle", "fromTags", "fromAbout",
 )
 
 # The three narrative sections IMKG keeps as frame literals, mapped to the
@@ -247,13 +271,29 @@ EVENT_IMAGE_EDGE = "eventImage"   # a photo shown with its paragraph
 EVENT_DATE_ANCHOR_EDGE = "eventDateAnchor"
 EVENT_LIST_PROPERTIES: frozenset[str] = frozenset({"actors"})
 
+# 6.1.0. The field a mention was read from (kg/entities.SOURCE_FIELDS) ->
+# the frame's edge to the entity. IMKG's own names where IMKG had one
+# (m4s:fromAbout, m4s:fromTags — kym.media.frames.textual.enrichment.yaml);
+# IMKG never linked titles.
+ENTITY_FIELD_EDGES: dict[str, str] = {
+    "title": "fromTitle", "tag": "fromTags", "about": "fromAbout",
+}
+# A wikidata_entity node's properties. ``qid`` duplicates the id's tail so
+# a Cypher query can say ``e.qid = 'Q42'``; only ``label`` reaches RDF.
+WIKIDATA_ENTITY_PROPERTIES: tuple[str, ...] = ("qid", "label", "description")
+
 # The edges that carry an ``occurrences`` list, and every field an
 # occurrence may hold. kg/rdf.py, kg/serialize.py and kg/loaders.py all
 # render from these two tables.
-OCCURRENCE_EDGE_TYPES: tuple[str, ...] = ("relatesToMeme", "citesExternal", "hasImage")
+OCCURRENCE_EDGE_TYPES: tuple[str, ...] = (
+    "relatesToMeme", "citesExternal", "hasImage",
+    "fromTitle", "fromTags", "fromAbout")          # 6.1.0: one per mention
 OCCURRENCE_FIELDS: tuple[str, ...] = (
     "anchor_text", "in_section", "citation_text", "citation_index",
     "site_name", "role", "alt_text", "caption",
+    # 6.1.0, on the entity edges: the words on the page, the linker's score
+    # (0..1), how the span was found (kg/entities.METHODS), the NER label.
+    "mention_text", "link_score", "link_method", "ner_label",
 )
 
 # Coarse URL-path -> category guess for stub nodes we haven't scraped yet.
@@ -354,6 +394,12 @@ def date_range(date: str | None, precision: str) -> tuple[str | None, str | None
         end = start.replace(year=start.year + 1) - timedelta(seconds=1)
     fmt_out = "%Y-%m-%dT%H:%M:%SZ"
     return start.strftime(fmt_out), end.strftime(fmt_out)
+
+
+def wikidata_node_id(qid: str) -> str:
+    """``wd:Q42``. The prefix keeps a QID from ever colliding with another
+    node id, and kg/rdf.py turns it into Wikidata's own entity IRI."""
+    return f"wd:{qid}"
 
 
 def event_node_id(event_id: str) -> str:
@@ -467,6 +513,7 @@ def build_nodes_and_edges(
         origin_resolver: Callable[[str], str] | None = None,
         tag_denylist: frozenset[str] = frozenset(),
         events: Sequence[dict] = (),
+        entities: Sequence[dict] = (),
 ) -> tuple[list[dict], list[dict]]:
     """One `entries` doc (as stored by parse_store) -> (nodes, edges).
 
@@ -492,6 +539,9 @@ def build_nodes_and_edges(
     dict, which is passing data with extra indirection. Left at its
     default, no event node or edge is emitted and every existing caller is
     unaffected.
+
+    ``entities`` (6.1.0) is this entry's linked mentions, as stored by
+    modules/entity_store.py — data for the same reason events are.
     """
     url = entry.get("url")
     if not url:
@@ -621,6 +671,24 @@ def build_nodes_and_edges(
                 event_edge(EVENT_IMAGE_EDGE, image_node_id(image["src"]))
         if ev.get("date_anchor"):
             event_edge(EVENT_DATE_ANCHOR_EDGE, event_node_id(ev["date_anchor"]))
+
+    # -- Wikidata entities from the title, tags and About (6.1.0) --------------
+    # One node per QID, one frame edge per (field, QID), one occurrence per
+    # mention: "Doge" three times in the About is one fromAbout edge with
+    # three occurrences, and the same item from a tag is a separate fromTags
+    # edge — which field said it is part of what was said.
+    for m in entities:
+        qid = m.get("qid")
+        etype = ENTITY_FIELD_EDGES.get(m.get("field"))
+        if not qid or not etype:
+            continue
+        node_id = wikidata_node_id(qid)
+        nodes.append(_compact({"id": node_id, "kind": "wikidata_entity",
+                               "qid": qid, "label": m.get("label"),
+                               "description": m.get("description")}))
+        edge(etype, node_id, _occurrence(
+            mention_text=m.get("text"), link_score=m.get("score"),
+            link_method=m.get("method"), ner_label=m.get("ner_label")))
 
     # -- images: the page's own, then those shown in its sections ------------
     # template_image_url is currently a copy of og:image in the parser; a

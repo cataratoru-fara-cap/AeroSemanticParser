@@ -20,6 +20,13 @@ Collections
     for `doms` with iter_html). Frozen at the build's snapshot by
     ``extracted_at <= snapshot_at``, the events analogue of parsed_at.
 
+``entities``  (owned by the entity stage, read-only here, via entity_store)
+    Wikidata links from each frame's title, tags and About, one doc per
+    frame (6.1.0). Read per build chunk through ``entity_links_for`` and
+    summarised into the staleness stamps through ``linking_stamps`` —
+    re-exports of entity_store, for the same one-store-per-stage reason as
+    events. Frozen at the snapshot by ``linked_at <= snapshot_at``.
+
 ``kg_nodes`` / ``kg_edges``  (owned by this module) — GENERATIONAL
     _id        "<build_id>|<node_id>"  /  "<build_id>|<src>|<type>|<dst>"
     build_id   which build wrote this document
@@ -63,6 +70,7 @@ Connection settings come from the environment (docker-compose):
     MONGODB_KG_EDGES_COLLECTION     (default: kg_edges)
     MONGODB_KG_BUILDS_COLLECTION    (default: kg_builds)
     MONGODB_EVENTS_COLLECTION       (default: events; read via event_store)
+    MONGODB_ENTITIES_COLLECTION     (default: entities; read via entity_store)
 """
 
 from __future__ import annotations
@@ -81,7 +89,8 @@ __all__ = [
     "iter_nodes", "iter_edges", "graph_counts", "publish_build",
     "current_build", "current_build_id", "prune_builds", "fail_build",
     "mark_verified", "record_validation", "events_for", "extraction_stamps",
-    "EVENT_STAMP_KEYS",
+    "EVENT_STAMP_KEYS", "entity_links_for", "linking_stamps",
+    "ENTITY_STAMP_KEYS",
 ]
 
 # The pointer document's _id. A build_id can never collide with it because
@@ -117,6 +126,8 @@ _CONCEPT_KIND_FOR_PREFIX = {
     # materialize_stubs minting an external_ref whose id is "event:..." and
     # writing a bogus <event:...> row into the view CSV.
     "event:": "event",
+    # Same defensive reason: build.py always emits the node with its edge.
+    "wd:": "wikidata_entity",
 }
 
 # The event layer's staleness stamps (6.0.0), compared by is_stale like
@@ -127,6 +138,15 @@ EVENT_STAMP_KEYS: tuple[str, ...] = (
     "events_units", "events_total", "events_prompt_versions",
     "events_extraction_versions", "events_schema_shas",
     "events_max_extracted_at",
+)
+
+# The entity layer's staleness stamps (6.1.0). A new lexicon changes what
+# the links say without changing how many frames are linked, so the mention
+# total and the lexicon versions ride along with the frame count.
+ENTITY_STAMP_KEYS: tuple[str, ...] = (
+    "entities_frames", "entities_mentions", "entities_linker_versions",
+    "entities_lexicon_versions", "entities_nlp_models",
+    "entities_max_linked_at",
 )
 
 
@@ -270,7 +290,7 @@ class KGStore(MongoStoreBase):
                     "origin_taxonomy_version", "tag_denylist_version",
                     "entries_count", "parser_versions",
                     "corpus_policy_versions", "max_parsed_at",
-                    *EVENT_STAMP_KEYS):
+                    *EVENT_STAMP_KEYS, *ENTITY_STAMP_KEYS):
             if stamps.get(key) != published.get(key):
                 return True, (f"{key} changed: "
                               f"{published.get(key)!r} -> {stamps.get(key)!r}")
@@ -604,6 +624,21 @@ def extraction_stamps(snapshot_at) -> dict[str, Any]:
     would record a count the build never saw. See EVENT_STAMP_KEYS."""
     from modules import event_store
     return event_store.extraction_stamps(extracted_at_lte=snapshot_at)
+
+
+def entity_links_for(entry_ids: list[str], snapshot_at) -> dict[str, list[dict]]:
+    """{frame_url: [mention, ...]} for one build chunk, frozen at the
+    snapshot — a deliberate re-export of entity_store.links_for, for the
+    reason events_for gives."""
+    from modules import entity_store
+    return entity_store.links_for(entry_ids, linked_at_lte=snapshot_at)
+
+
+def linking_stamps(snapshot_at) -> dict[str, Any]:
+    """The entity layer's staleness stamps over the build's frozen
+    generation. See ENTITY_STAMP_KEYS."""
+    from modules import entity_store
+    return entity_store.linking_stamps(linked_at_lte=snapshot_at)
 
 
 def iter_nodes(build_id: str, kinds=None, fields=None):

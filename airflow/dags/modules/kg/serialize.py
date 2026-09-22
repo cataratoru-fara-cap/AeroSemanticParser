@@ -93,6 +93,11 @@ RML_NODE_FILES: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
         ("certainty", "certainty"),
         ("extraction_model", "extraction_model"),
         ("extraction_version", "extraction_version"))),
+    # 6.1.0. The label is the only literal a Wikidata item gets in RDF
+    # (rdf.NODE_LITERALS["wikidata_entity"]); "iri" renders through
+    # rdf.node_iri to http://www.wikidata.org/entity/Q….
+    "wikidata_entities.csv": ("wikidata_entity", (
+        ("iri", "id"), ("label", "label"))),
 }
 
 # file -> (frame list property, value column). "badges" left 5.0.0: it is
@@ -145,6 +150,11 @@ EDGE_TYPE_TO_RML_FILE: dict[str, tuple[str, tuple[str, str]]] = {
     "eventEmbed":    ("event_embed_edges.csv",    ("event", "target_url")),
     "eventImage":    ("event_image_edges.csv",    ("event", "image")),
     "eventDateAnchor": ("event_date_anchor_edges.csv", ("event", "anchor")),
+    # 6.1.0. "qid" is the bare Q-number (_rml_id strips "wd:"): never
+    # numeric to pandas, because of its leading "Q".
+    "fromTitle":     ("entity_title_edges.csv", ("url", "qid")),
+    "fromTags":      ("entity_tag_edges.csv",   ("url", "qid")),
+    "fromAbout":     ("entity_about_edges.csv", ("url", "qid")),
 }
 
 # edge type -> (occurrence csv, header): one row per occurrence, every
@@ -154,6 +164,9 @@ OCCURRENCE_RML_FILES: dict[str, tuple[str, tuple[str, ...]]] = {
     "relatesToMeme": ("relates_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
     "citesExternal": ("cites_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
     "hasImage": ("image_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
+    "fromTitle": ("entity_title_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
+    "fromTags": ("entity_tag_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
+    "fromAbout": ("entity_about_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
 }
 # Column names are also morph-kgc dataframe columns once read, and morph-kgc
 # uses some names itself: a CSV column called "subject" is silently
@@ -195,7 +208,7 @@ def all_rml_files() -> set[str]:
 
 
 _ID_PREFIXES = ("type:", "tag:", "region:", "origin:", "badge:", "image:",
-                "event:")
+                "event:", "wd:")
 
 
 def _rml_id(value: str) -> str:

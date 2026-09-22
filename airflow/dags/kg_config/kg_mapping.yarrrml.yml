@@ -48,6 +48,14 @@
 # images and link anchor text now flow through the same image_edges.csv /
 # *_occurrences.csv as every other section's.
 #
+# 6.1.0: entities recognised in the title, tags and About and linked to
+# Wikidata (modules/kg/entities.py). The frame's edge to the item is IMKG's
+# own m4s:fromAbout / m4s:fromTags (IMKG: kym/mappings/
+# kym.media.frames.textual.enrichment.yaml) plus mk:fromTitle, and each
+# mention annotates it (mk:mentionText, mk:linkScore, mk:linkMethod,
+# mk:nerLabel). The item is Wikidata's canonical entity IRI and gets its
+# rdfs:label and no class.
+#
 # RDF-star: each *_occurrences.csv has a row per mention. Its *_edge mapping
 # is quotedNonAsserted (morph-kgc still asserts it; the same triple already
 # comes from the edge CSV, and RDF is a set), and the annotation mapping over
@@ -359,6 +367,39 @@ mappings:
     po:
       - [mk:dateAnchoredTo, https://meme4.science/atlas/event/$(anchor)~iri]
 
+  # ---- MemeAtlas: Wikidata entities from the title, tags and About (6.1.0) ---
+  # The item's IRI is Wikidata's, not minted here. Its rdfs:label is the one
+  # it was linked under; no rdf:type — the resource is not MemeAtlas's to
+  # classify.
+  wikidata_entity:
+    sources:
+      - [rml_data/wikidata_entities.csv~csv]
+    subjects: $(iri)
+    po:
+      - [rdfs:label, $(label)]
+
+  entity_from_title:
+    sources:
+      - [rml_data/entity_title_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:fromTitle, http://www.wikidata.org/entity/$(qid)~iri]
+
+  # IMKG's own predicates, verbatim.
+  entity_from_tags:
+    sources:
+      - [rml_data/entity_tag_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [m4s:fromTags, http://www.wikidata.org/entity/$(qid)~iri]
+
+  entity_from_about:
+    sources:
+      - [rml_data/entity_about_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [m4s:fromAbout, http://www.wikidata.org/entity/$(qid)~iri]
+
   # ---- MemeAtlas: occurrences, as RDF-star annotations -----------------------
 
   relates_occurrence_edge:
@@ -416,3 +457,60 @@ mappings:
       - [mk:inSection, $(in_section)]
       - [mk:altText, $(alt_text)]
       - [mk:caption, $(caption)]
+
+  # One row per MENTION of a Wikidata item (6.1.0). The same item named
+  # three times in the About is one m4s:fromAbout triple with up to three
+  # distinct annotation values.
+  entity_title_occurrence_edge:
+    sources:
+      - [rml_data/entity_title_occurrences.csv~csv]
+    subjects: $(src)
+    po:
+      - [mk:fromTitle, http://www.wikidata.org/entity/$(dst)~iri]
+
+  entity_title_occurrence:
+    sources:
+      - [rml_data/entity_title_occurrences.csv~csv]
+    subjects:
+      - quotedNonAsserted: entity_title_occurrence_edge
+    po:
+      - [mk:mentionText, $(mention_text)]
+      - [mk:linkScore, $(link_score), xsd:decimal]
+      - [mk:linkMethod, $(link_method)]
+      - [mk:nerLabel, $(ner_label)]
+
+  entity_tag_occurrence_edge:
+    sources:
+      - [rml_data/entity_tag_occurrences.csv~csv]
+    subjects: $(src)
+    po:
+      - [m4s:fromTags, http://www.wikidata.org/entity/$(dst)~iri]
+
+  entity_tag_occurrence:
+    sources:
+      - [rml_data/entity_tag_occurrences.csv~csv]
+    subjects:
+      - quotedNonAsserted: entity_tag_occurrence_edge
+    po:
+      - [mk:mentionText, $(mention_text)]
+      - [mk:linkScore, $(link_score), xsd:decimal]
+      - [mk:linkMethod, $(link_method)]
+      - [mk:nerLabel, $(ner_label)]
+
+  entity_about_occurrence_edge:
+    sources:
+      - [rml_data/entity_about_occurrences.csv~csv]
+    subjects: $(src)
+    po:
+      - [m4s:fromAbout, http://www.wikidata.org/entity/$(dst)~iri]
+
+  entity_about_occurrence:
+    sources:
+      - [rml_data/entity_about_occurrences.csv~csv]
+    subjects:
+      - quotedNonAsserted: entity_about_occurrence_edge
+    po:
+      - [mk:mentionText, $(mention_text)]
+      - [mk:linkScore, $(link_score), xsd:decimal]
+      - [mk:linkMethod, $(link_method)]
+      - [mk:nerLabel, $(ner_label)]

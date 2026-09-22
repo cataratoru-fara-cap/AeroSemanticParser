@@ -24,6 +24,8 @@ reused VERBATIM, so an IMKG query runs unchanged against MemeAtlas:
     added / last_updated    m4s:added / m4s:last_update_source
     hasTag                  m4s:tag "<literal>"
     partOfSeries            skos:broader  (+ skos:narrower, as IMKG emits)
+    fromAbout / fromTags    m4s:fromAbout / m4s:fromTags -> a Wikidata item
+                            (6.1.0; IMKG's textual-enrichment predicates)
 
 Everything else is a MemeAtlas extension under ``mk:`` and is declared,
 with its alignment to IMKG / schema.org / SKOS, in
@@ -61,6 +63,11 @@ Deliberate differences from IMKG, recorded so nobody rediscovers them:
   * ``mk:badge`` (5.0.0) is an ``owl:ObjectProperty`` to a ``badge_concept``
     resource, not the ``owl:DatatypeProperty`` literal it was in 4.0.0 — a
     documented ontology break, not a silent one.
+  * Wikidata items (6.1.0) are their canonical entity IRIs,
+    ``http://www.wikidata.org/entity/Q42`` — IMKG emitted the HTML page URL
+    ``https://www.wikidata.org/wiki/Q42``, which names a document ABOUT the
+    item, and which no Wikidata query or dump uses. With the entity IRI a
+    federated ``SERVICE <https://query.wikidata.org/sparql>`` joins as is.
 
 Scope rules that keep this path and the RML path in agreement:
   * Only nodes with a declared class get node triples; ``frame_stub``,
@@ -69,7 +76,10 @@ Scope rules that keep this path and the RML path in agreement:
     is likewise a literal. ``origin_concept``/``badge_concept`` (5.0.0) DO
     get node triples (``skos:Concept``, no ``rdfs:Class``) — unlike tags,
     these are MemeAtlas's own concepts with no IMKG literal convention to
-    match. An ``image`` gets its class and size.
+    match. An ``image`` gets its class and size. A ``wikidata_entity``
+    (6.1.0) gets its ``rdfs:label`` and NO class: the resource is
+    Wikidata's, and asserting a MemeAtlas class on it would be a statement
+    about somebody else's item.
   * ``coOccursWith`` (kg/cooccurs.py) never reaches RDF (5.0.1): tags are
     its only source now (entry_type's was removed — needless alongside
     its curated subTypeOf hierarchy) and tag_concept has no RDF resource
@@ -89,6 +99,7 @@ __all__ = [
     "PREFIXES", "TYPES_BASE", "KYM_CLASS_BASE", "SCHEME_IRI", "SCHEME_CLASS",
     "SCHEME_LABEL", "ORIGIN_SCHEME_IRI", "ORIGIN_SCHEME_LABEL",
     "BADGE_SCHEME_IRI", "BADGE_SCHEME_LABEL", "NODE_SCHEMES", "NODE_CLASSES",
+    "WD",
     "NODE_LITERALS", "EDGE_PREDICATES", "OCCURRENCE_PREDICATES",
     "PROVENANCE_PREDICATES", "escape_literal",
     "concept_pref_label", "category_class", "node_iri", "edge_object",
@@ -104,8 +115,12 @@ PREFIXES: dict[str, str] = {
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "xsd": "http://www.w3.org/2001/XMLSchema#",
+    # 6.1.0: the linked entities' own IRIs (kg/wikidata.WD_ENTITY). Objects
+    # only — MemeAtlas never uses a wd: term as a predicate or a class.
+    "wd": "http://www.wikidata.org/entity/",
 }
 M4S, MK, KYM, KYMT = (PREFIXES[p] for p in ("m4s", "mk", "kym", "kymt"))
+WD = PREFIXES["wd"]
 SKOS, RDFS, RDF, XSD = (PREFIXES[p] for p in ("skos", "rdfs", "rdf", "xsd"))
 
 TYPES_BASE = KYMT
@@ -113,6 +128,7 @@ KYM_CLASS_BASE = KYM
 RDF_TYPE = RDF + "type"
 XSD_INTEGER = XSD + "integer"
 XSD_DATETIME = XSD + "dateTime"
+XSD_DECIMAL = XSD + "decimal"
 
 # The SKOS scheme every entry_type concept is in. An skos:inScheme pointing
 # at an undeclared resource is incomplete SKOS; these two triples were in
@@ -158,6 +174,9 @@ NODE_CLASSES: dict[str, tuple[str, ...]] = {
     # block, a member of constant_classes(), and ~120k redundant triples
     # asserting a class MemeAtlas does not own and cannot comment on.
     "event": (MK + "Event",),
+    # 6.1.0. Deliberately EMPTY, not absent: the node still gets its label
+    # (NODE_LITERALS below), but no rdf:type — see the module docstring.
+    "wikidata_entity": (),
 }
 
 # node kind -> (property, predicate, datatype | None). A list-valued
@@ -225,6 +244,12 @@ NODE_LITERALS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
         ("extraction_model", MK + "extractionModel", None),
         ("extraction_version", MK + "extractionVersion", None),
     ),
+    # 6.1.0. The label only: the description is Wikidata's to state (and a
+    # consumer who wants it has the IRI), and mk:description's domain is
+    # m4s:MediaFrame, which would make every linked item a media frame.
+    "wikidata_entity": (
+        ("label", RDFS + "label", None),
+    ),
 }
 
 # edge type -> (predicate, object is a literal?, inverse predicate | None)
@@ -246,6 +271,13 @@ EDGE_PREDICATES: dict[str, tuple[str, bool, str | None]] = {
     "eventEmbed": (MK + "eventEmbed", False, None),
     "eventImage": (MK + "eventImage", False, None),
     "eventDateAnchor": (MK + "dateAnchoredTo", False, None),
+    # 6.1.0: frame -> a Wikidata item, named by the field the mention was
+    # read from. The first two are IMKG's own predicates, verbatim (kym/
+    # mappings/kym.media.frames.textual.enrichment.yaml in the IMKG repo);
+    # IMKG never linked titles, so that one is MemeAtlas's.
+    "fromTitle": (MK + "fromTitle", False, None),
+    "fromTags": (M4S + "fromTags", False, None),
+    "fromAbout": (M4S + "fromAbout", False, None),
     # coOccursWith is NOT here (5.0.1): entry_type's statistical edges were
     # removed (needless alongside its curated subTypeOf hierarchy), and
     # tags — the only remaining source — have no RDF resource to attach a
@@ -266,6 +298,11 @@ OCCURRENCE_PREDICATES: dict[str, tuple[str, str | None]] = {
     "role": (MK + "imageRole", None),
     "alt_text": (MK + "altText", None),
     "caption": (MK + "caption", None),
+    # 6.1.0, on the quoted fromTitle/fromTags/fromAbout edge.
+    "mention_text": (MK + "mentionText", None),
+    "link_score": (MK + "linkScore", XSD_DECIMAL),
+    "link_method": (MK + "linkMethod", None),
+    "ner_label": (MK + "nerLabel", None),
 }
 
 # Triples describing the build rather than the corpus. The RML path has no
@@ -320,6 +357,8 @@ def node_iri(node_id: str) -> str:
         return MK + "event/" + node_id[len("event:"):]
     if node_id.startswith("image:"):
         return node_id[len("image:"):]
+    if node_id.startswith("wd:"):
+        return WD + node_id[len("wd:"):]
     return node_id
 
 

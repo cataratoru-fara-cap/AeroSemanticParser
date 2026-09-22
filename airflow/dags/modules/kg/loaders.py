@@ -186,6 +186,12 @@ _OCCURRENCE_LISTS: dict[str, tuple[str, Any]] = {
     "role": ("roles", ""),
     "alt_text": ("alt_texts", ""),
     "caption": ("captions", ""),
+    # 6.1.0, on fromTitle / fromTags / fromAbout. A score is a float, so its
+    # stand-in is a float too: a Neo4j list must be homogeneous.
+    "mention_text": ("mention_texts", ""),
+    "link_score": ("link_scores", -1.0),
+    "link_method": ("link_methods", ""),
+    "ner_label": ("ner_labels", ""),
 }
 assert set(_OCCURRENCE_LISTS) == set(OCCURRENCE_FIELDS), (
     "loaders.py's occurrence list table drifted from build.OCCURRENCE_FIELDS")

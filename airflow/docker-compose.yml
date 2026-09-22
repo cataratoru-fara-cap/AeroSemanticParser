@@ -98,6 +98,13 @@ x-airflow-common:
     # Human verdicts on the event layer (gap 08). review_store.py owns it;
     # the dashboard's Review page is the only thing that writes to it.
     MONGODB_EVENT_REVIEWS_COLLECTION: ${MONGODB_EVENT_REVIEWS_COLLECTION:-event_reviews}
+    # --- Entity stage (kym_entities) ---
+    MONGODB_ENTITIES_COLLECTION: ${MONGODB_ENTITIES_COLLECTION:-entities}
+    # The local Wikidata lexicon (built by `python -m modules.kg.wikidata
+    # build`, see kg/wikidata.py) and the spaCy model the linker loads.
+    # Absent lexicon = kym_entities links nothing and says so.
+    WIKIDATA_LEXICON: ${WIKIDATA_LEXICON:-/opt/airflow/data/wikidata/lexicon.sqlite}
+    KG_ENTITIES_SPACY_MODEL: ${KG_ENTITIES_SPACY_MODEL:-en_core_web_sm}
     # Build directories (data/ is bind-mounted) and the tracked curated inputs.
     KG_DATA_DIR: /opt/airflow/data/kg
     KG_CONFIG_DIR: /opt/airflow/dags/kg_config

@@ -69,6 +69,11 @@ NODES = [
      "location": "4chan", "location_type": "platform",
      "certainty": "unconfirmed",
      "extraction_model": "ministral-3:14b", "extraction_version": "1.0.0"},
+    # 6.1.0: two linked Wikidata items, one of them named from two fields.
+    {"id": "wd:Q39315", "kind": "wikidata_entity", "qid": "Q39315",
+     "label": "Shiba Inu", "description": "dog breed"},
+    {"id": "wd:Q15894956", "kind": "wikidata_entity", "qid": "Q15894956",
+     "label": 'Doge "meme"', "description": "Internet meme"},
 ]
 EDGES = [
     {"src": F1, "type": "hasEntryType", "dst": "type:image-macro"},
@@ -99,6 +104,15 @@ EDGES = [
      "dst": "https://www.tiktok.com/@a/video/1"},
     {"src": "event:abc123def456-5566778899", "type": "eventDateAnchor",
      "dst": "event:abc123def456-0011223344"},
+    # 6.1.0: one occurrence per mention; the NER label only where there is one.
+    {"src": F1, "type": "fromTitle", "dst": "wd:Q15894956", "occurrences": [
+        {"mention_text": "Doge", "link_score": 1.0, "link_method": "kym_id"}]},
+    {"src": F1, "type": "fromTags", "dst": "wd:Q39315", "occurrences": [
+        {"mention_text": "shiba inu", "link_score": 0.62, "link_method": "tag"}]},
+    {"src": F1, "type": "fromAbout", "dst": "wd:Q39315", "occurrences": [
+        {"mention_text": "Shiba Inus", "link_score": 0.83, "link_method": "ner",
+         "ner_label": "ORG"},
+        {"mention_text": "Shiba Inu", "link_score": 0.9, "link_method": "propn"}]},
 ]
 
 
@@ -262,7 +276,9 @@ class ProjectionsAgreeTests(Built):
     def test_every_input_edge_and_occurrence_is_in_the_rdf(self):
         graph = set(Path(self.out, "graph.nt").read_text(encoding="utf-8").splitlines())
         annotations = [line for line in graph if line.startswith("<<")]
-        self.assertEqual(len(annotations), 2 + 3 + 5)   # relates + cites + image values
+        # relates + cites + image values, then 6.1.0's entity mentions:
+        # title 3, tags 3, About 4 + the second mention's 3 new values.
+        self.assertEqual(len(annotations), 2 + 3 + 5 + 3 + 3 + 7)
         for edge in EDGES:
             expected = set(rdf.iter_triples([], [edge]))
             self.assertTrue(expected, edge)
@@ -332,6 +348,45 @@ class EventFileTests(Built):
         self.assertIn(f"<{self.EV}> <{mk}eventImage> <{IMG}> .", nt)
         self.assertIn(f"<{self.EV}> <{mk}eventCitation> <{EXT}> .", nt)
         self.assertNotIn("eventSummary", nt)
+
+
+class EntityFileTests(Built):
+    """6.1.0: what the entity layer puts on disk for the RML path."""
+
+    WD = "http://www.wikidata.org/entity/"
+
+    def test_one_row_per_item_keyed_by_its_wikidata_iri(self):
+        rows = {r["iri"]: r["label"] for r in self.rml("wikidata_entities.csv")}
+        self.assertEqual(rows, {self.WD + "Q39315": "Shiba Inu",
+                                self.WD + "Q15894956": 'Doge "meme"'})
+
+    def test_each_field_has_its_own_edge_file_with_the_bare_qid(self):
+        # The mapping templates it back onto http://www.wikidata.org/entity/.
+        self.assertEqual(self.rml("entity_title_edges.csv"),
+                         [{"url": F1, "qid": "Q15894956"}])
+        self.assertEqual(self.rml("entity_tag_edges.csv"),
+                         [{"url": F1, "qid": "Q39315"}])
+        self.assertEqual(self.rml("entity_about_edges.csv"),
+                         [{"url": F1, "qid": "Q39315"}])
+
+    def test_one_occurrence_row_per_mention(self):
+        rows = self.rml("entity_about_occurrences.csv")
+        self.assertEqual([(r["mention_text"], r["link_score"], r["link_method"],
+                           r["ner_label"]) for r in rows],
+                         [("Shiba Inus", "0.83", "ner", "ORG"),
+                          ("Shiba Inu", "0.9", "propn", "")])
+        self.assertEqual({r["dst"] for r in rows}, {"Q39315"})
+
+    def test_graph_nt_links_to_wikidata_with_imkgs_predicates(self):
+        with open(os.path.join(self.out, "graph.nt"), encoding="utf-8") as fh:
+            nt = fh.read()
+        m4s, mk = rdf.PREFIXES["m4s"], rdf.PREFIXES["mk"]
+        self.assertIn(f"<{F1}> <{m4s}fromAbout> <{self.WD}Q39315> .", nt)
+        self.assertIn(f"<{F1}> <{m4s}fromTags> <{self.WD}Q39315> .", nt)
+        self.assertIn(f"<{F1}> <{mk}fromTitle> <{self.WD}Q15894956> .", nt)
+        self.assertIn(f'<< <{F1}> <{m4s}fromAbout> <{self.WD}Q39315> >> '
+                      f'<{mk}linkScore> "0.9"^^<{rdf.XSD_DECIMAL}> .', nt)
+        self.assertNotIn(f"<{self.WD}Q39315> <{rdf.RDF_TYPE}>", nt)
 
 
 class SetSemanticsTests(unittest.TestCase):

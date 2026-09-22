@@ -84,6 +84,27 @@ class EventPropertyTests(unittest.TestCase):
         self.assertNotIn("location", props)      # Neo4j cannot store null
 
 
+class EntityPropertyTests(unittest.TestCase):
+    """6.1.0: a Wikidata item is a generic node, and its mentions are
+    occurrences like any other — pinned so it stays that way."""
+
+    def test_an_item_gets_the_wikidata_entity_label(self):
+        self.assertEqual(L.label_for_kind("wikidata_entity"), "WikidataEntity")
+
+    def test_mentions_become_index_aligned_lists_with_a_float_stand_in(self):
+        # A Neo4j list must be homogeneous: the absent score is -1.0, not -1.
+        props = L.edge_properties({
+            "src": F1, "type": "fromAbout", "dst": "wd:Q39315", "occurrences": [
+                {"mention_text": "Shiba Inus", "link_score": 0.83,
+                 "link_method": "ner", "ner_label": "ORG"},
+                {"mention_text": "Shiba Inu", "link_method": "propn"}]})
+        self.assertEqual(props, {"occurrence_count": 2,
+                                 "mention_texts": ["Shiba Inus", "Shiba Inu"],
+                                 "link_scores": [0.83, -1.0],
+                                 "link_methods": ["ner", "propn"],
+                                 "ner_labels": ["ORG", ""]})
+
+
 class Neo4jLoadTests(unittest.TestCase):
     def test_nodes_are_tagged_with_uid_and_build_id(self):
         d = StubDriver()

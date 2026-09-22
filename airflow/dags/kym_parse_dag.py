@@ -35,7 +35,8 @@ Trigger-time params:
     namespaces     comma-separated filter, e.g. "memes" ("" = all)
     confirmed_only restrict to sitemap-confirmed URLs
     force_reparse  ignore staleness checks, re-parse every candidate
-    trigger_events trigger kym_events at the end (off for a bare re-parse)
+    trigger_entities trigger kym_entities at the end (off for a bare re-parse);
+                   it triggers kym_events, which triggers kym_kg
 """
 
 from __future__ import annotations
@@ -81,10 +82,13 @@ DEFAULT_ARGS = {
         "confirmed_only": Param(True, type="boolean"),
         "force_reparse": Param(False, type="boolean",
                                description="Ignore staleness checks; re-parse everything selected"),
-        "trigger_events": Param(True, type="boolean",
-                                description="Trigger kym_events when done. Turn "
-                                            "OFF for a re-parse that should not "
-                                            "cascade into LLM extraction."),
+        "trigger_entities": Param(True, type="boolean",
+                                  description="Trigger kym_entities (then "
+                                              "kym_events, then kym_kg) when "
+                                              "done. Turn OFF for a re-parse "
+                                              "that should not cascade into "
+                                              "linking, LLM extraction and a "
+                                              "graph rebuild."),
     },
 )
 def kym_parse_dag():
@@ -195,23 +199,25 @@ def kym_parse_dag():
             stage="parse", dag_id="kym_parse",
             run_id=run_id or "manual", summary=summary)
 
-    # The event stage sits between parse and kg: it reads `entries` and
-    # writes `events`, which the KG build then attaches to its frames.
-    # It triggers kym_kg itself when it finishes.
+    # Two derived layers sit between parse and kg, each reading `entries`:
+    # kym_entities (local NLP + the Wikidata lexicon, minutes) and then
+    # kym_events (LLM, hours). Entities go first because they are cheap and
+    # never wait on a GPU; each stage triggers the next, and kym_events
+    # triggers kym_kg.
     @task.short_circuit(trigger_rule="all_done")
-    def should_trigger_events(params: dict | None = None) -> bool:
+    def should_trigger_entities(params: dict | None = None) -> bool:
         """A re-parse of the whole corpus (a parser version bump) changes
         every entry — and with the default on, would cascade into a full
-        LLM extraction run and a graph rebuild. Same switch as kym_events'
-        trigger_kg, for the same reason."""
-        wanted = bool((params or {}).get("trigger_events", True))
+        re-link, a full LLM extraction run and a graph rebuild. Same switch
+        as kym_entities' trigger_events and kym_events' trigger_kg."""
+        wanted = bool((params or {}).get("trigger_entities", True))
         if not wanted:
-            log.info("trigger_events=false — leaving kym_events alone this run")
+            log.info("trigger_entities=false — leaving the cascade alone this run")
         return wanted
 
-    trigger_events = TriggerDagRunOperator(
-        task_id="trigger_kym_events",
-        trigger_dag_id="kym_events",
+    trigger_entities = TriggerDagRunOperator(
+        task_id="trigger_kym_entities",
+        trigger_dag_id="kym_entities",
         wait_for_completion=False,
     )
 
@@ -219,7 +225,7 @@ def kym_parse_dag():
     chunks = chunk_urls(urls)
     stats = parse_chunk.expand(chunk=chunks)
     summary = summarize(stats)
-    record_summary(summary) >> should_trigger_events() >> trigger_events
+    record_summary(summary) >> should_trigger_entities() >> trigger_entities
 
 
 kym_parse_dag()

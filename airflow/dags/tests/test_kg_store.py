@@ -267,11 +267,22 @@ class StalenessTests(unittest.TestCase):
               "events_prompt_versions": ["1"],
               "events_extraction_versions": ["1.0.0"],
               "events_schema_shas": ["6323fdafc8996ce4"],
-              "events_max_extracted_at": "2026-09-18T09:00:00+00:00"}
+              "events_max_extracted_at": "2026-09-18T09:00:00+00:00",
+              # 6.1.0: the entity layer's. A new lexicon moves
+              # entities_lexicon_versions (and usually entities_mentions)
+              # without moving the frame count — and must still rebuild.
+              "entities_frames": 20, "entities_mentions": 140,
+              "entities_linker_versions": ["1.0.0"],
+              "entities_lexicon_versions": ["5d2737e5595693eb"],
+              "entities_nlp_models": ["en_core_web_sm@3.8.0"],
+              "entities_max_linked_at": "2026-09-22T09:00:00+00:00"}
 
     def test_every_event_stamp_is_compared(self):
         # The fixture above and the store's own list must not drift apart.
         self.assertLessEqual(set(ks.EVENT_STAMP_KEYS), set(self.STAMPS))
+
+    def test_every_entity_stamp_is_compared(self):
+        self.assertLessEqual(set(ks.ENTITY_STAMP_KEYS), set(self.STAMPS))
 
     def test_no_published_build_is_stale(self):
         stale, why = ks.KGStore.is_stale(self.STAMPS, None)

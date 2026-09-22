@@ -33,5 +33,11 @@ and each one gets worse the longer it sits.
   records why 2.0.0's "discard anything not verbatim" rule quietly produced
   wrong dates, which is worth reading before writing the next such rule.
 
+- [09-entity-layer-needs-curation.md](09-entity-layer-needs-curation.md) —
+  **the planned next task**: the 6.1.0 entity layer links every entity it
+  recognises (t-shirt, mug, field, hair …), and two thirds of the About
+  links are incidental common nouns; find a method to keep only the ones
+  relevant to the media frame. Everything curation needs is already stored.
+
 Update the status line at the top of a file when a gap is closed; leave the
 file (don't delete it) so the decision trail survives.

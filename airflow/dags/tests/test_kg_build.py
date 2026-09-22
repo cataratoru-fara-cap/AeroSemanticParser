@@ -76,17 +76,19 @@ class VocabularyTests(unittest.TestCase):
         self.assertEqual(set(build.NODE_KINDS),
                          {"frame", "frame_stub", "entry_type_concept",
                           "tag_concept", "region_concept", "origin_concept",
-                          "badge_concept", "external_ref", "image", "event"})
+                          "badge_concept", "external_ref", "image", "event",
+                          "wikidata_entity"})
         self.assertEqual(set(build.EDGE_TYPES),
                          {"hasEntryType", "hasTag", "hasRegion", "hasOrigin",
                           "hasBadge", "partOfSeries", "relatesToMeme",
                           "citesExternal", "hasImage", "hasEvent",
                           "eventLink", "eventCitation", "eventEmbed",
-                          "eventImage", "eventDateAnchor"})
+                          "eventImage", "eventDateAnchor",
+                          "fromTitle", "fromTags", "fromAbout"})
         self.assertLessEqual(set(build.OCCURRENCE_EDGE_TYPES), set(build.EDGE_TYPES))
 
     def test_version_is_stamped(self):
-        self.assertEqual(build.KG_BUILD_VERSION, "6.0.0")
+        self.assertEqual(build.KG_BUILD_VERSION, "6.1.0")
 
     def test_emitted_kinds_types_and_occurrence_fields_stay_in_the_vocabulary(self):
         nodes, edges = build.build_nodes_and_edges(entry(
@@ -606,6 +608,83 @@ class EventTests(unittest.TestCase):
         self.assertEqual([n for n in withev if n["kind"] != "event"], plain)
         self.assertEqual([e for e in withev_edges if e["type"] != "hasEvent"],
                          plain_edges)
+
+
+class EntityTests(unittest.TestCase):
+    """6.1.0: Wikidata links from the title, tags and About, passed in as
+    data (modules/entity_store.links_for) exactly as events are."""
+
+    SHIBA = {"field": "about", "text": "Shiba Inus", "qid": "Q39315",
+             "label": "Shiba Inu", "description": "dog breed", "score": 0.83,
+             "method": "ner", "ner_label": "ORG"}
+    DOGE = {"field": "title", "text": "Doge", "qid": "Q15894956",
+            "label": "Doge", "description": "Internet meme", "score": 1.0,
+            "method": "kym_id"}
+
+    def build(self, entities):
+        return build.build_nodes_and_edges(entry(), entities=entities)
+
+    def test_no_entities_means_no_entity_node_or_edge(self):
+        nodes, edges = build.build_nodes_and_edges(entry())
+        self.assertEqual([n for n in nodes if n["kind"] == "wikidata_entity"], [])
+        self.assertEqual({e["type"] for e in edges}
+                         & set(build.ENTITY_FIELD_EDGES.values()), set())
+
+    def test_a_link_becomes_a_shared_node_and_a_field_named_edge(self):
+        nodes, edges = self.build([self.SHIBA])
+        node = nodes_by_id(nodes)["wd:Q39315"]
+        self.assertEqual(node, {"id": "wd:Q39315", "kind": "wikidata_entity",
+                                "qid": "Q39315", "label": "Shiba Inu",
+                                "description": "dog breed"})
+        e = the_edge(edges, "fromAbout", "wd:Q39315")
+        self.assertEqual(e["src"], URL)
+        self.assertEqual(e["occurrences"], [{
+            "mention_text": "Shiba Inus", "link_score": 0.83,
+            "link_method": "ner", "ner_label": "ORG"}])
+
+    def test_each_field_has_its_own_edge_type(self):
+        tag = dict(self.SHIBA, field="tag", text="shiba inu", method="tag",
+                   ner_label=None)
+        _, edges = self.build([self.DOGE, tag, self.SHIBA])
+        got = {(e["type"], e["dst"]) for e in edges
+               if e["type"] in build.ENTITY_FIELD_EDGES.values()}
+        self.assertEqual(got, {("fromTitle", "wd:Q15894956"),
+                               ("fromTags", "wd:Q39315"),
+                               ("fromAbout", "wd:Q39315")})
+
+    def test_repeated_mentions_are_one_edge_with_every_occurrence(self):
+        again = dict(self.SHIBA, text="Shiba Inu", score=0.9)
+        _, edges = self.build([self.SHIBA, again])
+        e = the_edge(edges, "fromAbout", "wd:Q39315")
+        self.assertEqual([o["mention_text"] for o in e["occurrences"]],
+                         ["Shiba Inus", "Shiba Inu"])
+
+    def test_an_absent_ner_label_is_not_stored(self):
+        _, edges = self.build([self.DOGE])
+        (occ,) = the_edge(edges, "fromTitle", "wd:Q15894956")["occurrences"]
+        self.assertNotIn("ner_label", occ)
+        self.assertEqual(occ["link_method"], "kym_id")
+
+    def test_a_link_without_a_qid_or_a_known_field_is_skipped(self):
+        nodes, edges = self.build([dict(self.SHIBA, qid=None),
+                                   dict(self.SHIBA, field="spread")])
+        self.assertEqual([n for n in nodes if n["kind"] == "wikidata_entity"], [])
+
+    def test_entities_do_not_disturb_the_rest_of_the_graph(self):
+        plain, plain_edges = build.build_nodes_and_edges(entry(tags=["shiba"]))
+        withent, withent_edges = build.build_nodes_and_edges(
+            entry(tags=["shiba"]), entities=[self.SHIBA, self.DOGE])
+        self.assertEqual([n for n in withent if n["kind"] != "wikidata_entity"],
+                         plain)
+        self.assertEqual([e for e in withent_edges if e["type"]
+                          not in build.ENTITY_FIELD_EDGES.values()], plain_edges)
+
+    def test_emitted_occurrence_fields_stay_in_the_vocabulary(self):
+        _, edges = self.build([self.SHIBA, self.DOGE])
+        for e in edges:
+            for occ in e.get("occurrences") or ():
+                self.assertIn(e["type"], build.OCCURRENCE_EDGE_TYPES)
+                self.assertLessEqual(set(occ), set(build.OCCURRENCE_FIELDS))
 
 
 class StubNodeTests(unittest.TestCase):

@@ -180,6 +180,23 @@ class MappingCrosswalkTests(unittest.TestCase):
         emitted = rdf.all_predicates(include_provenance=True) | rdf.constant_classes()
         self.assertEqual({t for t in emitted if t.startswith(sem)}, set())
 
+    def test_wikidata_items_are_objects_never_classes_or_predicates(self):
+        """6.1.0. A linked item is Wikidata's resource: MemeAtlas points at
+        it and labels it, and never types it or uses a wd: term as a
+        predicate — the same restraint as sem: above, for the same reason."""
+        wd = rdf.PREFIXES["wd"]
+        self.assertEqual(wd, "http://www.wikidata.org/entity/")
+        emitted = rdf.all_predicates(include_provenance=True) | rdf.constant_classes()
+        self.assertEqual({t for t in emitted if t.startswith(wd)}, set())
+        self.assertEqual(rdf.NODE_CLASSES["wikidata_entity"], ())
+        self.assertEqual(rdf.node_iri("wd:Q42"), wd + "Q42")
+        for etype in build.ENTITY_FIELD_EDGES.values():
+            rule = next(r for r in self.doc["mappings"].values()
+                        if r.get("po") and r["po"][0][0] ==
+                        {"fromTitle": "mk:fromTitle", "fromTags": "m4s:fromTags",
+                         "fromAbout": "m4s:fromAbout"}[etype])
+            self.assertTrue(rule["po"][0][1].startswith(wd), etype)
+
     def test_every_occurrence_field_has_a_predicate(self):
         self.assertEqual(set(rdf.OCCURRENCE_PREDICATES), set(build.OCCURRENCE_FIELDS))
 
@@ -214,8 +231,12 @@ class ImkgAlignmentTests(unittest.TestCase):
         # IMKG keeps all three narrative sections as frame LITERALS, so
         # the event layer hangs off mk: terms of its own rather than
         # re-typing these into object properties.
+        # "fromAbout"/"fromTags" joined in 6.1.0: IMKG's own textual-
+        # enrichment predicates (frame -> Wikidata item), reused verbatim
+        # rather than re-minted under mk:.
         for local in ("title", "status", "year", "from", "about", "origin",
-                      "spread", "added", "last_update_source", "tag"):
+                      "spread", "added", "last_update_source", "tag",
+                      "fromAbout", "fromTags"):
             self.assertIn(self.M4S + local, preds, local)
         self.assertIn(self.M4S + "MediaFrame", rdf.constant_classes())
 
@@ -228,7 +249,8 @@ class ImkgAlignmentTests(unittest.TestCase):
     def test_no_extension_term_shadows_an_imkg_one(self):
         mk_locals = {t[len(rdf.PREFIXES["mk"]):] for t in declared_mk_terms()}
         imkg = {"MediaFrame", "title", "status", "year", "from", "about",
-                "added", "last_update_source", "tag", "origin", "spread"}
+                "added", "last_update_source", "tag", "origin", "spread",
+                "fromAbout", "fromTags", "fromImage", "fromCaption"}
         self.assertEqual(mk_locals & imkg, set())
 
 
