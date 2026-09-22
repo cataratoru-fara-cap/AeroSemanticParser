@@ -48,6 +48,27 @@ NODES = [
     {"id": "origin:twitter", "kind": "origin_concept", "label": "twitter"},
     {"id": "origin:social-network", "kind": "origin_concept", "label": "social-network"},
     {"id": "badge:sensitive", "kind": "badge_concept", "label": "Sensitive"},
+    # 6.0.0: an event, dated at day precision, with two actors and a
+    # summary containing a quote (the escaping path).
+    {"id": "event:abc123def456-0011223344", "kind": "event",
+     "source_text": 'The photo "Kabosu" was posted to Tumblr on February 23rd, 2010. [3]',
+     "source_section": "origin", "date": "2010-02-23",
+     "date_precision": "day", "date_basis": "stated",
+     "date_text": "February 23rd, 2010",
+     "date_start": "2010-02-23T00:00:00Z", "date_end": "2010-02-23T23:59:59Z",
+     "location": "Tumblr", "location_type": "platform",
+     "certainty": "confirmed", "actors": ["Atsuko Sato", "u/kabosu"],
+     "extraction_model": "ministral-3:14b", "extraction_version": "1.0.0"},
+    # The embedded post's own node: in a real build the frame's citesExternal
+    # edge to it creates this (build.py, parser 1.6.0 embeds).
+    {"id": "https://www.tiktok.com/@a/video/1", "kind": "external_ref", "label": None},
+    # ...and an undated one: no start/end, no actors.
+    {"id": "event:abc123def456-5566778899", "kind": "event",
+     "source_text": "Shortly afterwards it spread to 4chan.",
+     "source_section": "spread", "date_precision": "none",
+     "location": "4chan", "location_type": "platform",
+     "certainty": "unconfirmed",
+     "extraction_model": "ministral-3:14b", "extraction_version": "1.0.0"},
 ]
 EDGES = [
     {"src": F1, "type": "hasEntryType", "dst": "type:image-macro"},
@@ -68,6 +89,16 @@ EDGES = [
     {"src": F1, "type": "hasOrigin", "dst": "origin:twitter"},
     {"src": F1, "type": "hasBadge", "dst": "badge:sensitive"},
     {"src": "origin:twitter", "type": "subTypeOf", "dst": "origin:social-network"},
+    {"src": F1, "type": "hasEvent", "dst": "event:abc123def456-0011223344"},
+    {"src": F1, "type": "hasEvent", "dst": "event:abc123def456-5566778899"},
+    # extraction 2.0.0: what the dated event was attached to by position
+    {"src": "event:abc123def456-0011223344", "type": "eventLink", "dst": F2},
+    {"src": "event:abc123def456-0011223344", "type": "eventCitation", "dst": EXT},
+    {"src": "event:abc123def456-0011223344", "type": "eventImage", "dst": "image:" + IMG},
+    {"src": "event:abc123def456-5566778899", "type": "eventEmbed",
+     "dst": "https://www.tiktok.com/@a/video/1"},
+    {"src": "event:abc123def456-5566778899", "type": "eventDateAnchor",
+     "dst": "event:abc123def456-0011223344"},
 ]
 
 
@@ -241,6 +272,66 @@ class ProjectionsAgreeTests(Built):
         self.assertEqual(self.manifest["counts"]["edges"], len(EDGES))
         self.assertEqual(self.manifest["counts"]["nodes"], len(NODES))
         self.assertEqual(self.manifest["counts"]["edges_by_type"]["hasTag"], 3)
+
+
+class EventFileTests(Built):
+    """6.0.0: what the event layer puts on disk for the RML path."""
+
+    EV = "https://meme4.science/atlas/event/abc123def456-0011223344"
+    UNDATED = "https://meme4.science/atlas/event/abc123def456-5566778899"
+
+    def test_one_row_per_event_keyed_by_its_iri(self):
+        rows = {r["iri"]: r for r in self.rml("events.csv")}
+        self.assertEqual(set(rows), {self.EV, self.UNDATED})
+        self.assertEqual(rows[self.EV]["date_start"], "2010-02-23T00:00:00Z")
+        self.assertEqual(rows[self.EV]["certainty"], "confirmed")
+        self.assertEqual(rows[self.EV]["date_basis"], "stated")
+
+    def test_an_undated_event_leaves_the_interval_cells_empty(self):
+        # An empty cell emits nothing in morph-kgc — same as rdf.py.
+        row = {r["iri"]: r for r in self.rml("events.csv")}[self.UNDATED]
+        self.assertEqual((row["date_start"], row["date_end"]), ("", ""))
+        self.assertEqual(row["date_precision"], "none")
+
+    def test_the_bare_date_is_not_a_column(self):
+        # The one value pandas could read as a number inside morph-kgc.
+        self.assertNotIn("date", self.rml("events.csv")[0])
+
+    def test_one_actor_row_per_actor(self):
+        rows = self.rml("event_actors.csv")
+        self.assertEqual(sorted((r["iri"], r["actor"]) for r in rows),
+                         [(self.EV, "Atsuko Sato"), (self.EV, "u/kabosu")])
+
+    def test_the_edge_file_carries_the_bare_event_id(self):
+        # The mapping templates it back onto https://meme4.science/atlas/event/.
+        rows = self.rml("event_edges.csv")
+        self.assertEqual(sorted(r["event"] for r in rows),
+                         ["abc123def456-0011223344", "abc123def456-5566778899"])
+        self.assertEqual({r["url"] for r in rows}, {F1})
+
+    def test_attached_media_get_one_csv_each_keyed_by_bare_event_id(self):
+        self.assertEqual(self.rml("event_link_edges.csv"),
+                         [{"event": "abc123def456-0011223344", "target_url": F2}])
+        self.assertEqual(self.rml("event_citation_edges.csv"),
+                         [{"event": "abc123def456-0011223344", "target_url": EXT}])
+        self.assertEqual(self.rml("event_image_edges.csv"),
+                         [{"event": "abc123def456-0011223344", "image": IMG}])
+        self.assertEqual(self.rml("event_embed_edges.csv"),
+                         [{"event": "abc123def456-5566778899",
+                           "target_url": "https://www.tiktok.com/@a/video/1"}])
+
+    def test_graph_nt_carries_the_event_as_mk_event(self):
+        with open(os.path.join(self.out, "graph.nt"), encoding="utf-8") as fh:
+            nt = fh.read()
+        mk = rdf.PREFIXES["mk"]
+        self.assertIn(f"<{self.EV}> <{rdf.RDF_TYPE}> <{mk}Event> .", nt)
+        self.assertIn(f"<{F1}> <{mk}hasEvent> <{self.EV}> .", nt)
+        self.assertIn(f'<{self.EV}> <{mk}eventStart> '
+                      f'"2010-02-23T00:00:00Z"^^<{rdf.XSD_DATETIME}> .', nt)
+        self.assertNotIn(f"<{self.UNDATED}> <{mk}eventStart>", nt)
+        self.assertIn(f"<{self.EV}> <{mk}eventImage> <{IMG}> .", nt)
+        self.assertIn(f"<{self.EV}> <{mk}eventCitation> <{EXT}> .", nt)
+        self.assertNotIn("eventSummary", nt)
 
 
 class SetSemanticsTests(unittest.TestCase):

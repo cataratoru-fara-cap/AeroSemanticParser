@@ -5,14 +5,14 @@ structured corpus, orchestrated by Airflow, with a Streamlit dashboard
 over the results.
 
 ```
-kym_discovery ──▶ kym_scrape ──▶ kym_parse ──▶ kym_kg        (each triggers the next)
-   urls            doms           entries        kg_nodes / kg_edges / kg_builds
-                                  parse_failures data/kg/builds/<build_id>/
-                                                     graph.nt  rml_data/*.csv
-                                                     kg_view_*.csv  manifest.json
-                                                        ▲
-                                     kym_kg_validate ───┘  (weekly: re-derive the
-                                                            RDF via RML, diff it)
+kym_discovery ─▶ kym_scrape ─▶ kym_parse ─▶ kym_events ─▶ kym_kg   (each triggers the next)
+   urls           doms          entries      events         kg_nodes / kg_edges / kg_builds
+                                parse_       event_         data/kg/builds/<build_id>/
+                                failures     failures          graph.nt  rml_data/*.csv
+                                             data/kg/events/   kg_view_*.csv  manifest.json
+                                             (LLM, JSONL)            ▲
+                                              kym_kg_validate ───────┘  (weekly: re-derive
+                                                                        the RDF via RML, diff it)
 
                      run_summaries  ◀── every stage records its run
                             │
@@ -48,7 +48,7 @@ The dashboard (8501), mongo-express (8081) and pgAdmin (5050) also listen
 on `127.0.0.1` only, for SSH tunnels and debugging — note the dashboard's prefix still
 applies there: `http://localhost:8501/dashboard/`.
 
-## The three stages
+## The stages
 
 Each DAG has the same shape: `select → chunk → mapped work → summarize →
 record_summary`. Work is chunked into mapped tasks so a failure retries a
@@ -74,6 +74,54 @@ validation land in `parse_failures`, a dead-letter collection carrying the
 same staleness stamps as `entries`, so a deterministic failure is not
 retried until the parser version or the page content actually changes.
 
+**`kym_events`** (triggered by parse) — extracts spatio-temporal events
+from every Origin and Spread section (36,011 of them), one LLM call per
+section through `modules/openwebui_client.py`, validated against
+`dags/kg_config/event_extraction_schema.json`. **Extractive only**: the
+model sees numbered sentences and answers with sentence numbers — the
+evidence text is copied from the page by the pipeline, there is no
+model-written summary, and the model does not even date anything: it
+returns the date WORDS and the pipeline parses them, taking a missing year
+from an earlier sentence and resolving "that same day" against the nearest
+earlier dated event (`mk:dateBasis`, `mk:dateAnchoredTo`). Every value the
+model does return (date words, place, actors) is **grounded**: resolved to
+the span of the section it names and stored in the section's own words, so
+a value worded differently is corrected rather than lost and a value with
+nothing behind it is not stored at all. An independent `audit()` refuses to
+store a record that fails. Links, `[n]` citations, photos and embedded posts are attached
+by position (parser 1.6.1), never by the model. Nothing is truncated or
+capped. Each result lands twice as it arrives — a line in
+`data/kg/events/<extract_id>/chunk-*.jsonl` and a doc in `events` (the
+authority) — and a section is re-asked only when its text or media, the
+prompt, the schema or the extraction contract changes. **One call at a
+time**: the lab hosts serve requests FIFO with no load balancer, so
+parallel calls only queue. Measured on a **1,528-section random sample**
+(2026-09-22, extraction 2.6.0): 5,579 events, 73% of them dated, **zero
+dead letters and zero audit violations**, 2.1 s p50 per section, so the
+full 36,011 take ~21 hours of host time — more if other lab users are
+queued ahead. Of the sentences that state a date, 94% end up carried by a
+dated event; the rest are mostly dates inside reported content ("According
+to the post, Aquaman was born on July 12th, 2025"), which must NOT become
+event dates. Beyond `audit()`, the sample was swept for every invariant a
+record should hold internally — precision against date format, relative
+chains pointing backwards in time, citations present in the text they are
+attached to, values that name nobody — and that sweep is what found four
+of the five bugs fixed on 2026-09-22 (see `kg/events.py`'s changelog). Run the backfill
+with `trigger_kg=false`, and build the graph once at the end. The model is a
+policy, not a name: never a reasoning model; `ministral-3:14b` on
+ollama-ccdd by default (`kg/events.py`, "Model policy"). Four models were
+measured on the same 99 sections before settling there — a bigger one is
+not better at this, and `llama3.3:70b` is worse in the way that matters
+(`kg/events.py`, "Why not a bigger model").
+
+**Reviewing the event layer.** The events are a model's reading, so the
+dashboard has one page that WRITES: `:8080/dashboard/` → *Review*. Draw the
+sample with `python -m modules.kg.review draw` and read the number back
+with `... review report`; `dags/modules/kg/review.py` explains the three
+strata and why they are scored separately, and `dashboard/lib/review.py`
+explains why that page is allowed to write when nothing else in the
+dashboard is.
+
 ### Streaming is load-bearing
 
 A KYM page is multi-MB decompressed and roughly 10× that inside
@@ -86,13 +134,14 @@ saying so are warnings, not trivia.
 
 ```
 dags/
-  kym_{discovery,scrape,parse,kg}_dag.py   orchestration only — no logic
+  kym_{discovery,scrape,parse,events,kg}_dag.py   orchestration only — no logic
   kym_kg_validate_dag.py                   the RDF diff gate, its own DAG
   modules/
     mongo_base.py        shared client/_id/UTC plumbing for the stores
     mongo_store.py       owns `urls`      ← kym_store.py is its facade
     dom_store.py         owns `doms`
     parse_store.py       owns `entries`, `parse_failures`
+    event_store.py       owns `events`, `event_failures`
     kg_store.py          owns `kg_nodes`, `kg_edges`, `kg_builds` (generational)
     summary_store.py     owns `run_summaries`
     kym_discover.py      pure discovery library + CLI   (no Mongo, no Airflow)
@@ -109,6 +158,7 @@ dags/
       ntdiff.py            memory-bounded set diff of two .nt files
       metrics.py           IMKG-comparable graph statistics (pure stdlib)
       semantics.py         LLM definition-embedding analysis of types (CLI)
+      events.py            LLM event extraction from Origin/Spread (+ CLI)
   kg_config/             curated KG inputs, tracked: the entry-type taxonomy,
                          the YARRRML mapping, the MemeAtlas ontology
                          (memeatlas.ttl), MODEL.md (the IMKG crosswalk),
@@ -162,10 +212,19 @@ used as is (`m4s:MediaFrame`, `m4s:title`, `m4s:tag`, `kymt:` entry-type
 classes, `skos:broader` for series), so IMKG queries run here. The rest of
 the parsed record — sections, links, references, images, regions, corpus
 grading — uses `mk:` terms declared in `dags/kg_config/memeatlas.ttl`.
-`dags/kg_config/MODEL.md` has the full crosswalk. Origin and Spread
-sections are not yet modelled; they are left to the event-extraction task.
+`dags/kg_config/MODEL.md` has the full crosswalk. As of 5.1.0 every field
+the parser extracts reaches the graph: the Origin and Spread sections,
+deferred until then, are `m4s:origin` and `m4s:spread`. What those
+narratives say *happened* is a separate layer (6.0.0): `kym_events`
+extracts dated, placed events with named actors, and each becomes an
+`mk:Event` node linked from its frame by `mk:hasEvent` — the one kind of
+node in the graph that is a model's reading rather than parsed fact, and
+marked as such (`mk:extractionModel`, `mk:sourceText`). MODEL.md's
+"Events: drawn from EventKG, not copied from it" has what was taken from
+EventKG and what deliberately was not.
 
-**`kym_kg`** (triggered by parse) — lifts `entries` into a knowledge graph
+**`kym_kg`** (triggered by events) — lifts `entries`, and the events
+extracted from them, into a knowledge graph
 and publishes it in every representation at once:
 
 - **Neo4j** — the property graph: typed nodes (`Frame`, `TagConcept`, …)

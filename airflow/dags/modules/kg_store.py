@@ -12,6 +12,14 @@ Collections
     filters ``parsed_at <= snapshot_at``, so a build sees one consistent
     generation of the corpus even while the parse stage keeps writing.
 
+``events``    (owned by the event stage, read-only here, via event_store)
+    Extracted events, one doc per (frame, section). Read per build chunk
+    through ``events_for`` and summarised into the staleness stamps through
+    ``extraction_stamps`` — both deliberate re-exports of event_store, so
+    the KG DAG imports exactly one store (the same rule parse_store follows
+    for `doms` with iter_html). Frozen at the build's snapshot by
+    ``extracted_at <= snapshot_at``, the events analogue of parsed_at.
+
 ``kg_nodes`` / ``kg_edges``  (owned by this module) — GENERATIONAL
     _id        "<build_id>|<node_id>"  /  "<build_id>|<src>|<type>|<dst>"
     build_id   which build wrote this document
@@ -54,6 +62,7 @@ Connection settings come from the environment (docker-compose):
     MONGODB_KG_NODES_COLLECTION     (default: kg_nodes)
     MONGODB_KG_EDGES_COLLECTION     (default: kg_edges)
     MONGODB_KG_BUILDS_COLLECTION    (default: kg_builds)
+    MONGODB_EVENTS_COLLECTION       (default: events; read via event_store)
 """
 
 from __future__ import annotations
@@ -71,7 +80,8 @@ __all__ = [
     "materialize_stubs", "save_concept_edges", "iter_entries", "iter_field",
     "iter_nodes", "iter_edges", "graph_counts", "publish_build",
     "current_build", "current_build_id", "prune_builds", "fail_build",
-    "mark_verified", "record_validation",
+    "mark_verified", "record_validation", "events_for", "extraction_stamps",
+    "EVENT_STAMP_KEYS",
 ]
 
 # The pointer document's _id. A build_id can never collide with it because
@@ -102,7 +112,22 @@ _CONCEPT_KIND_FOR_PREFIX = {
     "type:": "entry_type_concept", "tag:": "tag_concept",
     "region:": "region_concept", "origin:": "origin_concept",
     "badge:": "badge_concept",
+    # Defensive, not load-bearing: build.py always emits an event node
+    # alongside its hasEvent edge. But if one ever went missing, this stops
+    # materialize_stubs minting an external_ref whose id is "event:..." and
+    # writing a bogus <event:...> row into the view CSV.
+    "event:": "event",
 }
+
+# The event layer's staleness stamps (6.0.0), compared by is_stale like
+# every other key. events_total is carried as well as events_units because
+# a re-extraction can change what the events SAY without changing how many
+# units exist, and that must rebuild the graph too.
+EVENT_STAMP_KEYS: tuple[str, ...] = (
+    "events_units", "events_total", "events_prompt_versions",
+    "events_extraction_versions", "events_schema_shas",
+    "events_max_extracted_at",
+)
 
 
 class KGStore(MongoStoreBase):
@@ -244,7 +269,8 @@ class KGStore(MongoStoreBase):
         for key in ("kg_build_version", "taxonomy_version",
                     "origin_taxonomy_version", "tag_denylist_version",
                     "entries_count", "parser_versions",
-                    "corpus_policy_versions", "max_parsed_at"):
+                    "corpus_policy_versions", "max_parsed_at",
+                    *EVENT_STAMP_KEYS):
             if stamps.get(key) != published.get(key):
                 return True, (f"{key} changed: "
                               f"{published.get(key)!r} -> {stamps.get(key)!r}")
@@ -557,6 +583,27 @@ def iter_entries(entry_ids: list[str], snapshot_at):
 def iter_field(field: str, snapshot_at):
     with get_store() as store:
         yield from store.iter_field(field, snapshot_at)
+
+
+def events_for(entry_ids: list[str], snapshot_at) -> dict[str, list[dict]]:
+    """{frame_url: [event, ...]} for one build chunk, frozen at the snapshot.
+
+    A deliberate re-export of event_store.events_for: `events` belongs to
+    the event stage, so the KG DAG reaches it through this module — one
+    store import per stage (the rule parse_store.iter_html follows).
+    Keyed by URL because ENTRY_PROJECTION excludes _id: the entries this
+    DAG streams have nothing else to join on.
+    """
+    from modules import event_store
+    return event_store.events_for(entry_ids, extracted_at_lte=snapshot_at)
+
+
+def extraction_stamps(snapshot_at) -> dict[str, Any]:
+    """The event layer's staleness stamps over the same frozen generation
+    the build reads — computed over events the build cannot see, the gate
+    would record a count the build never saw. See EVENT_STAMP_KEYS."""
+    from modules import event_store
+    return event_store.extraction_stamps(extracted_at_lte=snapshot_at)
 
 
 def iter_nodes(build_id: str, kinds=None, fields=None):

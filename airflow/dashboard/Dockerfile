@@ -12,7 +12,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Runs unprivileged: this container only ever reads Mongo.
+# Runs unprivileged. It reads Mongo everywhere except the event-review
+# page, which writes human verdicts to `event_reviews` and nothing
+# else — see dashboard/lib/review.py for why that exception exists.
 RUN useradd --create-home --uid 10001 dashboard && chown -R dashboard /app
 USER dashboard
 

@@ -181,6 +181,98 @@ def parse_state() -> dict[str, Any]:
 
 
 @st.cache_data(ttl=CACHE_TTL)
+def event_state() -> dict[str, Any]:
+    """Current state of the event layer (kym_events), live from `events`
+    and `event_failures`. Re-implements event_store.stats() rather than
+    importing it, for the reasons at the top of this module.
+
+    `events` holds one doc per (frame, section), each with an `events`
+    array; per-event breakdowns unwind it.
+    """
+    events = _coll("MONGODB_EVENTS_COLLECTION", "events")
+    failures = _coll("MONGODB_EVENT_FAILURES_COLLECTION", "event_failures")
+    entries = _coll("MONGODB_ENTRIES_COLLECTION", "entries")
+
+    def _unit_counts(coll, field: str) -> dict[str, int]:
+        return {(d["_id"] if d["_id"] is not None else "unknown"): d["n"]
+                for d in coll.aggregate([
+                    {"$group": {"_id": f"${field}", "n": {"$sum": 1}}},
+                    {"$sort": {"n": -1}},
+                ])}
+
+    def _event_counts(field: str) -> dict[str, int]:
+        return {(d["_id"] if d["_id"] is not None else "unknown"): d["n"]
+                for d in events.aggregate([
+                    {"$unwind": "$events"},
+                    {"$group": {"_id": f"$events.{field}", "n": {"$sum": 1}}},
+                    {"$sort": {"n": -1}},
+                ])}
+
+    total = list(events.aggregate([
+        {"$group": {"_id": None, "n": {"$sum": "$event_count"},
+                    "latest": {"$max": "$extracted_at"}}}]))
+    # Entries that HAVE an origin or spread section — the reachable
+    # denominator. Coverage against all 23,882 entries would count the
+    # ~23% with neither section as "not yet extracted" forever.
+    with_narrative = entries.count_documents(
+        {"sections.kind": {"$in": ["origin", "spread"]}})
+    # The 100%-coverage denominator: every origin/spread section with text.
+    possible = list(entries.aggregate([
+        {"$unwind": "$sections"},
+        {"$match": {"sections.kind": {"$in": ["origin", "spread"]},
+                    "sections.text": {"$elemMatch": {"$regex": r"\S"}}}},
+        {"$group": {"_id": {"e": "$_id", "k": "$sections.kind"}}},
+        {"$count": "n"}]))
+    return {
+        "units_total": events.count_documents({}),
+        "units_by_section": _unit_counts(events, "source_section"),
+        "events_total": total[0]["n"] if total else 0,
+        "last_extracted_at": _as_utc(total[0]["latest"]) if total else None,
+        "zero_event_units": events.count_documents({"event_count": 0}),
+        "frames_covered": len(events.distinct("entry_id")),
+        "frames_with_narrative": with_narrative,
+        "units_possible": possible[0]["n"] if possible else 0,
+        "events_by_certainty": _event_counts("certainty"),
+        "events_by_precision": _event_counts("date_precision"),
+        "events_by_location_type": _event_counts("location_type"),
+        "models_in_use": _unit_counts(events, "model"),
+        "failures_total": failures.count_documents({}),
+        "failure_kind_counts": _unit_counts(failures, "error_kind"),
+    }
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def event_samples(limit: int = 40) -> list[dict[str, Any]]:
+    """The most recently extracted events, flattened for a table — the
+    page's way of letting a reader check the model's work against the
+    quote it cites (gap 08)."""
+    events = _coll("MONGODB_EVENTS_COLLECTION", "events")
+    rows: list[dict[str, Any]] = []
+    for doc in events.find({"event_count": {"$gt": 0}},
+                           {"frame_url": 1, "source_section": 1, "events": 1,
+                            "model": 1}).sort("extracted_at", -1).limit(limit):
+        for ev in doc.get("events") or []:
+            rows.append({
+                "entry": (doc.get("frame_url") or "").rsplit("/", 1)[-1],
+                "section": doc.get("source_section"),
+                "date": ev.get("date") or "—",
+                "precision": ev.get("date_precision"),
+                "evidence (verbatim)": ev.get("source_text"),
+                "date words": ev.get("date_text") or "—",
+                "where": ev.get("location") or "—",
+                "who": ", ".join(ev.get("actors") or []) or "—",
+                "certainty": ev.get("certainty"),
+                "links": len(ev.get("links") or []),
+                "photos": len(ev.get("images") or []),
+                "embeds": len(ev.get("embeds") or []),
+                "model": doc.get("model"),
+            })
+            if len(rows) >= limit:
+                return rows
+    return rows
+
+
+@st.cache_data(ttl=CACHE_TTL)
 def failure_samples(limit: int = 50) -> list[dict[str, Any]]:
     """A page of dead-letter records, newest first — the "what actually
     broke" drill-down behind the parse failure charts."""

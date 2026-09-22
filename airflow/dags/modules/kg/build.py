@@ -84,16 +84,20 @@ review taxonomy already got for entry_type:
 
 What an entry becomes
 ---------------------
-Every field the parser extracts is carried somewhere, with two deliberate
-exceptions, both documented rather than silent:
+Every field the parser extracts is carried somewhere — no exceptions, as
+of 5.1.0 — except the pipeline-internal stamps (``dom_content_sha256``,
+``corpus_policy_version``, ``schema_version``), which are provenance of
+the pipeline rather than of the meme and stay in ``entries``.
 
-  * the Origin and Spread SECTIONS (their text, images, and the anchor text
-    of links inside them) are deferred to the event-extraction task —
-    ``DEFERRED_SECTION_KINDS``. Links inside them still feed the
-    frame-level ``relatesToMeme`` / ``citesExternal`` edges, as before.
-  * pipeline-internal stamps (``dom_content_sha256``,
-    ``corpus_policy_version``, ``schema_version``) are provenance of the
-    pipeline, not of the meme, and stay in ``entries``.
+Until 5.1.0 the Origin and Spread SECTIONS were the standing exception,
+deferred to the event-extraction task: their text, their images, and the
+anchor text of links inside them were all withheld, while the links
+themselves still fed the frame-level ``relatesToMeme`` /
+``citesExternal`` edges. All three are now carried like any other
+section's — the text as ``origin_text`` / ``spread_text``
+(``NARRATIVE_SECTION_PROPERTIES``), the rest by simply no longer being
+special-cased. Events extracted FROM that text are a separate layer
+(kg/events.py) passed into this function as data.
 
 The ``origin`` FIELD is not the Origin section: it is the infobox's free-text
 Origin line ("TikTok", "United States", "The Simpsons", ...), which IMKG
@@ -117,10 +121,14 @@ Node kinds
     badge_concept       "badge:<label>"       (mk:BadgeScheme)
     external_ref        a non-KYM url
     image               "image:<src url>"
+    event               "event:<id>"          (6.0.0; mk:Event, DERIVED —
+                        see kg/events.py and "What becomes a node" below)
 
 Edge types
     hasEntryType  hasTag  hasRegion  hasOrigin  hasBadge  partOfSeries
-    relatesToMeme  citesExternal  hasImage
+    relatesToMeme  citesExternal  hasImage  hasEvent
+  and, from an event node: eventLink  eventCitation  eventEmbed  eventImage
+  eventDateAnchor
   plus the concept edges ``subTypeOf`` (kg/taxonomy.py, kg/origin.py) and
   ``coOccursWith`` (kg/cooccurs.py, tags only as of 5.0.1) — neither
   emitted by this function.
@@ -132,35 +140,63 @@ kind. In RDF both are the same resource, which is correct there.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Callable
+from datetime import datetime, timedelta, timezone
+from typing import Callable, Sequence
 from urllib.parse import urlparse
 
 from . import tag_normalize
 
 _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 
-# 5.0.1: entry_type's statistical coOccursWith edges removed (curator
-# feedback: needless alongside the curated subTypeOf hierarchy) — tags
-# keep theirs, since tags have no curated alternative. 5.0.0: badges and
-# origin promoted from frame literals / a literal string to concepts
+# 6.0.0: the event layer. Events extracted from the Origin/Spread
+# narrative (kg/events.py, modules/event_store.py) become `event` nodes
+# with an mk:hasEvent edge from their frame. MAJOR because it amends the
+# graph's foundational rule — see "What becomes a node" below: an event is
+# the first IRI MemeAtlas mints for page-derived content since 4.0.0
+# dissolved the section/link/reference nodes, and the first node in the
+# graph that is DERIVED (a model's reading) rather than parsed.
+# 5.1.0: the Origin/Spread deferral is lifted — their text becomes the
+# frame's origin_text/spread_text (IMKG's m4s:origin/m4s:spread), and their
+# images and link anchor text now reach the graph like every other
+# section's. 5.0.1: entry_type's statistical coOccursWith edges removed
+# (curator feedback: needless alongside the curated subTypeOf hierarchy) —
+# tags keep theirs, since tags have no curated alternative. 5.0.0: badges
+# and origin promoted from frame literals / a literal string to concepts
 # (badge_concept/hasBadge, origin_concept/hasOrigin); tags plural-folded
 # (kg/tag_normalize.py). Bumping this makes the staleness gate rebuild.
-KG_BUILD_VERSION = "5.0.1"
+KG_BUILD_VERSION = "6.0.0"
 
 NODE_KINDS: tuple[str, ...] = (
     "frame", "frame_stub", "entry_type_concept", "tag_concept",
     "region_concept", "origin_concept", "badge_concept", "external_ref",
-    "image",
+    "image", "event",
 )
 EDGE_TYPES: tuple[str, ...] = (
     "hasEntryType", "hasTag", "hasRegion", "hasOrigin", "hasBadge",
-    "partOfSeries", "relatesToMeme", "citesExternal", "hasImage",
+    "partOfSeries", "relatesToMeme", "citesExternal", "hasImage", "hasEvent",
+    "eventLink", "eventCitation", "eventEmbed", "eventImage",
+    "eventDateAnchor",
 )
 
-# Handled by the event-extraction task. One constant, so lifting the
-# deferral is a one-line change.
-DEFERRED_SECTION_KINDS: frozenset[str] = frozenset({"origin", "spread"})
+# The three narrative sections IMKG keeps as frame literals, mapped to the
+# frame property each one becomes. Every OTHER section with text goes into
+# ``section_texts``, so a kind listed here must never be emitted twice.
+#
+# 5.1.0 replaced DEFERRED_SECTION_KINDS = {"origin", "spread"} with this.
+# The deferral withheld three separate things from the graph — the section
+# text, the images inside those sections, and the anchor text of links
+# inside them — which made "every field the parser extracts reaches the
+# graph" false in a way no test could state cleanly. All three are lifted:
+# the text lands here, the images and anchor text simply stop being
+# special-cased. The events themselves are a SEPARATE layer over this text
+# (kg/events.py, modules/event_store.py) and are passed in as data.
+#
+# The frame property is ``origin_text``, NOT ``origin``: FRAME_PROPERTIES
+# already has ``from``, which comes from entry["origin"] — the infobox
+# line, a different field entirely (see below).
+NARRATIVE_SECTION_PROPERTIES: dict[str, str] = {
+    "about": "about", "origin": "origin_text", "spread": "spread_text",
+}
 
 # The frame's literal-valued properties, in the order kg/rdf.py and
 # kg/serialize.py render them. List-valued ones are marked. "badges" left
@@ -169,13 +205,47 @@ DEFERRED_SECTION_KINDS: frozenset[str] = frozenset({"origin", "spread"})
 # uncanonicalized origin string) stays a literal; origin_concept/hasOrigin
 # is an added layer, not a replacement — see kg/origin.py.
 FRAME_PROPERTIES: tuple[str, ...] = (
-    "label", "category", "status", "year", "from", "about", "description",
-    "added", "last_updated", "aliases", "section_texts",
-    "corpus_status", "corpus_missing", "parser_version", "parsed_at",
-    "scraped_at",
+    "label", "category", "status", "year", "from", "about", "origin_text",
+    "spread_text", "description", "added", "last_updated", "aliases",
+    "section_texts", "corpus_status", "corpus_missing", "parser_version",
+    "parsed_at", "scraped_at",
 )
 LIST_PROPERTIES: frozenset[str] = frozenset(
     {"aliases", "section_texts", "corpus_missing"})
+
+# An event node's properties, in the order kg/rdf.py and kg/serialize.py
+# render them. Populated from an `events` doc (modules/event_store.py),
+# which got them from kg/events.py, which got them from the model under
+# kg_config/event_extraction_schema.json.
+#
+# ``date`` is carried for Mongo and Neo4j but emits NO triple: it is
+# recoverable from (date_start, date_precision), and as a CSV column of
+# bare years it is the one value in the whole RML surface that pandas
+# could infer as a number inside morph-kgc. This project has already lost
+# two triples to dtype inference (the real KYM tags spelled "null", which
+# is why morph_kgc.ini runs with na_values empty); one such column is
+# enough.
+EVENT_PROPERTIES: tuple[str, ...] = (
+    "source_text", "source_section", "date", "date_precision",
+    "date_basis", "date_text", "date_start", "date_end", "location", "location_type",
+    "certainty", "actors", "extraction_model", "extraction_version",
+)
+
+# Edges FROM an event node (6.0.0, extraction 2.0.0) to what kg/events.py
+# attached to it by position — never chosen by the model. Every target is
+# already a node: section links and references produce frame-level
+# relatesToMeme/citesExternal targets, embeds likewise (parser 1.6.0), and
+# section photos are image nodes.
+EVENT_MEDIA_EDGES: dict[str, str] = {
+    "link": "eventLink",          # a hyperlink inside the event's sentences
+    "citation": "eventCitation",  # the reference its [n] marker points to
+}
+EVENT_EMBED_EDGE = "eventEmbed"   # an embedded post shown with its paragraph
+EVENT_IMAGE_EDGE = "eventImage"   # a photo shown with its paragraph
+# A date the pipeline worked out from "that same day" points at the event it
+# was counted from, so a derived date is always traceable to a stated one.
+EVENT_DATE_ANCHOR_EDGE = "eventDateAnchor"
+EVENT_LIST_PROPERTIES: frozenset[str] = frozenset({"actors"})
 
 # The edges that carry an ``occurrences`` list, and every field an
 # occurrence may hold. kg/rdf.py, kg/serialize.py and kg/loaders.py all
@@ -242,6 +312,56 @@ def iso_utc(value) -> str | None:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+_DATE_FORMATS = {"day": "%Y-%m-%d", "month": "%Y-%m", "year": "%Y"}
+
+
+def date_range(date: str | None, precision: str) -> tuple[str | None, str | None]:
+    """An event's date at its stated precision -> (start, end), inclusive.
+
+        day    2013-05-04 -> 2013-05-04T00:00:00Z .. 2013-05-04T23:59:59Z
+        month  2013-05    -> 2013-05-01T00:00:00Z .. 2013-05-31T23:59:59Z
+        year   2013       -> 2013-01-01T00:00:00Z .. 2013-12-31T23:59:59Z
+        none / unparseable -> (None, None); an absent value emits nothing
+
+    An INTERVAL, not a point, because that is what the source actually
+    said: "early 2013" is a year, and flattening it to 2013-01-01 would
+    invent a January the page never mentioned. Keeping both ends lets
+    SPARQL range queries work without any consumer having to know the
+    precision — while mk:datePrecision still says how much was really known.
+
+    The lexical form comes from the same strftime as iso_utc, deliberately:
+    the RDF and RML paths must produce byte-identical xsd:dateTime or the
+    diff gate reports them as different. Derived HERE rather than in
+    kg/events.py because which triples to emit is a modelling decision,
+    and it keeps this module from importing an HTTP client transitively.
+    """
+    fmt = _DATE_FORMATS.get(precision or "none")
+    if not fmt or not date:
+        return None, None
+    try:
+        start = datetime.strptime(str(date), fmt).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None, None
+    if precision == "day":
+        end = start.replace(hour=23, minute=59, second=59)
+    elif precision == "month":
+        if start.month == 12:
+            nxt = start.replace(year=start.year + 1, month=1)
+        else:
+            nxt = start.replace(month=start.month + 1)
+        end = nxt - timedelta(seconds=1)
+    else:
+        end = start.replace(year=start.year + 1) - timedelta(seconds=1)
+    fmt_out = "%Y-%m-%dT%H:%M:%SZ"
+    return start.strftime(fmt_out), end.strftime(fmt_out)
+
+
+def event_node_id(event_id: str) -> str:
+    """``event:<id>``. The id itself is minted once, in kg/events.py, and
+    stored — so there is exactly one implementation of the recipe."""
+    return f"event:{event_id}"
+
+
 def _int_or_none(value) -> int | None:
     try:
         return int(value) if value not in (None, "") else None
@@ -286,17 +406,23 @@ def image_node_id(src: str) -> str:
 def _iter_links(entry: dict):
     """(url, occurrence | None) for every link-bearing field, in page order.
 
-    Links inside deferred sections yield no occurrence: their anchor text
-    is section content, deferred with the section. The frame-level edge
-    they imply predates the deferral and is still emitted.
+    5.1.0: every section's links now yield their anchor text. Until then
+    the Origin and Spread sections yielded ``None`` here — their anchor
+    text was section content, withheld with the section.
     """
     for section in entry.get("sections") or []:
-        deferred = section.get("kind") in DEFERRED_SECTION_KINDS
         for link in section.get("links") or []:
             url = link.get("url")
             if url:
-                yield url, None if deferred else _occurrence(
+                yield url, _occurrence(
                     anchor_text=link.get("text"), in_section=section.get("heading"))
+        # Parser 1.6.0: embedded posts (a TikTok, a tweet, a reel). A link
+        # like any other; the platform is the site it lives on.
+        for embed in section.get("embeds") or []:
+            url = embed.get("url")
+            if url:
+                yield url, _occurrence(site_name=embed.get("platform"),
+                                       in_section=section.get("heading"))
     for ref in entry.get("additional_references") or []:
         url = ref.get("url")
         if url:
@@ -308,21 +434,25 @@ def _iter_links(entry: dict):
                                    citation_index=_int_or_none(ref.get("index")))
 
 
-def _about_text(sections: list[dict]) -> str | None:
-    """IMKG puts the About narrative on the frame (m4s:about)."""
-    paragraphs = [p for s in sections if s.get("kind") == "about"
+def _kind_text(sections: list[dict], kind: str) -> str | None:
+    """One narrative section's paragraphs, joined — IMKG keeps About,
+    Origin and Spread as literals on the frame (m4s:about, m4s:origin,
+    m4s:spread). Every matching section contributes: a page that splits
+    its Origin across two headings would otherwise silently lose one."""
+    paragraphs = [p for s in sections if s.get("kind") == kind
                   for p in (s.get("text") or []) if p]
     return "\n\n".join(paragraphs) or None
 
 
 def _section_texts(sections: list[dict]) -> list[str]:
     """Every other section that has text, as ``heading\\n\\ntext``, in page
-    order. About is ``about``; deferred kinds are deferred; a section with
-    no paragraphs (galleries, embeds, the references list) has nothing to
-    say and is not kept."""
+    order. The three narrative kinds are frame properties of their own
+    (NARRATIVE_SECTION_PROPERTIES) and must not double-emit here; a section
+    with no paragraphs (galleries, embeds, the references list) has nothing
+    to say and is not kept."""
     out = []
     for section in sections:
-        if section.get("kind") in DEFERRED_SECTION_KINDS or section.get("kind") == "about":
+        if section.get("kind") in NARRATIVE_SECTION_PROPERTIES:
             continue
         body = "\n\n".join(p for p in (section.get("text") or []) if p)
         if not body:
@@ -336,6 +466,7 @@ def build_nodes_and_edges(
         entry: dict, *,
         origin_resolver: Callable[[str], str] | None = None,
         tag_denylist: frozenset[str] = frozenset(),
+        events: Sequence[dict] = (),
 ) -> tuple[list[dict], list[dict]]:
     """One `entries` doc (as stored by parse_store) -> (nodes, edges).
 
@@ -352,6 +483,15 @@ def build_nodes_and_edges(
     (``kg_config/tag_normalization_exceptions.yaml``). Left at its default
     empty set, plural folding still runs (it needs no external data to be
     useful) but nothing is exempted from it.
+
+    ``events`` (6.0.0) is this entry's extracted events, as stored by
+    modules/event_store.py. DATA, not a callable like ``origin_resolver``,
+    and the difference is the point: a resolver is a function OF A VALUE
+    shared by every entry, while events are per-entry data — a callable
+    would either hit Mongo once per entry or close over a pre-fetched
+    dict, which is passing data with extra indirection. Left at its
+    default, no event node or edge is emitted and every existing caller is
+    unaffected.
     """
     url = entry.get("url")
     if not url:
@@ -368,7 +508,9 @@ def build_nodes_and_edges(
         "status": entry.get("status"),
         "year": entry.get("year"),
         "from": entry.get("origin"),
-        "about": _about_text(sections),
+        "about": _kind_text(sections, "about"),
+        "origin_text": _kind_text(sections, "origin"),
+        "spread_text": _kind_text(sections, "spread"),
         "description": (meta.get("description") or meta.get("og:description")
                         or meta.get("twitter:description")),
         "added": iso_utc(entry.get("kym_added")),
@@ -432,6 +574,54 @@ def build_nodes_and_edges(
         nodes.append({"id": concept_id, "kind": "origin_concept", "label": slug})
         edge("hasOrigin", concept_id)
 
+    # -- events extracted from the Origin/Spread narrative (6.0.0) ----------
+    # The first nodes in this graph that are DERIVED rather than parsed,
+    # which is why every one carries the model that produced it: a
+    # consumer must be able to tell a model's reading from a scraped fact.
+    for ev in events:
+        event_id = ev.get("event_id")
+        if not event_id:
+            continue
+        start, end = date_range(ev.get("date"),
+                                ev.get("date_precision") or "none")
+        node_id = event_node_id(event_id)
+        nodes.append(_compact({
+            "id": node_id, "kind": "event",
+            "source_text": ev.get("source_text"),
+            "source_section": ev.get("source_section"),
+            "date": ev.get("date"),          # property graph only, no triple
+            "date_precision": ev.get("date_precision"),
+            "date_basis": ev.get("date_basis"),
+            "date_text": ev.get("date_text"),
+            "date_start": start, "date_end": end,
+            "location": ev.get("location"),
+            "location_type": ev.get("location_type"),
+            "certainty": ev.get("certainty"),
+            "actors": list(ev.get("actors") or []),
+            "extraction_model": ev.get("model"),
+            "extraction_version": ev.get("extraction_version"),
+        }))
+        edge("hasEvent", node_id)
+        # What the event was attached to, by position. Written directly
+        # rather than through edge(): that closure is the FRAME's edges.
+        attached: set[tuple[str, str]] = set()
+
+        def event_edge(etype: str, dst: str | None) -> None:
+            if dst and (etype, dst) not in attached:
+                attached.add((etype, dst))
+                edges.append({"src": node_id, "dst": dst, "type": etype})
+
+        for link in ev.get("links") or []:
+            event_edge(EVENT_MEDIA_EDGES.get(link.get("kind"), "eventLink"),
+                       link.get("url"))
+        for embed in ev.get("embeds") or []:
+            event_edge(EVENT_EMBED_EDGE, embed.get("url"))
+        for image in ev.get("images") or []:
+            if image.get("src"):
+                event_edge(EVENT_IMAGE_EDGE, image_node_id(image["src"]))
+        if ev.get("date_anchor"):
+            event_edge(EVENT_DATE_ANCHOR_EDGE, event_node_id(ev["date_anchor"]))
+
     # -- images: the page's own, then those shown in its sections ------------
     # template_image_url is currently a copy of og:image in the parser; a
     # distinct value still gets its own node rather than being dropped.
@@ -446,8 +636,6 @@ def build_nodes_and_edges(
         edge("hasImage", img["id"], _occurrence(role="page"))
 
     for section in sections:
-        if section.get("kind") in DEFERRED_SECTION_KINDS:
-            continue
         for image in section.get("images") or []:
             src = image.get("src")
             if not src:

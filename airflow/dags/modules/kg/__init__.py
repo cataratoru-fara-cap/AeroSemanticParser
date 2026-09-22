@@ -22,6 +22,16 @@ orchestration to `dags/kym_kg_dag.py`.
     metrics.py     IMKG-comparable graph statistics. Pure stdlib by design
                    — no numpy, deliberately (see its module docstring).
     semantics.py   definition-embedding analysis of entry types (LLM).
+    events.py      Origin/Spread narrative -> spatio-temporal event rows
+                   (LLM), per kg_config/event_extraction_schema.json. The
+                   rows are persisted by modules/event_store.py and handed
+                   back to build.py as data, so this module stays pure and
+                   build.py never imports an HTTP client.
+
+The two LLM modules are the only ones here that reach the network, and
+they do it exclusively through modules/openwebui_client.py. Both take the
+client as an argument rather than constructing one, so importing either
+reads no configuration and contacts nothing.
 
 Retired here, with their behaviour verified equivalent on the live corpus
 before removal: kg_census_tags.py (into census.py), kg_export.py and

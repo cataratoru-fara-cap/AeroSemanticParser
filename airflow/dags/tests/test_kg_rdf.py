@@ -362,6 +362,80 @@ class EdgeTripleTests(unittest.TestCase):
         self.assertEqual(set(rdf.NODE_CLASSES) | unclassed, set(build.NODE_KINDS))
 
 
+class EventTripleTests(unittest.TestCase):
+    """6.0.0: the event node — MemeAtlas's first minted content IRI."""
+
+    MK = rdf.PREFIXES["mk"]
+    ID = "event:abc123def456-0011223344"
+    IRI = "https://meme4.science/atlas/event/abc123def456-0011223344"
+
+    def event(self, **over):
+        node = {"id": self.ID, "kind": "event",
+                "source_text": "Posted in 2010.",
+                "source_section": "origin", "date": "2010",
+                "date_precision": "year", "date_text": "2010",
+                "date_start": "2010-01-01T00:00:00Z",
+                "date_end": "2010-12-31T23:59:59Z",
+                "location": "Tumblr", "location_type": "platform",
+                "certainty": "unconfirmed", "actors": ["Atsuko Sato", "u/k"],
+                "extraction_model": "ministral-3:14b",
+                "extraction_version": "1.0.0"}
+        node.update(over)
+        return node
+
+    def lines(self, **over):
+        return triples([frame(), self.event(**over)],
+                       [{"src": FRAME, "type": "hasEvent", "dst": self.ID}])
+
+    def test_the_iri_is_minted_under_mk_event(self):
+        self.assertEqual(rdf.node_iri(self.ID), self.IRI)
+
+    def test_the_event_is_an_mk_event_and_nothing_foreign(self):
+        out = self.lines()
+        self.assertIn(f"<{self.IRI}> <{rdf.RDF_TYPE}> <{self.MK}Event> .", out)
+        # Aligned to sem:Event in the ontology, never emitted as one.
+        self.assertFalse([t for t in out if "semanticweb.cs.vu.nl" in t])
+
+    def test_the_frame_points_at_the_event(self):
+        self.assertIn(f"<{FRAME}> <{self.MK}hasEvent> <{self.IRI}> .", self.lines())
+
+    def test_the_interval_is_typed_xsd_datetime(self):
+        out = self.lines()
+        self.assertIn(f'<{self.IRI}> <{self.MK}eventStart> '
+                      f'"2010-01-01T00:00:00Z"^^<{rdf.XSD_DATETIME}> .', out)
+        self.assertIn(f'<{self.IRI}> <{self.MK}eventEnd> '
+                      f'"2010-12-31T23:59:59Z"^^<{rdf.XSD_DATETIME}> .', out)
+
+    def test_every_actor_is_its_own_triple(self):
+        actors = [t for t in self.lines() if f"<{self.MK}eventActor>" in t]
+        self.assertEqual(len(actors), 2)
+
+    def test_attached_media_hang_off_the_event_not_the_frame(self):
+        img = "https://i.kym-cdn.com/photos/images/original/000/1.jpg"
+        out = triples([frame(), self.event()],
+                      [{"src": self.ID, "type": "eventImage", "dst": "image:" + img},
+                       {"src": self.ID, "type": "eventLink", "dst": EXTERNAL}])
+        self.assertIn(f"<{self.IRI}> <{self.MK}eventImage> <{img}> .", out)
+        self.assertIn(f"<{self.IRI}> <{self.MK}eventLink> <{EXTERNAL}> .", out)
+
+    def test_the_bare_date_emits_no_triple(self):
+        # Recoverable from (eventStart, datePrecision); see NODE_LITERALS.
+        self.assertFalse([t for t in self.lines() if '"2010" .' in t
+                          and "dateText" not in t])
+
+    def test_hedging_and_provenance_reach_the_graph(self):
+        out = self.lines()
+        self.assertIn(f'<{self.IRI}> <{self.MK}certainty> "unconfirmed" .', out)
+        self.assertIn(f'<{self.IRI}> <{self.MK}extractionModel> "ministral-3:14b" .', out)
+        self.assertIn(f'<{self.IRI}> <{self.MK}sourceText> "Posted in 2010." .', out)
+
+    def test_an_undated_event_has_no_interval(self):
+        out = self.lines(date=None, date_precision="none",
+                         date_start=None, date_end=None, date_text=None)
+        self.assertFalse([t for t in out if "eventStart" in t or "eventEnd" in t])
+        self.assertIn(f'<{self.IRI}> <{self.MK}datePrecision> "none" .', out)
+
+
 class SetSemanticsTests(unittest.TestCase):
     """RDF is a set; the property-graph edge list is a bag."""
 

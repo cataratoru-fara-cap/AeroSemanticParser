@@ -18,10 +18,11 @@
 # the sources below are exactly the files serialize.py writes.
 #
 # Conventions shared with IMKG: frame IRIs are the live KYM URL; no blank
-# nodes; N-Triples output. MemeAtlas mints no IRIs of its own for page
-# content: since 4.0.0 a node is only something that can be shared (a frame,
-# a type, an image, a URL), and what belongs to one mention of a target is an
-# RDF-star annotation on the quoted edge (the "occurrence" mappings below).
+# nodes; N-Triples output. Since 4.0.0 a node is only something that can be
+# shared (a frame, a type, an image, a URL), and what belongs to one mention
+# of a target is an RDF-star annotation on the quoted edge (the "occurrence"
+# mappings below). The one exception is 6.0.0's mk:Event — a reified
+# statement whose attributes must stay grouped; see MODEL.md.
 #
 # Deliberate differences from IMKG (also in rdf.py's docstring):
 #   - m4s:year is xsd:integer and m4s:added / m4s:last_update_source are
@@ -41,10 +42,11 @@
 # coOccursWith has no RDF mapping at all: tags are m4s:tag literals, no
 # resource to attach a triple to — property-graph-only, unconditionally.
 #
-# Not yet mapped: the Origin and Spread sections (text, images, anchor text),
-# deferred to the event-extraction task — they will map to IMKG's m4s:origin
-# and m4s:spread. Links inside them still feed mk:relatesToMeme /
-# mk:citesExternal.
+# 5.1.0: the Origin and Spread sections are no longer deferred. Their text
+# maps to IMKG's m4s:origin / m4s:spread — DATATYPE properties, as IMKG
+# keeps all three narrative sections as literals on the frame — and their
+# images and link anchor text now flow through the same image_edges.csv /
+# *_occurrences.csv as every other section's.
 #
 # RDF-star: each *_occurrences.csv has a row per mention. Its *_edge mapping
 # is quotedNonAsserted (morph-kgc still asserts it; the same triple already
@@ -86,6 +88,8 @@ mappings:
       - [m4s:year, $(year), xsd:integer]
       - [m4s:from, $(from)]
       - [m4s:about, $(about)]
+      - [m4s:origin, $(origin_text)]
+      - [m4s:spread, $(spread_text)]
       - [m4s:added, $(added), xsd:dateTime]
       - [m4s:last_update_source, $(last_updated), xsd:dateTime]
       - [mk:description, $(description)]
@@ -269,6 +273,91 @@ mappings:
     subjects: $(url)
     po:
       - [mk:hasImage, $(image)~iri]
+
+  # ---- MemeAtlas: events extracted from the Origin/Spread narrative (6.0.0) --
+  # The one IRI MemeAtlas mints for page-derived content. The id is minted
+  # by modules/kg/events.py and stored, so both paths read the same string
+  # rather than each deriving it. mk:Event is aligned to sem:Event and
+  # schema:Event in memeatlas.ttl and neither is emitted here — the same
+  # treatment mk:Image gets against schema:ImageObject.
+  #
+  # There is no `date` column on purpose: the event's date reaches RDF only
+  # as the (eventStart, eventEnd) interval plus mk:datePrecision. See
+  # modules/kg/rdf.py's NODE_LITERALS["event"].
+  event:
+    sources:
+      - [rml_data/events.csv~csv]
+    subjects: $(iri)
+    po:
+      - [a, mk:Event]
+      - [mk:sourceText, $(source_text)]
+      - [mk:sourceSection, $(source_section)]
+      - [mk:datePrecision, $(date_precision)]
+      - [mk:dateBasis, $(date_basis)]
+      - [mk:dateText, $(date_text)]
+      - [mk:eventStart, $(date_start), xsd:dateTime]
+      - [mk:eventEnd, $(date_end), xsd:dateTime]
+      - [mk:eventLocation, $(location)]
+      - [mk:locationType, $(location_type)]
+      - [mk:certainty, $(certainty)]
+      - [mk:extractionModel, $(extraction_model)]
+      - [mk:extractionVersion, $(extraction_version)]
+
+  # SEM's fourth question. One row per actor, like frame_aliases.csv —
+  # keyed by the event IRI rather than by a frame url.
+  event_actor:
+    sources:
+      - [rml_data/event_actors.csv~csv]
+    subjects: $(iri)
+    po:
+      - [mk:eventActor, $(actor)]
+
+  has_event:
+    sources:
+      - [rml_data/event_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:hasEvent, https://meme4.science/atlas/event/$(event)~iri]
+
+  # What an event was attached to BY POSITION (extraction 2.0.0) — the
+  # links inside its sentences, the references its [n] markers cite, and
+  # the embeds and photos shown with its paragraph. Never the model's pick.
+  event_link:
+    sources:
+      - [rml_data/event_link_edges.csv~csv]
+    subjects: https://meme4.science/atlas/event/$(event)
+    po:
+      - [mk:eventLink, $(target_url)~iri]
+
+  event_citation:
+    sources:
+      - [rml_data/event_citation_edges.csv~csv]
+    subjects: https://meme4.science/atlas/event/$(event)
+    po:
+      - [mk:eventCitation, $(target_url)~iri]
+
+  event_embed:
+    sources:
+      - [rml_data/event_embed_edges.csv~csv]
+    subjects: https://meme4.science/atlas/event/$(event)
+    po:
+      - [mk:eventEmbed, $(target_url)~iri]
+
+  event_image:
+    sources:
+      - [rml_data/event_image_edges.csv~csv]
+    subjects: https://meme4.science/atlas/event/$(event)
+    po:
+      - [mk:eventImage, $(image)~iri]
+
+  # A date worked out from "that same day" points at the event it was
+  # counted from (extraction 2.1.0).
+  event_date_anchor:
+    sources:
+      - [rml_data/event_date_anchor_edges.csv~csv]
+    subjects: https://meme4.science/atlas/event/$(event)
+    po:
+      - [mk:dateAnchoredTo, https://meme4.science/atlas/event/$(anchor)~iri]
 
   # ---- MemeAtlas: occurrences, as RDF-star annotations -----------------------
 

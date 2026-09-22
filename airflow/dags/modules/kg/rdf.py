@@ -150,6 +150,14 @@ NODE_CLASSES: dict[str, tuple[str, ...]] = {
     "origin_concept": (SKOS + "Concept",),
     "badge_concept": (SKOS + "Concept",),
     "image": (MK + "Image",),
+    # 6.0.0. mk:Event is aligned to sem:Event (EventKG's own base) and
+    # schema:Event in memeatlas.ttl, but MemeAtlas emits only its own term
+    # — the same treatment mk:Image gets against schema:ImageObject.
+    # Aligning costs one @prefix line in the ontology; EMITTING a foreign
+    # class would cost an entry in PREFIXES, one in the YARRRML prefixes
+    # block, a member of constant_classes(), and ~120k redundant triples
+    # asserting a class MemeAtlas does not own and cannot comment on.
+    "event": (MK + "Event",),
 }
 
 # node kind -> (property, predicate, datatype | None). A list-valued
@@ -162,6 +170,12 @@ NODE_LITERALS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
         ("year", M4S + "year", XSD_INTEGER),
         ("from", M4S + "from", None),
         ("about", M4S + "about", None),
+        # 5.1.0: IMKG's own terms for the two narrative sections that used
+        # to be deferred. They are DATATYPE properties there — IMKG keeps
+        # About/Origin/Spread as literals on the frame — so the event layer
+        # hangs off mk: terms of its own rather than re-typing these.
+        ("origin_text", M4S + "origin", None),
+        ("spread_text", M4S + "spread", None),
         ("added", M4S + "added", XSD_DATETIME),
         ("last_updated", M4S + "last_update_source", XSD_DATETIME),
         ("description", MK + "description", None),
@@ -186,6 +200,31 @@ NODE_LITERALS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
         ("width", MK + "width", XSD_INTEGER),
         ("height", MK + "height", XSD_INTEGER),
     ),
+    # 6.0.0. ``date`` is deliberately ABSENT: it is recoverable from
+    # (eventStart, datePrecision), and a CSV column of bare years is the
+    # one value in the whole RML surface pandas could read as a number
+    # inside morph-kgc — the same family of bug as the two real KYM tags
+    # spelled "null" that forced na_values to be empty. ``actors`` is
+    # list-valued, so it yields one triple per actor.
+    "event": (
+        ("source_text", MK + "sourceText", None),
+        ("source_section", MK + "sourceSection", None),
+        ("date_precision", MK + "datePrecision", None),
+        ("date_basis", MK + "dateBasis", None),
+        ("date_text", MK + "dateText", None),
+        # xsd:dateTime, not xsd:date: sem:hasBeginTimeStamp's range is
+        # dateTime, so xsd:date under an rdfs:subPropertyOf would be a
+        # range mismatch — and it keeps build.iso_utc's strftime the one
+        # place this repo formats a timestamp.
+        ("date_start", MK + "eventStart", XSD_DATETIME),
+        ("date_end", MK + "eventEnd", XSD_DATETIME),
+        ("location", MK + "eventLocation", None),
+        ("location_type", MK + "locationType", None),
+        ("certainty", MK + "certainty", None),
+        ("actors", MK + "eventActor", None),
+        ("extraction_model", MK + "extractionModel", None),
+        ("extraction_version", MK + "extractionVersion", None),
+    ),
 }
 
 # edge type -> (predicate, object is a literal?, inverse predicate | None)
@@ -200,6 +239,13 @@ EDGE_PREDICATES: dict[str, tuple[str, bool, str | None]] = {
     "citesExternal": (MK + "citesExternal", False, None),
     "subTypeOf": (RDFS + "subClassOf", False, None),
     "hasImage": (MK + "hasImage", False, None),
+    "hasEvent": (MK + "hasEvent", False, None),      # 6.0.0
+    # From an event to what it was attached to by position (kg/events.py).
+    "eventLink": (MK + "eventLink", False, None),
+    "eventCitation": (MK + "eventCitation", False, None),
+    "eventEmbed": (MK + "eventEmbed", False, None),
+    "eventImage": (MK + "eventImage", False, None),
+    "eventDateAnchor": (MK + "dateAnchoredTo", False, None),
     # coOccursWith is NOT here (5.0.1): entry_type's statistical edges were
     # removed (needless alongside its curated subTypeOf hierarchy), and
     # tags — the only remaining source — have no RDF resource to attach a
@@ -270,6 +316,8 @@ def node_iri(node_id: str) -> str:
         return MK + "origin/" + node_id[len("origin:"):]
     if node_id.startswith("badge:"):
         return MK + "badge/" + node_id[len("badge:"):]
+    if node_id.startswith("event:"):
+        return MK + "event/" + node_id[len("event:"):]
     if node_id.startswith("image:"):
         return node_id[len("image:"):]
     return node_id

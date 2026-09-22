@@ -92,6 +92,12 @@ x-airflow-common:
     MONGODB_KG_NODES_COLLECTION: ${MONGODB_KG_NODES_COLLECTION:-kg_nodes}
     MONGODB_KG_EDGES_COLLECTION: ${MONGODB_KG_EDGES_COLLECTION:-kg_edges}
     MONGODB_KG_BUILDS_COLLECTION: ${MONGODB_KG_BUILDS_COLLECTION:-kg_builds}
+    # --- Event stage (kym_events) ---
+    MONGODB_EVENTS_COLLECTION: ${MONGODB_EVENTS_COLLECTION:-events}
+    MONGODB_EVENT_FAILURES_COLLECTION: ${MONGODB_EVENT_FAILURES_COLLECTION:-event_failures}
+    # Human verdicts on the event layer (gap 08). review_store.py owns it;
+    # the dashboard's Review page is the only thing that writes to it.
+    MONGODB_EVENT_REVIEWS_COLLECTION: ${MONGODB_EVENT_REVIEWS_COLLECTION:-event_reviews}
     # Build directories (data/ is bind-mounted) and the tracked curated inputs.
     KG_DATA_DIR: /opt/airflow/data/kg
     KG_CONFIG_DIR: /opt/airflow/dags/kg_config
@@ -121,6 +127,9 @@ x-airflow-common:
     KG_CHAT_SPECIALIZATION: ${KG_CHAT_SPECIALIZATION:-}
     KG_EMBED_MODEL: ${KG_EMBED_MODEL:-}
     KG_EMBED_TIER: ${KG_EMBED_TIER:-}
+    KG_EVENTS_MODEL: ${KG_EVENTS_MODEL:-}
+    KG_EVENTS_TIER: ${KG_EVENTS_TIER:-}
+    KG_EVENTS_SPECIALIZATION: ${KG_EVENTS_SPECIALIZATION:-}
 
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
@@ -298,7 +307,12 @@ services:
     <<: *airflow-common
     command: celery worker
     restart: always
-    mem_limit: 2048m
+    # 3 GiB since 2026-09-18 (was 2 GiB). The 6.0.0 graph's morph-kgc
+    # validation peaked at 1.97 GiB with its default 16 processes and
+    # stalled at the limit; kym_kg_validate now caps it at 4 processes
+    # (1.21 GiB), and this is the headroom on top of that — the same worker
+    # also runs compute_metrics (~0.6 GiB) and the extraction tasks.
+    mem_limit: 3072m
     mem_reservation: 1024m
     networks:
       - Practice
@@ -463,6 +477,11 @@ services:
       MONGODB_KG_NODES_COLLECTION: ${MONGODB_KG_NODES_COLLECTION:-kg_nodes}
       MONGODB_KG_EDGES_COLLECTION: ${MONGODB_KG_EDGES_COLLECTION:-kg_edges}
       MONGODB_KG_BUILDS_COLLECTION: ${MONGODB_KG_BUILDS_COLLECTION:-kg_builds}
+      MONGODB_EVENTS_COLLECTION: ${MONGODB_EVENTS_COLLECTION:-events}
+      MONGODB_EVENT_FAILURES_COLLECTION: ${MONGODB_EVENT_FAILURES_COLLECTION:-event_failures}
+      # The one collection the dashboard WRITES: human verdicts on the
+      # event layer (gap 08). See dashboard/lib/review.py.
+      MONGODB_EVENT_REVIEWS_COLLECTION: ${MONGODB_EVENT_REVIEWS_COLLECTION:-event_reviews}
     ports:
       # Loopback only — the public route is http://<host>:8080/dashboard/.
       - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"

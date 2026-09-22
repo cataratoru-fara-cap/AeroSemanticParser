@@ -106,6 +106,12 @@ class Link(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str
     url: HttpUrl
+    # Where the link sits (parser 1.6.0): the index of its paragraph in the
+    # section's ``text`` list, and the character offset of its anchor text
+    # within that paragraph. Positions let a downstream reader tie a link to
+    # the exact sentence it appears in — the event layer does exactly that.
+    paragraph: int | None = None
+    offset: int | None = None
 
 
 class Image(BaseModel):
@@ -113,6 +119,23 @@ class Image(BaseModel):
     src: HttpUrl
     alt: str | None = None
     caption: str | None = None
+    # Index of the last paragraph read before this image (-1 = before the
+    # first one). KYM shows the post a paragraph describes right after it,
+    # so this is what ties a picture to the text it illustrates (1.6.0).
+    after_paragraph: int | None = None
+
+
+class Embed(BaseModel):
+    """An embedded post — a TikTok, a tweet, an Instagram reel, a video.
+
+    Until parser 1.6.0 these were not captured at all, although about half
+    of all pages carry at least one (197 of a 400-page sample, 2026-09-18),
+    and they are usually the very post the surrounding paragraph narrates.
+    """
+    model_config = ConfigDict(extra="forbid")
+    url: HttpUrl
+    platform: str
+    after_paragraph: int | None = None
 
 
 class Reference(BaseModel):
@@ -136,6 +159,7 @@ class Section(BaseModel):
     text: list[str] = Field(default_factory=list)
     links: list[Link] = Field(default_factory=list)
     images: list[Image] = Field(default_factory=list)
+    embeds: list[Embed] = Field(default_factory=list)
 
     @field_validator("heading", mode="before")
     @classmethod

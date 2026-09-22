@@ -111,7 +111,11 @@ def infer_namespace_from_url(url: str) -> str:
 # repair layer). parse_store compares this against a previously-stored
 # entries doc to decide whether a re-parse is warranted even when the
 # underlying DOM hasn't changed.
-PARSER_VERSION = "1.5.0"
+# 1.6.0: positions (Link.paragraph/offset, Image.after_paragraph) and
+# embedded posts (Section.embeds), for the event layer; see kym_models.
+# 1.6.1: anchors on the same words as the previous anchor get a position too
+# (see _locate).
+PARSER_VERSION = "1.6.1"
 
 # h2 id -> kind. Live pages give sections STABLE anchor ids, so this is the
 # primary classifier; the text alias table below is the fallback for older
@@ -245,6 +249,88 @@ def _img_dict(img) -> dict | None:
             "caption": img.get("title") or None}
 
 
+# Embedded posts, by the markup KYM actually uses — surveyed on a random
+# 400-page sample (2026-09-18): tiktok-embed (382), twitter-tweet(-lazy)
+# (122), lazy-iframe with data-src (instagram/youtube/vine/rumble ...),
+# instagram-media(-lazy), <video>, imgur-embed-pub. A plain <blockquote>
+# with no class is a text quotation, not an embed, and is not captured.
+_TWEET_URL_RE = re.compile(r"https?://(?:www\.|mobile\.)?(?:twitter|x)\.com/[^/]+/status/\d+")
+_IFRAME_PLATFORMS: tuple[tuple[str, str], ...] = (
+    ("youtube.com", "youtube"), ("youtu.be", "youtube"),
+    ("instagram.com", "instagram"), ("vine.co", "vine"),
+    ("rumble.com", "rumble"), ("streamable.com", "streamable"),
+    ("twitch.tv", "twitch"), ("vimeo.com", "vimeo"),
+    ("soundcloud.com", "soundcloud"), ("spotify.com", "spotify"),
+    ("tiktok.com", "tiktok"), ("twitter.com", "twitter"), ("x.com", "twitter"),
+    ("reddit.com", "reddit"), ("facebook.com", "facebook"),
+    ("dailymotion.com", "dailymotion"), ("bilibili.com", "bilibili"),
+)
+
+
+def _platform_of(url: str) -> str:
+    host = urlparse(url).netloc.lower()
+    for domain, platform in _IFRAME_PLATFORMS:
+        if host == domain or host.endswith("." + domain):
+            return platform
+    return "other"
+
+
+def _embed_url(el) -> tuple[str | None, str | None]:
+    """(url, platform) for one embed element, or (None, None)."""
+    classes = set(el.get("class") or [])
+    if el.name == "blockquote":
+        if "tiktok-embed" in classes:
+            return el.get("cite"), "tiktok"
+        if classes & {"twitter-tweet", "twitter-tweet-lazy", "twitter-video"}:
+            # The permalink is the date link at the END of the quote; the
+            # first link is usually a t.co link inside the tweet text.
+            for a in reversed(el.find_all("a", href=True)):
+                m = _TWEET_URL_RE.match(a["href"])
+                if m:
+                    return m.group(0), "twitter"
+            return None, None
+        if classes & {"instagram-media", "instagram-media-lazy"}:
+            link = el.get("data-instgrm-permalink")
+            if not link:
+                a = el.find("a", href=True)
+                link = a["href"] if a else None
+            return (link.split("?", 1)[0] if link else None), "instagram"
+        if "imgur-embed-pub" in classes and el.get("data-id"):
+            return f"https://imgur.com/{el['data-id']}", "imgur"
+        if classes & {"reddit-card", "reddit-embed-bq"}:
+            a = el.find("a", href=True)
+            return (a["href"] if a else None), "reddit"
+        return None, None       # a plain quotation, not an embed
+    if el.name == "iframe":
+        if "google-trends-iframe" in classes:
+            return None, None   # the Search Interest chart, not a post
+        src = el.get("data-src") or el.get("src")
+        return src, (_platform_of(src) if src else None)
+    if el.name == "video":
+        src = el.get("src")
+        if not src:
+            source = el.find("source", src=True)
+            src = source["src"] if source else None
+        return src, "video"
+    return None, None
+
+
+def _embeds(child) -> list[dict]:
+    """Every embedded post in one bodycopy child, in document order."""
+    found = ([child] if getattr(child, "name", None) in ("blockquote", "iframe", "video")
+             else [])
+    found += child.find_all(["blockquote", "iframe", "video"])
+    out: list[dict] = []
+    seen: set[str] = set()
+    for el in found:
+        raw, platform = _embed_url(el)
+        url = _clean_url(_abs(raw)) if raw else None
+        if url and url not in seen:
+            seen.add(url)
+            out.append({"url": url, "platform": platform or "other"})
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Piece extractors (each takes soup, returns plain data; parse_entry composes)
 # ---------------------------------------------------------------------------
@@ -337,6 +423,28 @@ def _external_refs(soup) -> list[dict]:
     return refs
 
 
+def _locate(para: str, needle: str, cursor: int, outer: int | None) -> int:
+    """Where an anchor's text sits in its paragraph, searching in order.
+
+    Normally the next occurrence at or after ``cursor``. But KYM often puts
+    two anchors on the SAME words — its auto-link nested inside a hand-made
+    link, ``<a …/facebook-meta><strong><em><a …/facebook>Facebook</a>…`` —
+    and before 1.6.1 the inner one was searched for past the outer one's
+    words: 445 of 237,713 links got no position, or the wrong one. So a
+    nested anchor (``outer`` = where its enclosing anchor began) is looked
+    for there first; failing everything, the nearest occurrence before the
+    cursor.
+    """
+    found = -1
+    if outer is not None:
+        found = para.find(needle, outer)
+    if found < 0:
+        found = para.find(needle, cursor)
+    if found < 0:
+        found = para.rfind(needle, 0, cursor)
+    return found
+
+
 def _sections(soup) -> list[dict]:
     body = soup.select_one("section.bodycopy")
     if not body:
@@ -361,7 +469,7 @@ def _sections(soup) -> list[dict]:
                 "heading": text,
                 "kind": _classify(child.get("id"), text),
                 "level": 2 if name == "h2" else 3,
-                "text": [], "links": [], "images": [],
+                "text": [], "links": [], "images": [], "embeds": [],
             }
             continue
         if current is None:  # content before the first heading (nav, embeds)
@@ -370,18 +478,45 @@ def _sections(soup) -> list[dict]:
             para = child.get_text(" ", strip=True)
             if para:
                 current["text"].append(para)
+            index = len(current["text"]) - 1 if para else None
+            cursor = 0          # anchors are found left to right, in order
+            spans: list[tuple] = []   # (anchor element, where its text began)
             for a in child.find_all("a", href=True):
                 url = _clean_url(_abs(a["href"]))
                 label = a.get_text(strip=True)
                 if url and label:
-                    current["links"].append({"text": label, "url": url})
+                    offset = None
+                    if para:
+                        # An anchor NESTED inside an earlier one covers some
+                        # of the same words, so it is searched for from
+                        # where that one began.
+                        outer = next((start for el, start in reversed(spans)
+                                      if el in a.parents), None)
+                        # The paragraph was joined with " ", so search for
+                        # the anchor the same way; fall back to the plain
+                        # label for anchors that are one text node anyway.
+                        for needle in (a.get_text(" ", strip=True), label):
+                            found = _locate(para, needle, cursor, outer)
+                            if found >= 0:
+                                offset = found
+                                spans.append((a, found))
+                                cursor = max(cursor, found + len(needle))
+                                break
+                    current["links"].append({"text": label, "url": url,
+                                             "paragraph": index,
+                                             "offset": offset})
                 elif label and a["href"].strip():
                     log.debug("Dropped unrecoverable link href %r (%r)",
                               a["href"][:120], label[:40])
+        after = len(current["text"]) - 1
         for img in child.find_all("img", class_="kym-image"):
             d = _img_dict(img)
             if d:
+                d["after_paragraph"] = after
                 current["images"].append(d)
+        for embed in _embeds(child):
+            embed["after_paragraph"] = after
+            current["embeds"].append(embed)
     flush()
     return sections
 

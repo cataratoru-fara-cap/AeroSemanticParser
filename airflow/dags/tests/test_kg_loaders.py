@@ -66,6 +66,24 @@ class LabelTests(unittest.TestCase):
         self.assertEqual(L.label_for_kind("frame"), "Frame")
 
 
+class EventPropertyTests(unittest.TestCase):
+    """6.0.0: the loader is generic, so an event needs no loader change —
+    this pins that it stays so (label, list-valued actors, no nulls)."""
+
+    def test_an_event_gets_the_event_label(self):
+        self.assertEqual(L.label_for_kind("event"), "Event")
+
+    def test_event_fields_reach_neo4j_including_the_bare_date(self):
+        props = L.node_properties({
+            "id": "event:x-y", "kind": "event", "summary": "s",
+            "date": "2010", "date_precision": "year", "location": None,
+            "actors": ["Atsuko Sato"], "certainty": "confirmed"})
+        # ``date`` has no RDF triple but IS a property-graph property.
+        self.assertEqual(props["date"], "2010")
+        self.assertEqual(props["actors"], ["Atsuko Sato"])
+        self.assertNotIn("location", props)      # Neo4j cannot store null
+
+
 class Neo4jLoadTests(unittest.TestCase):
     def test_nodes_are_tagged_with_uid_and_build_id(self):
         d = StubDriver()

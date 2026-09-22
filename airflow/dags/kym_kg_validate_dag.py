@@ -54,6 +54,7 @@ import sys
 from datetime import timedelta
 
 from airflow.sdk import Param, dag, task
+from airflow.sdk.exceptions import AirflowSkipException
 
 from modules import kg_store as store
 
@@ -72,10 +73,21 @@ MAPPING_SRC = os.path.join(KG_CONFIG_DIR, "kg_mapping.yarrrml.yml")
 PROVENANCE_PREDICATES = frozenset(
     {"buildId", "snapshotAt", "kgBuildVersion", "taxonomyVersion"})
 
+#
+# number_of_processes is capped because morph-kgc defaults to one process
+# per CPU (16 on this host), each holding its own slice of the data, and the
+# worker container is capped (2 GiB then, 3 GiB now). Measured on the 6.0.0 full build
+# (2026-09-18): the default peaked at 1.97 GiB — hitting the cgroup limit
+# 10,163 times — and in the DAG it stalled for the whole 20-minute task
+# timeout with 4 of 96 rules unfinished. 8 processes peaked at 1.80 GiB in
+# 14 s; 4 peaked at 1.21 GiB in 17 s. The 5.1.0 lifting of the Origin/Spread
+# deferral grew the graph ~17%, which is what tipped a run that had been
+# sitting at the edge. Three seconds is a cheap price for the headroom.
 MORPH_INI = """[CONFIGURATION]
 output_file = rml_output.nt
 output_format = N-TRIPLES
 na_values =
+number_of_processes = 4
 
 [DataSource1]
 mappings = kg_mapping.rml.ttl
@@ -122,7 +134,28 @@ def kym_kg_validate_dag():
         for required in ("graph.nt", "manifest.json", "rml_data"):
             if not os.path.exists(os.path.join(build_dir, required)):
                 raise RuntimeError(f"build {bid} is missing {required} in {build_dir}")
-        log.info("Validating build %s in %s", bid, build_dir)
+
+        # The gate compares two derivations of ONE build, so the mapping and
+        # the build have to be the same generation. Validating an older
+        # build with today's mapping is meaningless, and fails deep inside
+        # morph-kgc ("No such file: rml_data/events.csv" — the weekly run of
+        # 2026-09-20, against a 5.0.1 build, once the event layer landed).
+        # Skipped rather than failed: nothing is wrong with either the build
+        # or the mapping, they are just from different versions.
+        from modules.kg import build as kg_build
+        from modules.kg import serialize
+        manifest = serialize.load_manifest(build_dir)
+        built_with = (manifest.get("stamps") or {}).get("kg_build_version")
+        missing = sorted(name for name in serialize.all_rml_files()
+                         if not os.path.exists(
+                             os.path.join(build_dir, serialize.RML_DIR, name)))
+        if missing:
+            raise AirflowSkipException(
+                f"build {bid} was written by KG {built_with or 'an older version'} "
+                f"and the mapping now reads {len(missing)} source(s) it never "
+                f"wrote ({', '.join(missing[:3])}...). Validate a build made by "
+                f"KG {kg_build.KG_BUILD_VERSION}.")
+        log.info("Validating build %s (KG %s) in %s", bid, built_with, build_dir)
         return {"build_id": bid, "build_dir": build_dir}
 
     @task(execution_timeout=timedelta(minutes=5))
@@ -173,7 +206,11 @@ def kym_kg_validate_dag():
                                                 label_b="rml"))
         return verdict
 
-    @task(trigger_rule="none_failed")
+    # min_one_success, not none_failed: "none_failed" also fires when the
+    # upstream SKIPPED, so the day resolve_build first skipped (an older
+    # published build against today's mapping) report ran with no verdict
+    # and failed — turning a correct skip into a red run.
+    @task(trigger_rule="none_failed_min_one_success")
     def report(verdict: dict, params: dict | None = None,
                run_id: str | None = None) -> str:
         from modules import summary_store

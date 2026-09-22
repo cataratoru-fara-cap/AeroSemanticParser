@@ -2,6 +2,14 @@
 
 **Status:** open — not urgent (330G free on host), but growth is unbounded without action.
 
+**Update 2026-09-18 — 6.0.0 makes this grow faster.** The event layer adds,
+at full extraction coverage, on the order of 120k `mk:Event` nodes at ~10
+triples each: **roughly +1.3M triples on a ~2.7M-triple graph (+45%)**,
+all of it PUT twice per publish (build graph + default graph). 5.1.0 adds
+a little more on its own (`m4s:origin` / `m4s:spread` text on every frame
+that has those sections, plus their images and anchor texts). Nothing
+about the compaction answer below changes; its urgency does.
+
 ## What
 
 Each `kym_kg` publish does a Graph Store Protocol `PUT` of the full

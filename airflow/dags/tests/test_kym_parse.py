@@ -42,6 +42,32 @@ class ParseDogeTests(unittest.TestCase):
             e.entry_type,
             ["animal", "character", "exploitable", "image-macro", "slang"])
 
+    def test_every_link_knows_where_it_sits(self):
+        """Parser 1.6.0. The event layer ties a link to the sentence it
+        appears in; that is only possible if the offset points at the
+        anchor's own text in its paragraph."""
+        links = [(s, l) for s in self.entry.sections for l in s.links]
+        self.assertTrue(links)
+        for s, l in links:
+            self.assertIsNotNone(l.paragraph, l.text)
+            self.assertIsNotNone(l.offset, l.text)
+            self.assertEqual(s.text[l.paragraph][l.offset:l.offset + len(l.text)],
+                             l.text)
+
+    def test_every_image_knows_which_paragraph_it_follows(self):
+        for s in self.entry.sections:
+            for i in s.images:
+                self.assertIsNotNone(i.after_paragraph)
+                self.assertLess(i.after_paragraph, max(len(s.text), 1))
+
+    def test_embedded_posts_are_captured(self):
+        # Doge embeds two Instagram reels; before 1.6.0 neither existed.
+        embeds = [e for s in self.entry.sections for e in s.embeds]
+        self.assertEqual({e.platform for e in embeds}, {"instagram"})
+        self.assertEqual(len(embeds), 2)
+        self.assertTrue(all("instagram.com/reel/" in str(e.url) for e in embeds))
+        self.assertTrue(all("?" not in str(e.url) for e in embeds))  # no utm_*
+
     def test_tags_nonempty_and_deduped(self):
         self.assertIn("shiba inu", self.entry.tags)
         self.assertEqual(len(self.entry.tags), len({t.lower() for t in self.entry.tags}))
@@ -178,6 +204,80 @@ class MalformedUrlRepairTests(unittest.TestCase):
         urls = [str(l.url) for l in entry.sections[0].links]
         self.assertEqual(urls, ["https://knowyourmeme.com/memes/rickroll",
                                 "https://knowyourmeme.com/memes/doge"])
+
+
+class EmbedShapeTests(unittest.TestCase):
+    """One case per embed shape found on a 400-page sample (2026-09-18)."""
+
+    def embeds(self, html):
+        from bs4 import BeautifulSoup
+        from modules.kym_parse import _embeds
+        soup = BeautifulSoup(f"<div>{html}</div>", "lxml")
+        return [(e["platform"], e["url"]) for e in _embeds(soup.div)]
+
+    def test_tiktok_uses_the_cite_attribute(self):
+        self.assertEqual(self.embeds(
+            '<blockquote class="tiktok-embed" cite="https://www.tiktok.com/@a/video/1">'
+            '<a href="https://www.tiktok.com/@a?refer=embed">@a</a></blockquote>'),
+            [("tiktok", "https://www.tiktok.com/@a/video/1")])
+
+    def test_a_tweet_is_its_permalink_not_the_first_tco_link(self):
+        self.assertEqual(self.embeds(
+            '<blockquote class="twitter-tweet-lazy"><p>lol <a href="https://t.co/x">'
+            'pic</a></p>&mdash; A (@a) <a href="https://twitter.com/a/status/42?ref_src=tw">'
+            'May 1, 2025</a></blockquote>'),
+            [("twitter", "https://twitter.com/a/status/42")])
+
+    def test_lazy_iframes_use_data_src(self):
+        self.assertEqual(self.embeds(
+            '<iframe class="lazy-iframe" data-src="https://www.youtube.com/embed/abc"></iframe>'
+            '<iframe class="vine-embed lazy-iframe" data-src="https://vine.co/v/x/embed/simple"></iframe>'),
+            [("youtube", "https://www.youtube.com/embed/abc"),
+             ("vine", "https://vine.co/v/x/embed/simple")])
+
+    def test_instagram_permalink_loses_its_tracking_query(self):
+        self.assertEqual(self.embeds(
+            '<blockquote class="instagram-media-lazy" data-instgrm-permalink='
+            '"https://www.instagram.com/p/X/?utm_source=ig_embed"></blockquote>'),
+            [("instagram", "https://www.instagram.com/p/X/")])
+
+    def test_video_and_imgur(self):
+        self.assertEqual(self.embeds(
+            '<video controls src="https://img.ifunny.co/videos/a.mp4"></video>'
+            '<blockquote class="imgur-embed-pub" data-id="N7VqB1g"></blockquote>'),
+            [("video", "https://img.ifunny.co/videos/a.mp4"),
+             ("imgur", "https://imgur.com/N7VqB1g")])
+
+    def test_quotations_and_the_trends_chart_are_not_embeds(self):
+        self.assertEqual(self.embeds(
+            '<blockquote><p>a quoted line</p></blockquote>'
+            '<iframe class="google-trends-iframe lazy-iframe" '
+            'data-src="https://trends.google.com/trends/embed/x"></iframe>'), [])
+
+
+class LinkPositionTests(unittest.TestCase):
+    def test_two_anchors_on_the_same_words_both_get_a_position(self):
+        """Real markup (dat-boi, 2026-09-18): KYM's auto-link nested inside a
+        hand-made link. Before 1.6.1 the second anchor had no offset, so the
+        event layer could never attach it."""
+        from modules.kym_parse import _sections
+        from bs4 import BeautifulSoup
+        html = ('<section class="bodycopy"><h2 id="origin">Origin</h2>'
+                # verbatim shape from the dat-boi page
+                '<p>The <a class="internal-link" href="https://knowyourmeme.com/memes/'
+                'sites/facebook-meta"><strong><em><a class="auto-link" '
+                'href="/memes/sites/facebook">Facebook</a></em></strong></a> page '
+                'posted it on <a href="/memes/sites/facebook">Facebook</a> again.'
+                '</p></section>')
+        [section] = _sections(BeautifulSoup(html, "lxml"))
+        para = section["text"][0]
+        offsets = [l["offset"] for l in section["links"]]
+        self.assertNotIn(None, offsets)
+        for link in section["links"]:
+            self.assertEqual(para[link["offset"]:link["offset"] + len(link["text"])],
+                             link["text"])
+        self.assertEqual(offsets[0], offsets[1])            # the same words
+        self.assertGreater(offsets[2], offsets[1])          # the later mention
 
 
 class ModelGuardTests(unittest.TestCase):

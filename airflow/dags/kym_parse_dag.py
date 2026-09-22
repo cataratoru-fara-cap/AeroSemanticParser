@@ -35,6 +35,7 @@ Trigger-time params:
     namespaces     comma-separated filter, e.g. "memes" ("" = all)
     confirmed_only restrict to sitemap-confirmed URLs
     force_reparse  ignore staleness checks, re-parse every candidate
+    trigger_events trigger kym_events at the end (off for a bare re-parse)
 """
 
 from __future__ import annotations
@@ -80,6 +81,10 @@ DEFAULT_ARGS = {
         "confirmed_only": Param(True, type="boolean"),
         "force_reparse": Param(False, type="boolean",
                                description="Ignore staleness checks; re-parse everything selected"),
+        "trigger_events": Param(True, type="boolean",
+                                description="Trigger kym_events when done. Turn "
+                                            "OFF for a re-parse that should not "
+                                            "cascade into LLM extraction."),
     },
 )
 def kym_parse_dag():
@@ -190,9 +195,23 @@ def kym_parse_dag():
             stage="parse", dag_id="kym_parse",
             run_id=run_id or "manual", summary=summary)
 
-    trigger_kg = TriggerDagRunOperator(
-        task_id="trigger_kym_kg",
-        trigger_dag_id="kym_kg",
+    # The event stage sits between parse and kg: it reads `entries` and
+    # writes `events`, which the KG build then attaches to its frames.
+    # It triggers kym_kg itself when it finishes.
+    @task.short_circuit(trigger_rule="all_done")
+    def should_trigger_events(params: dict | None = None) -> bool:
+        """A re-parse of the whole corpus (a parser version bump) changes
+        every entry — and with the default on, would cascade into a full
+        LLM extraction run and a graph rebuild. Same switch as kym_events'
+        trigger_kg, for the same reason."""
+        wanted = bool((params or {}).get("trigger_events", True))
+        if not wanted:
+            log.info("trigger_events=false — leaving kym_events alone this run")
+        return wanted
+
+    trigger_events = TriggerDagRunOperator(
+        task_id="trigger_kym_events",
+        trigger_dag_id="kym_events",
         wait_for_completion=False,
     )
 
@@ -200,7 +219,7 @@ def kym_parse_dag():
     chunks = chunk_urls(urls)
     stats = parse_chunk.expand(chunk=chunks)
     summary = summarize(stats)
-    record_summary(summary) >> trigger_kg
+    record_summary(summary) >> should_trigger_events() >> trigger_events
 
 
 kym_parse_dag()

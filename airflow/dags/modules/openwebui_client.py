@@ -411,6 +411,11 @@ class ModelRequest:
     ``specialization`` None means "the requested model's own"; a value opts
     into that group; ``"any"`` ignores the grouping. ``capabilities`` are
     hard requirements (e.g. ``{"vision"}`` when sending images).
+    ``exclude_capabilities`` are hard exclusions, applied to the requested
+    model AND every fallback — e.g. ``{"thinking"}`` for a caller that must
+    not be served by a reasoning model. Without it, a same-tier fallback is
+    chosen by size alone: on the real 2026-09-18 inventory, the next four
+    after mistral-small3.2:24b were all reasoning models.
     """
 
     model: str | None = None
@@ -419,6 +424,7 @@ class ModelRequest:
     capabilities: frozenset[str] = frozenset()
     kind: str = "generation"
     allow_fallback: bool = True
+    exclude_capabilities: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.model and not self.tier:
@@ -432,6 +438,11 @@ class ModelRequest:
         if self.kind not in KINDS:
             raise ValueError(f"kind {self.kind!r} not in {KINDS}")
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
+        object.__setattr__(self, "exclude_capabilities",
+                           frozenset(self.exclude_capabilities))
+        clash = self.capabilities & self.exclude_capabilities
+        if clash:
+            raise ValueError(f"capabilities both required and excluded: {sorted(clash)}")
 
     @classmethod
     def from_env(cls, prefix: str, *, kind: str = "generation",
@@ -495,6 +506,7 @@ def resolve_candidates(inventory: Mapping[str, Sequence[ModelInfo]],
 
     def usable(m: ModelInfo) -> bool:
         return (m.kind == request.kind and required <= m.capabilities
+                and not (request.exclude_capabilities & m.capabilities)
                 and (allow_cloud or not m.is_cloud))
 
     def on_hosts(models: Iterable[ModelInfo], prefer_name: str | None) -> list[ModelInfo]:

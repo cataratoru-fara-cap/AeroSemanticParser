@@ -9,8 +9,16 @@ whether it was a shopping list or a decision.
 - **OWL / SKOS** — ontology + thesaurus vocabularies for the KG stage.
   SKOS is the lighter fit for the KYM tag/entry-type taxonomy;
   OWL if the type semantics need real inference.
-- **EventKG** — existing event knowledge graph, a candidate to align
-  `memes/events` entries against.
+- **EventKG** — reviewed for the 6.0.0 event layer, and used as a model
+  rather than a template. MemeAtlas takes SEM's what/when/where/who
+  skeleton and EventKG's rule that every statement stays traceable to its
+  source, aligns `mk:Event` and its properties to SEM in `memeatlas.ttl`
+  without emitting `sem:` terms, and does NOT adopt EventKG's per-statement
+  named graphs or its cross-source event registry. The reasons, term by
+  term, are in `dags/kg_config/MODEL.md` ("Events: drawn from EventKG, not
+  copied from it"). Aligning KYM events against EventKG's own events
+  (Wikidata-anchored) is still open, and would be the natural first
+  consumer of cross-frame event identity.
 - **Streamlit** — now in use: the analytics dashboard (`dashboard/`).
 - **Railway** — hosting option, not evaluated yet.
 

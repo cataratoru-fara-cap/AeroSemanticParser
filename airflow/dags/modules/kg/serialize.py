@@ -55,6 +55,7 @@ from modules.kg.taxonomy import CONCEPT_EDGE_TYPES
 
 __all__ = [
     "EDGE_TYPE_TO_RML_FILE", "RML_NODE_FILES", "RML_LIST_FILES", "RESERVED_COLUMNS",
+    "RML_EVENT_LIST_FILES",
     "OCCURRENCE_RML_FILES",
     "RML_CONCEPT_FILES", "PG_NODES_HEADER", "PG_EDGES_HEADER", "RML_DIR",
     "all_rml_files", "write_build", "load_manifest",
@@ -71,12 +72,27 @@ RML_NODE_FILES: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
     "frames.csv": ("frame", (
         ("url", "id"), ("title", "label"), ("category_class", "category"),
         ("status", "status"), ("year", "year"), ("from", "from"),
-        ("about", "about"), ("added", "added"), ("last_updated", "last_updated"),
+        ("about", "about"), ("origin_text", "origin_text"),
+        ("spread_text", "spread_text"),
+        ("added", "added"), ("last_updated", "last_updated"),
         ("description", "description"), ("corpus_status", "corpus_status"),
         ("parser_version", "parser_version"), ("parsed_at", "parsed_at"),
         ("scraped_at", "scraped_at"))),
     "images.csv": ("image", (
         ("iri", "id"), ("width", "width"), ("height", "height"))),
+    # 6.0.0. "iri" like images.csv, so _node_row renders it through
+    # rdf.node_iri. No column here collides with RESERVED_COLUMNS, and
+    # "date" is absent on purpose — see rdf.NODE_LITERALS["event"].
+    "events.csv": ("event", (
+        ("iri", "id"),
+        ("source_text", "source_text"), ("source_section", "source_section"),
+        ("date_precision", "date_precision"), ("date_basis", "date_basis"),
+        ("date_text", "date_text"),
+        ("date_start", "date_start"), ("date_end", "date_end"),
+        ("location", "location"), ("location_type", "location_type"),
+        ("certainty", "certainty"),
+        ("extraction_model", "extraction_model"),
+        ("extraction_version", "extraction_version"))),
 }
 
 # file -> (frame list property, value column). "badges" left 5.0.0: it is
@@ -85,6 +101,14 @@ RML_LIST_FILES: dict[str, tuple[str, str]] = {
     "frame_aliases.csv": ("aliases", "alias"),
     "frame_section_texts.csv": ("section_texts", "text"),
     "frame_corpus_missing.csv": ("corpus_missing", "missing"),
+}
+
+# 6.0.0: the same shape as RML_LIST_FILES, but for a node kind other than
+# ``frame``. Kept as its own table rather than generalising RML_LIST_FILES,
+# because that one is keyed by frame property and its rows are keyed by
+# ``url``; an event's rows are keyed by the event IRI.
+RML_EVENT_LIST_FILES: dict[str, tuple[str, str]] = {
+    "event_actors.csv": ("actors", "actor"),
 }
 
 # Concept/scheme sources with their own shape. "scheme.csv" holds one row
@@ -115,6 +139,12 @@ EDGE_TYPE_TO_RML_FILE: dict[str, tuple[str, tuple[str, str]]] = {
     "citesExternal": ("cites_edges.csv",      ("url", "target_url")),
     "subTypeOf":     ("subtype_edges.csv",    ("narrower", "broader")),
     "hasImage":      ("image_edges.csv",      ("url", "image")),
+    "hasEvent":      ("event_edges.csv",      ("url", "event")),
+    "eventLink":     ("event_link_edges.csv",     ("event", "target_url")),
+    "eventCitation": ("event_citation_edges.csv", ("event", "target_url")),
+    "eventEmbed":    ("event_embed_edges.csv",    ("event", "target_url")),
+    "eventImage":    ("event_image_edges.csv",    ("event", "image")),
+    "eventDateAnchor": ("event_date_anchor_edges.csv", ("event", "anchor")),
 }
 
 # edge type -> (occurrence csv, header): one row per occurrence, every
@@ -158,12 +188,14 @@ assert set(OCCURRENCE_RML_FILES) == set(OCCURRENCE_EDGE_TYPES), (
 def all_rml_files() -> set[str]:
     """Every file under rml_data/ a build writes."""
     return (set(RML_NODE_FILES) | set(RML_LIST_FILES) | set(RML_CONCEPT_FILES)
+            | set(RML_EVENT_LIST_FILES)
             | {name for name, _ in EDGE_TYPE_TO_RML_FILE.values()}
             | {name for name, _ in OCCURRENCE_RML_FILES.values()}
             | {ORIGIN_SUBTYPE_RML_FILE[0]})
 
 
-_ID_PREFIXES = ("type:", "tag:", "region:", "origin:", "badge:", "image:")
+_ID_PREFIXES = ("type:", "tag:", "region:", "origin:", "badge:", "image:",
+                "event:")
 
 
 def _rml_id(value: str) -> str:
@@ -262,6 +294,9 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
         list_writers = {
             prop: (name, files.open_csv(name, os.path.join(rml, name), ("url", column)))
             for name, (prop, column) in RML_LIST_FILES.items()}
+        event_list_writers = {
+            prop: (name, files.open_csv(name, os.path.join(rml, name), ("iri", column)))
+            for name, (prop, column) in RML_EVENT_LIST_FILES.items()}
         types_w = files.open_csv("types.csv", os.path.join(rml, "types.csv"),
                                  RML_CONCEPT_FILES["types.csv"])
         origins_w = files.open_csv("origin_concepts.csv",
@@ -303,6 +338,13 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
                     for value in node.get(prop) or []:
                         if value not in (None, ""):
                             writer.writerow([url, value])
+                            rows[name] += 1
+            elif kind == "event":
+                iri = rdf.node_iri(node["id"])
+                for prop, (name, writer) in event_list_writers.items():
+                    for value in node.get(prop) or []:
+                        if value not in (None, ""):
+                            writer.writerow([iri, value])
                             rows[name] += 1
             elif kind == "entry_type_concept":
                 ensure_scheme(kind)

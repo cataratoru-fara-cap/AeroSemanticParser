@@ -1,64 +1,155 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "MemeAtlas spatio-temporal event",
-  "description": "One row = one event extracted from a single KYM entry's origin/spread narrative. Sub-happenings known only by relative order, with no absolute date anchor, are merged into one row rather than split into several undated rows.",
+  "description": "One row = one event extracted from a single KYM entry's origin/spread narrative. Sub-happenings known only by relative order, with no absolute date anchor, are merged into one row rather than split into several undated rows. EXTRACTIVE ONLY: the model never writes free text. It points at sentences by number, and every textual value it does return is grounded against the section and stored in the section's own words; one with nothing behind it in the section is not stored at all. Properties marked \"x-derived\" are filled in by the pipeline (modules/kg/events.py), never by the model, and are removed from the grammar the model is given.",
   "type": "object",
-  "required": ["frame_url", "source_section", "source_text", "summary", "date_precision", "certainty"],
+  "required": [
+    "frame_url",
+    "source_section",
+    "sentences",
+    "source_text",
+    "date_precision",
+    "date_text",
+    "location",
+    "location_type",
+    "actors",
+    "certainty",
+    "date"
+  ],
   "properties": {
-
     "frame_url": {
+      "x-derived": true,
       "type": "string",
       "format": "uri",
       "description": "The KYM entry this event was extracted from — becomes the back-edge to the existing frame node when RDF-ified."
     },
-
     "source_section": {
+      "x-derived": true,
       "type": "string",
-      "enum": ["origin", "spread"],
+      "enum": [
+        "origin",
+        "spread"
+      ],
       "description": "Which narrative section this event came from."
     },
-
+    "sentences": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 1,
+      "description": "The numbers of the section's sentences that narrate this event, as numbered in the prompt; consecutive where possible. The model returns these numbers INSTEAD of quoting the text, so it cannot alter the source: the pipeline copies the text itself."
+    },
     "source_text": {
+      "x-derived": true,
       "type": "string",
-      "description": "Verbatim short quote or span the event was extracted from. Provenance — lets a wrong extraction be traced back to the exact source text later."
+      "description": "The verbatim span of the section from the first to the last of `sentences` — a substring of the section as published, citation markers included. Provenance: lets any extraction be traced back to the exact source text."
     },
-
-    "summary": {
-      "type": "string",
-      "description": "One or two sentences describing what happened. May cover several sub-happenings when they're only known by relative order and were merged into this one event."
-    },
-
     "date": {
-      "type": ["string", "null"],
-      "description": "Normalized date at the stated precision: YYYY-MM-DD, YYYY-MM, or YYYY. Null when date_precision is 'none'."
+      "x-derived": true,
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Normalized date at the stated precision (YYYY-MM-DD, YYYY-MM, YYYY), PARSED BY THE PIPELINE from date_text — never by the model. A year the words do not give is taken from the most recent year stated earlier in the section; a relative phrase is resolved against the nearest earlier dated event. Null when the words name no day."
     },
-
     "date_precision": {
+      "x-derived": true,
       "type": "string",
-      "enum": ["day", "month", "year", "none"],
-      "description": "How precise the extracted date is. 'none' covers both genuinely undated content and relative-order-only content that got merged into this row."
+      "enum": [
+        "day",
+        "month",
+        "year",
+        "none"
+      ],
+      "description": "How precise the parsed date is. 'none' covers undated content and phrases that name no day ('shortly after', 'the following week')."
     },
-
     "date_text": {
-      "type": ["string", "null"],
-      "description": "The original phrase the date was read from (e.g. 'early 2013', 'shortly after the video went viral'), kept alongside the normalized date since normalizing can lose nuance the phrase carried."
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The words the date was read from ('early 2013', 'May 4th, 2013', 'that same day'), copied exactly from the event's own sentences. This is the ONLY date field the model fills in; everything else about the date is derived from these words."
     },
-
     "location": {
-      "type": ["string", "null"],
-      "description": "Where the event happened — a geographic place, a platform (Reddit, TikTok, 4chan), or both. Free text; null if nothing extractable."
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Where the event happened — a geographic place, a platform (Reddit, TikTok, 4chan), or both — copied exactly as the section writes it. Null if nothing extractable."
     },
-
     "location_type": {
       "type": "string",
-      "enum": ["geo", "platform", "both", "unknown"],
-      "description": "Coarse tag for what kind of value 'location' holds. Optional but cheap — lets downstream RDF mapping choose the right treatment without re-parsing the string."
+      "enum": [
+        "geo",
+        "platform",
+        "both",
+        "unknown"
+      ],
+      "description": "Coarse tag for what kind of value 'location' holds. Lets downstream RDF mapping choose the right treatment without re-parsing the string."
     },
-
+    "actors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Named people, accounts, communities or organizations the section says took part, copied exactly as written ('u/Shibetoshi', '/r/dogecoin', 'Atsuko Sato') — no added qualifiers, descriptions or parentheses. Empty when none are named. This is SEM's fourth question, the 'who', alongside what/when/where."
+    },
     "certainty": {
       "type": "string",
-      "enum": ["confirmed", "disputed", "unconfirmed", "debunked"],
+      "enum": [
+        "confirmed",
+        "disputed",
+        "unconfirmed",
+        "debunked"
+      ],
       "description": "How certain this event is, per the source text's own hedging — a rumor stays a rumor in the graph rather than being flattened to fact."
+    },
+    "links": {
+      "x-derived": true,
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Every link inside the event's sentences — in-text hyperlinks (kind 'link') and the references its [n] citation markers point to (kind 'citation') — with its url. Attached by position from the parsed page, never by the model."
+    },
+    "images": {
+      "x-derived": true,
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "The photos KYM shows right after the paragraph(s) narrating the event, with alt text and caption. Attached by position, never by the model."
+    },
+    "embeds": {
+      "x-derived": true,
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "The embedded posts (TikTok, tweet, Instagram, video, ...) KYM shows right after the paragraph(s) narrating the event. Attached by position, never by the model."
+    },
+    "date_basis": {
+      "x-derived": true,
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "stated",
+        "relative",
+        null
+      ],
+      "description": "Where the date came from: 'stated' = parsed from the event's own date words; 'relative' = computed from date_anchor by the offset the words give ('that same day', 'the following day'). Absent when undated."
+    },
+    "date_anchor": {
+      "x-derived": true,
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "For a relative date, the event_id of the earlier event it was dated from — so a derived date can always be traced to the stated one behind it."
     }
   }
 }

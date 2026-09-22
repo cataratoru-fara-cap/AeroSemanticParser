@@ -15,7 +15,8 @@ and each one gets worse the longer it sits.
   three fields the parser writes are structurally wrong or always empty, and the
   KG now faithfully reproduces that.
 - [04-fuseki-disk-growth-tdb2-compaction.md](04-fuseki-disk-growth-tdb2-compaction.md) —
-  TDB2 never reclaims space when a build graph is replaced; already at 2.8G.
+  TDB2 never reclaims space when a build graph is replaced; already at 2.8G,
+  and the 6.0.0 event layer adds ~45% more triples.
 - ~~[05-postgres-weak-password-hardcoded.md](05-postgres-weak-password-hardcoded.md)~~ **(closed 2026-09-17)** —
   `POSTGRES_PASSWORD=airflow`, and it's hardcoded a second time, so editing
   `.env` alone won't even fix it.
@@ -25,6 +26,12 @@ and each one gets worse the longer it sits.
 - ~~[07-tag-cooccurs-has-no-rdf-resource.md](07-tag-cooccurs-has-no-rdf-resource.md)~~ **(closed 2026-09-18, superseded)** —
   entry_type's `coOccursWith` was removed entirely as needless statistical noise,
   so the tag-vs-entry_type RDF asymmetry this described no longer exists.
+
+- [08-event-layer-is-llm-derived.md](08-event-layer-is-llm-derived.md) —
+  every `mk:Event` is a language model's reading of one sentence and none has
+  been reviewed; grounding stops invented values, not wrong readings. Also
+  records why 2.0.0's "discard anything not verbatim" rule quietly produced
+  wrong dates, which is worth reading before writing the next such rule.
 
 Update the status line at the top of a file when a gap is closed; leave the
 file (don't delete it) so the decision trail survives.

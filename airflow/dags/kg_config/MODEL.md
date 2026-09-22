@@ -52,6 +52,8 @@ Neo4j and Mongo) to its RDF term.
 | `frame.year` | `m4s:year` (`xsd:integer`) | `year` |
 | `frame.from` | `m4s:from` | `origin` (the infobox platform) |
 | `frame.about` | `m4s:about` | the About section's text |
+| `frame.origin_text` (5.1.0) | `m4s:origin` | the Origin section's text |
+| `frame.spread_text` (5.1.0) | `m4s:spread` | the Spread section's text |
 | `frame.added` | `m4s:added` (`xsd:dateTime`) | `kym_added` |
 | `frame.last_updated` | `m4s:last_update_source` (`xsd:dateTime`) | `kym_last_updated` |
 | edge `hasEntryType` | `rdf:type kymt:<slug>` | `entry_type` |
@@ -69,7 +71,7 @@ Neo4j and Mongo) to its RDF term.
 | edge `citesExternal` | `mk:citesExternal` | ⊑ `rdfs:seeAlso` | every non-KYM link on the page or in its references |
 | `frame.description` | `mk:description` | ⊑ `schema:description` | `meta.description` |
 | `frame.aliases` | `skos:altLabel` | | `aliases` |
-| `frame.section_texts` | `mk:sectionText "<heading>\n\n<paragraphs>"` | ⊑ `schema:articleBody` | `sections[]` with text, except About (`m4s:about`) and the deferred Origin/Spread |
+| `frame.section_texts` | `mk:sectionText "<heading>\n\n<paragraphs>"` | ⊑ `schema:articleBody` | `sections[]` with text, except the three narrative kinds, each of which has an IMKG term of its own |
 | `frame.corpus_status`, `corpus_missing` | `mk:corpusStatus`, `mk:corpusMissing` | | corpus grading |
 | `frame.parser_version`, `parsed_at`, `scraped_at` | `mk:parserVersion`, `mk:parsedAt`, `mk:scrapedAt` | ⊑ PROV | provenance |
 | node `image` | `<file url> a mk:Image`; `mk:width`, `mk:height` | `mk:Image` ⊑ `schema:ImageObject` | `og_image`, `template_image_url`, `sections[].images[]`, `og:image:width/height` |
@@ -79,6 +81,22 @@ Neo4j and Mongo) to its RDF term.
 | edge `subTypeOf` (origin) (5.0.0) | `rdfs:subClassOf` between `mk:origin/` concepts | | `origin_taxonomy.yaml`, platform-like slugs only |
 | node `badge_concept` (5.0.0) | `mk:badge/<slug> a skos:Concept`; `skos:inScheme mk:BadgeScheme`; `skos:prefLabel` | | the badge vocabulary |
 | edge `hasBadge` (5.0.0) | `mk:badge` (an `owl:ObjectProperty` as of 5.0.0 — was a literal in 4.0.0) | | `badges` |
+| node `event` (6.0.0) | `mk:event/<id> a mk:Event` | `mk:Event` ⊑ `sem:Event`, ⊑ `schema:Event` | `events` collection (see [Events](#events-drawn-from-eventkg-not-copied-from-it)) |
+| edge `hasEvent` (6.0.0) | `mk:hasEvent` | | |
+| `event.source_text` | `mk:sourceText` | | the verbatim sentences it was read from, copied from the page by the pipeline (the model only points at sentence numbers) |
+| `event.source_section` | `mk:sourceSection` (`origin` / `spread`) | | |
+| `event.date_start`, `date_end` | `mk:eventStart`, `mk:eventEnd` (`xsd:dateTime`) | ⊑ `sem:hasBeginTimeStamp`, `sem:hasEndTimeStamp` | `date` at `date_precision`, as an interval |
+| `event.date_precision`, `date_text` | `mk:datePrecision`, `mk:dateText` | | |
+| `event.date_basis` (6.0.0) | `mk:dateBasis` (`stated` / `relative`) | | how the date was arrived at — the model never dates anything, it returns the words and the pipeline parses them |
+| edge `eventDateAnchor` (6.0.0) | `mk:dateAnchoredTo` | | for a relative date ("that same day"), the earlier event it was counted from |
+| `event.location`, `location_type` | `mk:eventLocation`, `mk:locationType` | not aligned (see below) | |
+| `event.certainty` | `mk:certainty` | | the source's own hedging |
+| `event.actors` | `mk:eventActor`, one triple each | ⊑ `sem:hasActor` | |
+| `event.extraction_model`, `extraction_version` | `mk:extractionModel`, `mk:extractionVersion` | ⊑ `prov:wasGeneratedBy` | which model, under which contract |
+| edge `eventLink` (6.0.0) | `mk:eventLink` | ⊑ `rdfs:seeAlso` | a hyperlink inside the event's sentences (parser 1.6.0 link positions) |
+| edge `eventCitation` (6.0.0) | `mk:eventCitation` | ⊑ `rdfs:seeAlso` | the reference an `[n]` marker in the event's sentences cites |
+| edge `eventEmbed` (6.0.0) | `mk:eventEmbed` | ⊑ `rdfs:seeAlso` | an embedded post shown right after a paragraph narrating the event (parser 1.6.0 embeds) |
+| edge `eventImage` (6.0.0) | `mk:eventImage` | ⊑ `schema:image` | a photo shown right after a paragraph narrating the event |
 
 
 ### `category` (5.0.0): no further work
@@ -194,6 +212,32 @@ nodes, from 1,738,366 to 855,932 edges, and from 4,177,478 to 2,632,847
 triples, with no parsed data dropped. The IMKG-comparable core is unchanged:
 348,751 nodes and 712,796 edges, identical to 3.0.0.
 
+### …and the one exception, 6.0.0: events
+
+A node is **also** warranted when a thing has several attributes that must
+stay grouped — a reified statement, where spreading the attributes across
+the parent would lose which value goes with which. An extracted event has
+ten co-varying attributes (what, a start and an end, a precision, where,
+what kind of where, who, how certain, which sentence, which model). As
+literals on the frame, nothing would say which date went with which
+summary — the same defect that made 4.0.0 move image captions off the
+shared image node.
+
+So `mk:event/<id>` is a node. It is:
+
+- the first IRI MemeAtlas mints for page-derived content since 4.0.0, and
+  the first minted for anything other than a concept;
+- the first node in the graph that is **derived rather than parsed** — a
+  language model's reading of a sentence. Every event carries
+  `mk:extractionModel` and `mk:sourceText` so a consumer can always tell
+  model output from scraped fact and trace it to the prose it came from.
+
+The id is `<sha1(frame url)[:12]>-<sha1(url, section, source text,
+summary)[:10]>`: content-addressed (re-extracting unchanged text mints the
+same IRI), frame-scoped (the IRI shows which entry it belongs to), and
+never all-digit (the hyphen stops pandas reading the column as a number
+inside morph-kgc). It is minted once, in `kg/events.py`, and stored.
+
 ## Deliberate differences from IMKG
 
 1. **Typed literals.** `m4s:year` is `xsd:integer`, so SPARQL range filters
@@ -216,12 +260,55 @@ triples, with no parsed data dropped. The IMKG-comparable core is unchanged:
    there was exactly one distinct badge value in the whole corpus
    ("Sensitive") at the time of the change, so this cost nothing to fix.
 
+6. **Events have no IMKG counterpart.** IMKG keeps Origin and Spread as
+   literals only; MemeAtlas keeps those literals *unchanged* (`m4s:origin`,
+   `m4s:spread`, still datatype properties) and adds the event layer
+   beside them under `mk:`, rather than re-typing IMKG's terms into object
+   properties. The `mk:` namespace grows by 20 terms (see gap 01).
+
+## Events: drawn from EventKG, not copied from it
+
+EventKG (built on SEM, the Simple Event Model) is where the shape came from.
+What was taken and what was not:
+
+| EventKG idea | MemeAtlas 6.0.0 |
+|---|---|
+| SEM's what / when / where / who | **Taken** — `mk:sourceText` / `mk:eventStart`+`mk:eventEnd`+`mk:datePrecision` / `mk:eventLocation`+`mk:locationType` / `mk:eventActor`, each aligned to its `sem:` term in `memeatlas.ttl` |
+| Every statement traceable to its source | **Taken** — `mk:sourceText` (checked to be a real substring of the prose the model saw), `mk:sourceSection`, `mk:extractionModel` |
+| Timestamps on every event | **Changed** — an interval at the precision the source gave, plus the precision itself. "early 2013" spans 2013, rather than becoming 2013-01-01 |
+| — | **Added** — `mk:certainty`: the source's own hedging (confirmed / disputed / unconfirmed / debunked), so a rumour stays a rumour |
+| Dates as the extractor states them | **Changed.** The model returns only the date WORDS, grounded in the event's own sentences (KYM states a year once and then omits it, so "June 16th, 2025" is resolved to the page's "June 16th" — never to a different date the sentences state); the pipeline parses them, takes a missing year from the most recent DATE the section states before the event's own date words (a year TOKEN is not a year context: the pilot read years out of quoted captions, festival names and "it didn't establish the year 2026"), and resolves "that same day" / "the following day" against the nearest earlier dated event — recording `mk:dateBasis` and `mk:dateAnchoredTo`. Words that name no day ("shortly after") leave the event undated rather than dated by guess |
+| Free-text event descriptions | **Refused.** The model writes no text at all: it points at sentences by number, and every value it returns (date words, place, actors) is *grounded* — resolved to the span of the section it names and stored in the section's own words, never kept as the model wrote it. See `kg/events.py`, "Extractive only" and "grounding" |
+| Per-statement named graphs (`eventKG-s:`) | **Not taken.** The graph must stay ground (`ntdiff` raises on blank nodes), `graph` is a reserved morph-kgc column, and each build already *is* a named graph |
+| One event shared by many sources | **Not in 6.0.0.** EventKG merges on Wikipedia/Wikidata anchors; there are none here, and a wrong merge destroys information where a missing one only omits a link. Because ids are frame-scoped and content-addressed, a later linking pass can add `mk:sameEventAs` edges without re-minting an IRI |
+| Emitting `sem:` terms | **Not taken** — aligned in the ontology only, like `schema:` and `prov:` (pinned by `test_event_terms_align_to_sem_without_emitting_it`) |
+
+The pipeline is its own stage, `kym_events`, between parse and kg:
+`kg/events.py` (one LLM call per Origin/Spread section, validated against
+`kg_config/event_extraction_schema.json`) → a JSONL artifact under
+`data/kg/events/` → the `events` collection (`modules/event_store.py`, one
+doc per frame and section) → `kg/build.py` as data.
+
 ## Not yet modelled
 
-- **The Origin and Spread sections** (`DEFERRED_SECTION_KINDS` in
-  `build.py`) are left to the event-extraction task. They will map to IMKG's
-  `m4s:origin` and `m4s:spread`. Links inside them already feed
-  `mk:relatesToMeme` and `mk:citesExternal`.
+- **Cross-frame event identity.** Two entries narrating the same real
+  happening get two `mk:Event` IRIs. See the EventKG table above for why,
+  and for why adding the links later needs no re-minting.
+- **`mk:sourceSection` / `mk:sourceText` on the edge.** In 6.0.0 there is
+  exactly one mention per (frame, event), so they live on the event node.
+  Once events are shared across frames they describe how *one frame*
+  narrated it, and move to an RDF-star annotation on `mk:hasEvent`.
+- **The bare `date`** (`"2013"`, `"2013-05"`) is in Mongo and Neo4j but
+  emits no triple: it is recoverable from `mk:eventStart` +
+  `mk:datePrecision`, and a column of bare years is the one value in the
+  RML surface that pandas could read as a number inside morph-kgc.
+- **Platform locations as concepts.** `mk:eventLocation` is free text. The
+  `platform` ones overlap heavily with `origin_concept`, whose alias map
+  already canonicalises them; resolving them would make every event depend
+  on `origin_taxonomy_version`, and would conflate "where the meme came
+  from" with "where this happened". Deferred, deliberately.
+- **Actors as resources.** `mk:eventActor` is a literal — usernames and
+  handles, with no identity resolution behind them.
 - **`coOccursWith` has no RDF representation, for any pair.** Originally
   (5.0.0) both `entry_type` and tags got statistical `coOccursWith`
   edges, with entry_type pairs reaching RDF and tag pairs not (tags have
@@ -251,3 +338,6 @@ triples, with no parsed data dropped. The IMKG-comparable core is unchanged:
 | The IMKG terms are used, and no `mk:` term shadows one | `tests/test_kg_vocabulary.py` |
 | Every field the parser extracts from a real page reaches the graph | `tests/test_kg_build.py::FullRecordTests` |
 | The two derivations produce the same triples on real data | `kym_kg_validate` |
+| `sem:` is aligned to in the ontology and never emitted | `tests/test_kg_vocabulary.py` |
+| An event's `source_text` is really in the section the model saw; its date matches its precision | `tests/test_kg_events.py` |
+| A re-extraction replaces a section's events, never merges them; a failing section is not retried until something changes | `tests/test_event_store.py` |

@@ -111,6 +111,9 @@ class MappingCrosswalkTests(unittest.TestCase):
                    for name, (_, cols) in serialize.RML_NODE_FILES.items()}
         headers.update({name: ("url", col)
                         for name, (_, col) in serialize.RML_LIST_FILES.items()})
+        # Event list files are keyed by the event IRI, not by a frame url.
+        headers.update({name: ("iri", col)
+                        for name, (_, col) in serialize.RML_EVENT_LIST_FILES.items()})
         headers.update(serialize.RML_CONCEPT_FILES)
         headers.update({name: header for name, header
                         in serialize.EDGE_TYPE_TO_RML_FILE.values()})
@@ -129,6 +132,7 @@ class MappingCrosswalkTests(unittest.TestCase):
     def test_no_csv_column_collides_with_morph_kgc_internals(self):
         columns = {c for _, cols in serialize.RML_NODE_FILES.values() for c, _ in cols}
         columns |= {c for _, c in serialize.RML_LIST_FILES.values()}
+        columns |= {c for _, c in serialize.RML_EVENT_LIST_FILES.values()}
         columns |= {c for cols in serialize.RML_CONCEPT_FILES.values() for c in cols}
         columns |= {c for _, cols in serialize.EDGE_TYPE_TO_RML_FILE.values() for c in cols}
         columns |= {c for _, cols in serialize.OCCURRENCE_RML_FILES.values() for c in cols}
@@ -151,6 +155,30 @@ class MappingCrosswalkTests(unittest.TestCase):
                               {p for p, _ in rdf.OCCURRENCE_PREDICATES.values()}, name)
         self.assertEqual(quoted_edges, {rdf.EDGE_PREDICATES[t][0]
                                         for t in build.OCCURRENCE_EDGE_TYPES})
+
+    def test_event_terms_align_to_sem_without_emitting_it(self):
+        """Alignment is free; emission is expensive. Pin the asymmetry.
+
+        memeatlas.ttl declares mk:Event as a subclass of sem:Event — the
+        Simple Event Model, which is what EventKG is built on — so a
+        SEM-aware consumer reads MemeAtlas events through one entailment
+        step. But no sem: term is ever EMITTED, exactly as with schema:,
+        dct: and prov:. Promoting it would mean a new entry in
+        rdf.PREFIXES, one in the mapping's prefixes block, a new member of
+        constant_classes(), and ~120k triples asserting classes MemeAtlas
+        does not own. This test exists so that promotion is a deliberate
+        act, not a tidy-up.
+        """
+        ttl = ONTOLOGY.read_text(encoding="utf-8")
+        self.assertIn("@prefix sem:", ttl)
+        for alignment in ("sem:Event", "sem:hasBeginTimeStamp",
+                          "sem:hasEndTimeStamp", "sem:hasActor"):
+            self.assertIn(alignment, ttl, alignment)
+        self.assertNotIn("sem", rdf.PREFIXES)
+        self.assertNotIn("sem", self.doc["prefixes"])
+        sem = "http://semanticweb.cs.vu.nl/2009/11/sem/"
+        emitted = rdf.all_predicates(include_provenance=True) | rdf.constant_classes()
+        self.assertEqual({t for t in emitted if t.startswith(sem)}, set())
 
     def test_every_occurrence_field_has_a_predicate(self):
         self.assertEqual(set(rdf.OCCURRENCE_PREDICATES), set(build.OCCURRENCE_FIELDS))
@@ -180,8 +208,14 @@ class ImkgAlignmentTests(unittest.TestCase):
 
     def test_imkg_terms_are_used(self):
         preds = rdf.all_predicates()
-        for local in ("title", "status", "year", "from", "about", "added",
-                      "last_update_source", "tag"):
+        # "origin"/"spread" joined in 5.1.0. They are the other half of
+        # test_no_extension_term_shadows_an_imkg_one below, which has
+        # forbidden mk:origin/mk:spread since before either was emitted:
+        # IMKG keeps all three narrative sections as frame LITERALS, so
+        # the event layer hangs off mk: terms of its own rather than
+        # re-typing these into object properties.
+        for local in ("title", "status", "year", "from", "about", "origin",
+                      "spread", "added", "last_update_source", "tag"):
             self.assertIn(self.M4S + local, preds, local)
         self.assertIn(self.M4S + "MediaFrame", rdf.constant_classes())
 

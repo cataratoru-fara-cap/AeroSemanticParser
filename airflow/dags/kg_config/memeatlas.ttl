@@ -48,6 +48,14 @@
 @prefix schema: <https://schema.org/> .
 @prefix dct:    <http://purl.org/dc/terms/> .
 @prefix prov:   <http://www.w3.org/ns/prov#> .
+# SEM, the Simple Event Model — the vocabulary EventKG is built on. Used
+# for ALIGNMENT ONLY: no sem: term is ever emitted into the graph, exactly
+# as with schema:, dct: and prov: above. Aligning costs this one line;
+# emitting a foreign vocabulary would cost an entry in kg/rdf.py's
+# PREFIXES, one in the YARRRML prefixes block, and ~120k triples asserting
+# classes MemeAtlas does not own. tests/test_kg_vocabulary.py pins that
+# asymmetry so nobody "helpfully" promotes it later.
+@prefix sem:    <http://semanticweb.cs.vu.nl/2009/11/sem/> .
 
 <https://meme4.science/atlas/> a owl:Ontology ;
     rdfs:label "MemeAtlas" ;
@@ -55,7 +63,7 @@
 MemeAtlas describes the full parsed record of each Know Your Meme entry —
 its section text, links, references, images, regions and corpus grading —
 on top of IMKG's model of media frames, which it reuses unchanged.""" ;
-    owl:versionInfo "5.0.1" ;
+    owl:versionInfo "6.0.0" ;
     rdfs:seeAlso <https://doi.org/10.1007/978-3-031-33455-9_21> ,
                  <https://github.com/riccardotommasini/imkg> ;
     prov:wasDerivedFrom <https://doi.org/10.5281/zenodo.7457166> .
@@ -135,7 +143,7 @@ mk:sectionText a owl:DatatypeProperty ;
     rdfs:subPropertyOf schema:articleBody ;
     rdfs:domain m4s:MediaFrame ;
     rdfs:label "section text" ;
-    rdfs:comment "One section of the entry page that has text, as its heading, a blank line, then its paragraphs. About is m4s:about; Origin and Spread are not yet modelled (they will be m4s:origin / m4s:spread)." .
+    rdfs:comment "One section of the entry page that has text, as its heading, a blank line, then its paragraphs. The three narrative sections are excluded, each having an IMKG term of its own: m4s:about, m4s:origin, m4s:spread." .
 
 mk:corpusStatus a owl:DatatypeProperty ;
     rdfs:domain m4s:MediaFrame ;
@@ -217,6 +225,134 @@ mk:caption a rdf:Property ;
     rdfs:subPropertyOf schema:caption ;
     rdfs:label "caption" ;
     rdfs:comment "The caption the image has on this page." .
+
+# ---------------------------------------------------------------------------
+# Events (6.0.0) — extracted from the Origin and Spread narrative by an LLM
+#
+# These are the only resources in MemeAtlas that are DERIVED rather than
+# parsed: each one is a model's reading of a sentence, not a value scraped
+# from the page. Every event therefore carries mk:extractionModel and
+# mk:sourceText, so a consumer can tell model output from scraped fact and
+# trace any row back to the exact prose it came from.
+#
+# The what/when/where/who skeleton and the traceability rule come from
+# EventKG; its per-statement named-graph reification and its cross-source
+# event registry deliberately do not. See kg_config/MODEL.md.
+# ---------------------------------------------------------------------------
+
+mk:Event a owl:Class ;
+    rdfs:subClassOf sem:Event , schema:Event ;
+    rdfs:label "Event" ;
+    rdfs:comment "One spatio-temporal happening extracted from a media frame's Origin or Spread narrative. Derived from the page by a language model, not scraped from it." .
+
+mk:hasEvent a owl:ObjectProperty ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:range mk:Event ;
+    rdfs:label "has event" ;
+    rdfs:comment "An event narrated by this entry's Origin or Spread section." .
+
+mk:sourceText a owl:DatatypeProperty ;
+    rdfs:domain mk:Event ;
+    rdfs:label "source text" ;
+    rdfs:comment "The sentences of the section this event was read from, copied verbatim from the page by the pipeline, citation markers included. The model only points at sentences by number, so it cannot alter this text; there is deliberately no model-written summary." .
+
+mk:eventLink a owl:ObjectProperty ;
+    rdfs:subPropertyOf rdfs:seeAlso ;
+    rdfs:domain mk:Event ;
+    rdfs:label "event link" ;
+    rdfs:comment "A hyperlink that appears inside the event's own sentences. Attached by the link's position on the page, never chosen by the model." .
+
+mk:eventCitation a owl:ObjectProperty ;
+    rdfs:subPropertyOf rdfs:seeAlso ;
+    rdfs:domain mk:Event ;
+    rdfs:label "event citation" ;
+    rdfs:comment "The reference that a [n] citation marker in the event's sentences points to — the page's own evidence for the event." .
+
+mk:eventEmbed a owl:ObjectProperty ;
+    rdfs:subPropertyOf rdfs:seeAlso ;
+    rdfs:domain mk:Event ;
+    rdfs:label "event embed" ;
+    rdfs:comment "An embedded post (a TikTok, a tweet, an Instagram reel, a video) shown right after a paragraph narrating the event. Position cannot tell apart two events narrated in one paragraph, so both carry its media." .
+
+mk:eventImage a owl:ObjectProperty ;
+    rdfs:subPropertyOf schema:image ;
+    rdfs:domain mk:Event ;
+    rdfs:range mk:Image ;
+    rdfs:label "event image" ;
+    rdfs:comment "A photo shown right after a paragraph narrating the event, attached by position like mk:eventEmbed." .
+
+mk:sourceSection a owl:DatatypeProperty ;
+    rdfs:domain mk:Event ;
+    rdfs:label "source section" ;
+    rdfs:comment "Which narrative section this event came from: origin or spread." .
+
+mk:eventStart a owl:DatatypeProperty ;
+    rdfs:subPropertyOf sem:hasBeginTimeStamp ;
+    rdfs:domain mk:Event ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "event start" ;
+    rdfs:comment "Start of the interval the source's date covers, at the precision the source gave. Absent when the source gave no date." .
+
+mk:eventEnd a owl:DatatypeProperty ;
+    rdfs:subPropertyOf sem:hasEndTimeStamp ;
+    rdfs:domain mk:Event ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "event end" ;
+    rdfs:comment "End of that interval, inclusive. A year-precision event spans its whole year rather than being flattened to January 1st." .
+
+mk:datePrecision a owl:DatatypeProperty ;
+    rdfs:domain mk:Event ;
+    rdfs:label "date precision" ;
+    rdfs:comment "How much of the date the source actually gave: day, month, year, or none. Read this before treating eventStart as exact." .
+
+mk:dateBasis a owl:DatatypeProperty ;
+    rdfs:domain mk:Event ;
+    rdfs:label "date basis" ;
+    rdfs:comment "Where the date came from: \"stated\" = parsed from the event's own date words; \"relative\" = counted from mk:dateAnchoredTo by the offset those words give (\"that same day\", \"the following day\"). Absent when the event is undated. The model never dates anything: it returns the words, the pipeline does the arithmetic." .
+
+mk:dateAnchoredTo a owl:ObjectProperty ;
+    rdfs:domain mk:Event ;
+    rdfs:range mk:Event ;
+    rdfs:label "date anchored to" ;
+    rdfs:comment "The earlier event a relative date was counted from, so a derived date is always traceable to a stated one." .
+
+mk:dateText a owl:DatatypeProperty ;
+    rdfs:domain mk:Event ;
+    rdfs:label "date text" ;
+    rdfs:comment "The phrase the date was read from ('early 2013', 'that same day'), kept because normalising loses the nuance it carried." .
+
+mk:eventLocation a owl:DatatypeProperty ;
+    rdfs:domain mk:Event ;
+    rdfs:label "event location" ;
+    rdfs:comment "Where it happened — a place, a platform, or both — as free text. Not aligned to sem:hasPlace: that is an object property, so a datatype property cannot be its subproperty. Resolving platforms to mk:origin/ concepts is deliberately left to a later version." .
+
+mk:locationType a owl:DatatypeProperty ;
+    rdfs:domain mk:Event ;
+    rdfs:label "location type" ;
+    rdfs:comment "What kind of value eventLocation holds: geo, platform, both, or unknown." .
+
+mk:certainty a owl:DatatypeProperty ;
+    rdfs:domain mk:Event ;
+    rdfs:label "certainty" ;
+    rdfs:comment "How certain the source itself was: confirmed, disputed, unconfirmed or debunked. A rumour stays a rumour in the graph rather than being flattened into fact." .
+
+mk:eventActor a owl:DatatypeProperty ;
+    rdfs:subPropertyOf sem:hasActor ;
+    rdfs:domain mk:Event ;
+    rdfs:label "event actor" ;
+    rdfs:comment "A person, account, community or organization the source names as taking part, verbatim as written. A literal in this version: these are usernames and handles, with no identity resolution behind them yet." .
+
+mk:extractionModel a owl:DatatypeProperty ;
+    rdfs:subPropertyOf prov:wasGeneratedBy ;
+    rdfs:domain mk:Event ;
+    rdfs:label "extraction model" ;
+    rdfs:comment "The language model that produced this event. Present on every event, because this is the one part of the graph that is inferred rather than observed." .
+
+mk:extractionVersion a owl:DatatypeProperty ;
+    rdfs:subPropertyOf prov:wasGeneratedBy ;
+    rdfs:domain mk:Event ;
+    rdfs:label "extraction version" ;
+    rdfs:comment "Version of the extraction contract (prompt, schema and validation rules) this event was produced under." .
 
 # ---------------------------------------------------------------------------
 # Build provenance (describes the published graph, not the corpus)

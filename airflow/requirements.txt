@@ -33,6 +33,13 @@ scipy>=1.11              # kg/semantics.py: linkage / fcluster / squareform
 PyYAML>=6.0              # kg/taxonomy.py, and the YARRRML vocabulary invariant
                          # test. Present transitively via Airflow; declared
                          # explicitly per this project's own rule.
+jsonschema>=4.26         # kg/events.py validates model output against the
+                         # TRACKED kg_config/event_extraction_schema.json,
+                         # which also becomes the model's own grammar — so
+                         # one hand-edited file is both what we ask for and
+                         # what we check, and the two cannot drift. Same
+                         # rule as PyYAML above: transitive via Airflow,
+                         # declared because we import it.
 
 # RML validation path only (kym_kg_validate). The product RDF is serialized
 # in-process by kg/rdf.py with no dependency at all; these two exist to

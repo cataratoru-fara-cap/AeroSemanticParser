@@ -258,7 +258,20 @@ class PointerTests(unittest.TestCase):
 class StalenessTests(unittest.TestCase):
     STAMPS = {"kg_build_version": "2.0.0", "taxonomy_version": "abc",
               "entries_count": 100, "parser_versions": ["1.5.0"],
-              "corpus_policy_versions": ["p1"], "max_parsed_at": "t0"}
+              "corpus_policy_versions": ["p1"], "max_parsed_at": "t0",
+              # 6.0.0: the event layer's stamps. Iterated by
+              # test_each_stamp_triggers_a_rebuild like every other key,
+              # so a re-extraction that changed only what the events SAY
+              # (events_total) still rebuilds the graph.
+              "events_units": 10, "events_total": 31,
+              "events_prompt_versions": ["1"],
+              "events_extraction_versions": ["1.0.0"],
+              "events_schema_shas": ["6323fdafc8996ce4"],
+              "events_max_extracted_at": "2026-09-18T09:00:00+00:00"}
+
+    def test_every_event_stamp_is_compared(self):
+        # The fixture above and the store's own list must not drift apart.
+        self.assertLessEqual(set(ks.EVENT_STAMP_KEYS), set(self.STAMPS))
 
     def test_no_published_build_is_stale(self):
         stale, why = ks.KGStore.is_stale(self.STAMPS, None)

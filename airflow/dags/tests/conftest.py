@@ -72,3 +72,37 @@ def _patch_mongomock_bulk() -> None:
 
 
 _patch_mongomock_bulk()
+
+
+# The same kind of gap, found in production rather than by a probe: pymongo's
+# Collection (and Database) refuse truth-value testing —
+#
+#     NotImplementedError: Collection objects do not implement truth value
+#     testing or bool(). Please compare with None instead
+#
+# — but mongomock's are ordinary objects and always truthy. So
+# ``collection = collection or self.events`` passed every store test and then
+# failed the first real kym_events run's summarize task. Fixed in the store;
+# made impossible to reintroduce here, by making the fake refuse bool() the
+# way the real driver does. Same rule as above: correct the fake, never
+# special-case the store.
+def _patch_mongomock_truthiness() -> None:
+    try:
+        from mongomock.collection import Collection
+        from mongomock.database import Database
+    except ImportError:      # pragma: no cover - mongomock not installed
+        return
+
+    def refuse(kind):
+        def __bool__(self):
+            raise NotImplementedError(
+                f"{kind} objects do not implement truth value testing or "
+                f"bool(). Please compare with None instead: "
+                f"{kind.lower()} is not None")
+        return __bool__
+
+    Collection.__bool__ = refuse("Collection")
+    Database.__bool__ = refuse("Database")
+
+
+_patch_mongomock_truthiness()

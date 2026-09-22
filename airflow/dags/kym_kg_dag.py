@@ -58,7 +58,8 @@ Pipeline:
                         the gate skips
     gate                skip the rest if nothing that affects the graph moved
     chunk_entries       split into mapped workloads
-    build_chunk         (mapped) stream entries -> kg/build.py -> kg_store.save_graph
+    build_chunk         (mapped) stream entries + their extracted events
+                        (6.0.0, kym_events) -> kg/build.py -> kg_store.save_graph
     materialize_stubs   one pass: a stub node for every edge target with no node
     census              entry_type frequency + co-occurrence for the taxonomy
     load_taxonomy       kg_config/entry_type_taxonomy.yaml, validated against it
@@ -260,6 +261,9 @@ def kym_kg_dag():
                               if snap["max_parsed_at"] else None),
             "snapshot_at": snap["snapshot_at"].isoformat(),
             "ready_only": snap["ready_only"],
+            # 6.0.0: what the event stage has extracted, frozen at the same
+            # instant — a re-extraction moves these and rebuilds the graph.
+            **store.extraction_stamps(snap["snapshot_at"]),
         }
         stale, reason = store.KGStore.is_stale(
             stamps, store.published_stamps(), force=p.get("force_rebuild", False))
@@ -347,7 +351,7 @@ def kym_kg_dag():
     def build_chunk(chunk: list[str], proceed: dict) -> dict:
         if not chunk:
             return {"entries": 0, "nodes_written": 0, "edges_written": 0,
-                    "stubs_deferred": 0}
+                    "stubs_deferred": 0, "frames_with_events": 0}
         import functools
         from modules.kg import origin, tag_normalize
         snapshot_at = datetime.fromisoformat(proceed["snapshot_at"])
@@ -361,17 +365,23 @@ def kym_kg_dag():
         # and edges (~500 entries -> ~20k small dicts) are buffered so
         # save_graph can bulk_write them in 1000-op batches. Re-running the
         # chunk is idempotent: every _id is build-scoped and upserted.
+        # 6.0.0: this chunk's events in ONE query, keyed by frame url (the
+        # streamed entries carry no _id — see kg_store.events_for). Small:
+        # a few KB per entry, unlike the entries themselves.
+        events_by_url = store.events_for(chunk, snapshot_at)
         nodes: list[dict] = []
         edges: list[dict] = []
         seen = 0
         for entry in store.iter_entries(chunk, snapshot_at):
             seen += 1
             n, e = kg_build.build_nodes_and_edges(
-                entry, origin_resolver=origin_resolver, tag_denylist=tag_denylist)
+                entry, origin_resolver=origin_resolver, tag_denylist=tag_denylist,
+                events=events_by_url.get(entry.get("url"), ()))
             nodes.extend(n)
             edges.extend(e)
         written = store.save_graph(proceed["build_id"], nodes, edges)
         written["entries"] = seen
+        written["frames_with_events"] = len(events_by_url)
         log.info("Chunk done — %s", written)
         return written
 

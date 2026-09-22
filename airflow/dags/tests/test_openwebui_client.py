@@ -253,6 +253,27 @@ class ResolveCandidatesTests(unittest.TestCase):
                                           capabilities=frozenset({"vision"}))}
         self.assertEqual(got, {"mistral-small3.2:24b", "qwen3.8:27b", "qwen3.6:35b"})
 
+    def test_excluded_capabilities_filter_the_request_and_its_fallbacks(self):
+        """The defect this exists for (2026-09-18): asked for a non-reasoning
+        model, the same-tier fallback chose by size alone and ranked four
+        reasoning models next. An exclusion applies to every candidate."""
+        before = [m for _, m in self.resolve(model="mistral-small3.2:24b")]
+        self.assertEqual(before[1], "qwen3.8:27b")        # what used to happen
+        got = [m for _, m in self.resolve(model="mistral-small3.2:24b",
+                                          exclude_capabilities={"thinking"})]
+        self.assertEqual(got, ["mistral-small3.2:24b", "mixtral:8x7b"])
+
+    def test_an_excluded_requested_model_is_not_served_even_by_name(self):
+        got = [m for _, m in self.resolve(model="qwen3.8:27b",
+                                          exclude_capabilities={"thinking"},
+                                          allow_fallback=False)]
+        self.assertEqual(got, [])
+
+    def test_required_and_excluded_cannot_overlap(self):
+        with self.assertRaises(ValueError):
+            owc.ModelRequest(model="x", capabilities={"thinking"},
+                             exclude_capabilities={"thinking"})
+
     def test_embedding_never_falls_back_to_a_chat_model(self):
         self.assertEqual(self.resolve(model="qwen3-embedding:0.6b", kind="embedding"),
                          [("ollama-ui", "qwen3-embedding:0.6b")])
