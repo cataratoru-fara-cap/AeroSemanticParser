@@ -50,26 +50,28 @@ if not prog["sections_total"]:
     st.stop()
 
 # -- where we are -----------------------------------------------------------
+# stat_tiles renders its value through components._fmt -> int(), so a
+# "3/60" string raises there. Denominators go in the help and the caption.
+by = prog["by_sample"]
 ui.stat_tiles([
     {"label": "Sections read", "value": prog["sections_done"],
-     "help": f"of {prog['sections_total']} drawn"},
-    {"label": "Representative",
-     "value": f"{prog['by_sample']['representative']['done']}"
-              f"/{prog['by_sample']['representative']['sections']}",
-     "help": "The headline sample: a proportional draw across section kind "
-             "and event density. Only this one's rate describes the layer."},
-    {"label": "Relative dates",
-     "value": f"{prog['by_sample']['relative']['done']}"
-              f"/{prog['by_sample']['relative']['sections']}",
-     "help": "Dates the PIPELINE computed by counting from another event. "
-             "4% of events, and an error here runs down a chain."},
-    {"label": "Non-confirmed",
-     "value": f"{prog['by_sample']['unconfirmed']['done']}"
-              f"/{prog['by_sample']['unconfirmed']['sections']}",
-     "help": "Every section holding a hedged event — 51 of them, so this "
-             "is a census rather than an estimate."},
+     "help": f"of {prog['sections_total']} drawn, holding "
+             f"{prog['events_total']} events"},
+    {"label": "Representative", "value": by["representative"]["done"],
+     "help": f"of {by['representative']['sections']}. The headline sample: a "
+             "proportional draw across section kind and event density. Only "
+             "this one's rate describes the layer as a whole."},
+    {"label": "Relative dates", "value": by["relative"]["done"],
+     "help": f"of {by['relative']['sections']}. Dates the PIPELINE computed "
+             "by counting from another event — 4% of events, and an error "
+             "here runs down a chain."},
+    {"label": "Non-confirmed", "value": by["unconfirmed"]["done"],
+     "help": f"of {by['unconfirmed']['sections']}. Every section holding a "
+             "hedged event, so this one is a census rather than an estimate."},
 ], pal)
 ui.meter("Sections reviewed", prog["sections_done"], prog["sections_total"], pal)
+st.caption(" · ".join(f"**{name}** {by[name]['done']}/{by[name]['sections']}"
+                      for name in review.SAMPLES))
 st.divider()
 
 # -- pick a section ---------------------------------------------------------
@@ -117,7 +119,6 @@ st.caption("Answer before revealing the extraction. A sentence that "
 narrating = st.multiselect(
     "Sentences that narrate something that HAPPENED",
     [s["id"] for s in doc["sentences"]],
-    default=st.session_state.get(f"narr::{doc['_id']}", []),
     key=f"narr::{doc['_id']}")
 
 covered = {i for e in doc["events"]
