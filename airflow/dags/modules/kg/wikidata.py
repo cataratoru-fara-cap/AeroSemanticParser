@@ -5,16 +5,27 @@ Pure: no Mongo, no Airflow, no network. Streams a dump that is already on
 disk into one SQLite file that kg/entities.py looks names up in:
 
     python -m modules.kg.wikidata build \
-        --dump data/wikidata/latest-all.json.gz \
+        --dump data/wikidata/wikidata-20260914-all.json.gz \
         --out  data/wikidata/lexicon.sqlite
     python -m modules.kg.wikidata info   --lexicon data/wikidata/lexicon.sqlite
     python -m modules.kg.wikidata lookup --lexicon data/wikidata/lexicon.sqlite "Shiba Inu"
 
-Getting the dump (resumable; ~156 GB as of 2026-09, ~20 h at the ~2 MB/s
-dumps.wikimedia.org gives this host — the mirrors measured no faster):
+Getting the dump (~156 GB as of 2026-09; 8.5 h at the ~5 MB/s
+dumps.wikimedia.org gave this host). Download a DATED dump, never
+``latest-all``: that name is repointed to each new weekly dump, so a
+``curl -C -`` resume against it appends the tail of a different file —
+same name, different bytes, and nothing fails until the checksum
+(2026-09-23: the 0914 download had finished, the "resume" spliced 99 MB of
+the 0921 dump onto it). Pick a date under /wikidatawiki/entities/, then:
 
-    curl -C - -o data/wikidata/latest-all.json.gz \
-        https://dumps.wikimedia.org/wikidatawiki/entities/latest-all.json.gz
+    D=20260914; F=wikidata-$D-all.json.gz
+    curl -C - -o data/wikidata/$F \
+        https://dumps.wikimedia.org/wikidatawiki/entities/$D/$F
+    curl -s https://dumps.wikimedia.org/wikidatawiki/entities/$D/wikidata-$D-md5sums.txt \
+        | grep " $F$" | (cd data/wikidata && md5sum -c -)
+
+Keep the dated file name: it goes into the lexicon's ``meta.version``, so
+the lexicon says which dump it came from.
 
 Why a local copy of Wikidata, and not an API
 --------------------------------------------
@@ -645,7 +656,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     b = sub.add_parser("build", help="Wikidata JSON dump -> lexicon.sqlite")
-    b.add_argument("--dump", required=True, help="latest-all.json.gz (or .bz2)")
+    b.add_argument("--dump", required=True, help="wikidata-YYYYMMDD-all.json.gz (or .bz2)")
     b.add_argument("--out", required=True, help="lexicon .sqlite to (re)write")
     b.add_argument("--min-sitelinks", type=int, default=1)
     b.add_argument("--workers", type=int, default=None)

@@ -80,7 +80,8 @@ section with spaCy, and links each to a **Wikidata** item, as IMKG did with
 DBpedia Spotlight (`m4s:fromAbout`, `m4s:fromTags`, plus `mk:fromTitle`).
 The linking runs against a local lexicon built from the **full Wikidata
 dump**, not an API: `python -m modules.kg.wikidata build` streams the
-~156 GB `latest-all.json.gz` into a SQLite file (`WIKIDATA_LEXICON`,
+~156 GB dump (a dated `wikidata-YYYYMMDD-all.json.gz`, checksum-verified —
+never `latest-all`, which moves weekly) into a SQLite file (`WIKIDATA_LEXICON`,
 default `data/wikidata/lexicon.sqlite`; download and build steps in
 `dags/modules/kg/wikidata.py`). Local and deterministic: the corpus links
 in minutes, and a frame is re-linked only when its text, the linker, the
