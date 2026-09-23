@@ -113,7 +113,8 @@ __all__ = [
 # Bump when THIS MODULE's contract changes — recognition, lookup keys, the
 # scoring, the threshold, the record's shape. The store re-links every frame
 # whose stored linker_version differs.
-LINKER_VERSION = "1.0.0"
+#   1.1.0  MIN_LINK_SCORE 0.50 -> 0.45, re-read on the full lexicon.
+LINKER_VERSION = "1.1.0"
 
 # Where a mention was read from. Order is page order and the graph's.
 SOURCE_FIELDS: tuple[str, ...] = ("title", "tag", "about")
@@ -123,15 +124,18 @@ METHODS: tuple[str, ...] = ("kym_id", "title", "tag", "ner", "propn", "noun_chun
 
 DEFAULT_SPACY_MODEL = "en_core_web_sm"
 
-# The winner must score at least this to be linked. PROVISIONAL (gap 09):
-# set on 404 random frames against a lexicon built from the first 5 GB of
-# the dump, where links scoring 0.45-0.50 were right about 40% of the time,
-# 0.50-0.60 about 70% and above 0.60 about 90%. That lexicon lacked many
-# of the right senses ("politics", "cake", Twitter, Ohio — the dump is not
-# in QID order), so a wrong sense often won unopposed; the number must be
-# re-read against the full lexicon. 0.5 is also the confidence IMKG gave
-# DBpedia Spotlight.
-MIN_LINK_SCORE = 0.50
+# The winner must score at least this to be linked. Read on 403 random
+# frames against the full lexicon (dump 20260914), 25 hand-judged links per
+# band — right item for the phrase in its sentence, relevance aside:
+#   0.40-0.45  12/25   0.45-0.50  18/25   0.50-0.55  18/25
+#   0.55-0.60  22/25   0.60-0.70  23/25   0.70+      23/25
+# 0.45-0.50 was as good as 0.50-0.55, so the line sits at 0.45: ~40% more
+# links than at 0.50 for ~82% estimated precision overall instead of ~86%.
+# (0.50 was set first on a 5 GB partial lexicon that lacked many right
+# senses, where 0.45-0.50 was right only ~40% of the time.) The wrong ones
+# are mostly patterns no threshold removes — a common word's other sense,
+# a nationality read as its language, a fragment of a longer name — gap 09.
+MIN_LINK_SCORE = 0.45
 
 # Ranking weights (sum 1.0). The certain link (P13484) bypasses them.
 #   prior    popularity: log Wikipedia sitelinks (kg/wikidata.prior)

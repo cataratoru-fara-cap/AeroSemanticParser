@@ -17,13 +17,29 @@ on the page, and almost never what the meme is ABOUT. They are incidental
 detail of the picture being described, not part of the media frame's
 semantic representation.
 
-Measured on 404 random frames (against a lexicon built from the first 5 GB
-of the dump, threshold 0.50): 969 links, 311 distinct items, and **two
-thirds of the About links (431 of 641) are common-noun concepts**, not
-named entities. The most frequent: *meme* (178), *animation*, *male*,
-*text*, *illustration*, *phrase*, *vein* (from "in the same vein"),
-*object*, *article*, *screenshot*. Some are useful (*selfie*, *fandom*,
-*kaiju*, *political correctness*); most are noise.
+Measured on the whole corpus (2026-09-23: full lexicon from dump
+20260914, linker 1.1.0, threshold 0.45): **282,914 links over 23,882
+frames** (11.8 per frame; 52 frames have none) to **30,449 distinct
+items**, 17,365 of them linked from a single frame. By field: About
+174,267, tags 91,111, titles 17,536. **59% of the About links (102,852 of
+174,267) come from spans with no proper noun** — common-noun concepts,
+not named entities. The items linked from the most frames: *series*
+(4,849), Twitter, TikTok, *image macro*, YouTube, *catchphrase*, *song*,
+X, *parody*, *viral video*, *game*, Reddit, *Americans*, *photograph*,
+Instagram, *film*, *popularity*, 4chan, *man*. Platforms are arguably
+relevant; *popularity*, *man*, *photograph* are the noise this gap is
+about.
+
+Worse than irrelevant, some hubs are WRONG: *series* is Q170198, the
+mathematical series ("infinite sum"), 5,531 mentions, from KYM's stock
+phrase "X is a series of …". The right sense (series of creative works,
+Q7725310) is not named "series" in Wikidata, so the maths item wins
+unopposed; and in "a series of videos" the word is a quantifier that
+names nothing. Likewise *game* (1,763 About mentions) is Q11410, games in
+general, where KYM almost always means a video game. (First measured on
+404 frames against a 5 GB partial lexicon at 0.50: 969 links, two thirds
+of the About links common nouns — *meme*, *animation*, *male*, *vein*
+from "in the same vein".)
 
 ## Why it matters
 
@@ -81,18 +97,38 @@ Whatever is chosen must be measured the way the event layer is: a drawn
 sample, a human verdict per link, a Wilson interval (see gap 08 and
 `modules/kg/review.py`).
 
-## Two things to redo when this is picked up
+## The two re-checks, done (2026-09-23, full lexicon)
 
-* **Re-read the threshold on the full lexicon.** `MIN_LINK_SCORE = 0.50`
-  is provisional: the calibration lexicon lacked many right senses
-  (politics, cake, Twitter, Ohio — the dump is not in QID order), so wrong
-  senses often won unopposed and precision was underestimated. Rough
-  precision by band there: 0.45–0.50 ≈ 40%, 0.50–0.60 ≈ 70%, ≥ 0.60 ≈ 90%.
-* **Check how often the frame's own item is found.** Frames join
-  Wikidata on the KYM slug (P13484, "Know Your Meme slug"). Only 5 of the
-  404 sampled frames found their item, but the calibration lexicon held
-  just 282 slugs, so the real rate is unknown until the full lexicon is
-  built. IMKG joined on P6760, KYM's *numeric* ID, which the parser does
-  not extract. If slug coverage turns out thin and the page exposes the
-  number, adding it to the parser would make the certain `kym_id` link
-  more common (`Lexicon.by_kym_id` is already in place).
+* **Threshold re-read → 0.45** (`MIN_LINK_SCORE`, linker 1.1.0). 403
+  random frames re-linked, 25 hand-judged links per band, judged on
+  whether the item is the right referent — not whether it matters:
+  0.40–0.45 12/25, 0.45–0.50 18/25, 0.50–0.55 18/25, 0.55–0.60 22/25,
+  0.60–0.70 23/25, 0.70+ 23/25. Estimated ~82% of links right at 0.45
+  (~86% at 0.50, with ~30% fewer links). One judge, n = 25 per band, so
+  the intervals are wide (18/25 is 52–86%). On the partial lexicon
+  0.45–0.50 had been ~40%: the missing senses were the problem.
+* **Own item found for 2,882 of 23,882 frames (12.1%)** through the KYM
+  slug (P13484). Wikidata has 3,744 items with a slug and 290 with KYM's
+  numeric ID (P6760, IMKG's join), only 251 of those without a slug — so
+  parsing the numeric ID would add at most ~250 frames.
+
+## What the wrong links are (from the same 150)
+
+Patterns that cross every score band, so no threshold removes them — they
+belong to a linker fix or to this curation step:
+
+* **a common word's other sense** — "speech" (a public address) → vocal
+  communication; "game" → games in general; a TikTok "sound" → acoustic
+  wave; "in conjunction with" → the part of speech; "series" (above);
+* **a nationality read as its language** — "Danish MP", "English
+  musician" → the languages (NER says NORP; the type feature does not
+  steer away from LANGUAGE items);
+* **a fragment of a longer name** — "Warcraft" out of *World of Warcraft*,
+  "Zoo" out of *Higashiyama Zoo*, "Kyojin" out of *Shingeki no Kyojin*;
+* **a capitalised ordinary word → a work** — "People also use…" →
+  *People* magazine, "Portrait" → a band, "powers" → a TV series;
+* two one-offs: the context feature sends the tag "meme" to a footballer
+  nicknamed Meme on football pages; the own-item rule (any alias of the
+  frame's own item scores 1.0) sends the tag "terminator" to Arnold
+  Schwarzenegger — otherwise that rule is ~98% right (Tardar Sauce →
+  Grumpy Cat, Groom Lake → Area 51).

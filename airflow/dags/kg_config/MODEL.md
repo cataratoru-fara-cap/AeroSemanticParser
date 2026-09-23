@@ -340,8 +340,10 @@ How a link is made (`kg/entities.py` has the reasoning at length):
 - **Ranking and acceptance.** Candidates are ranked on popularity, context
   overlap with the frame's text, label match, NER-type agreement (a hint,
   never a veto) and whether the item is itself on KYM; the winner's score
-  adds its lead over the runner-up. Under `MIN_LINK_SCORE` (0.50,
-  provisional) nothing is linked.
+  adds its lead over the runner-up. Under `MIN_LINK_SCORE` (0.45) nothing
+  is linked; at that line about 82% of links name the right item (hand
+  judged per score band, `kg/entities.py`). Whether the item MATTERS to
+  the meme is a separate question, not yet answered (gap 09).
 - **Grounded.** Every mention stores the exact characters it came from;
   `audit()` refuses a record that does not match its page.
 
