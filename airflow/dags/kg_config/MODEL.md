@@ -91,7 +91,8 @@ Neo4j and Mongo) to its RDF term.
 | `event.date_precision`, `date_text` | `mk:datePrecision`, `mk:dateText` | | |
 | `event.date_basis` (6.0.0) | `mk:dateBasis` (`stated` / `relative`) | | how the date was arrived at — the model never dates anything, it returns the words and the pipeline parses them |
 | edge `eventDateAnchor` (6.0.0) | `mk:dateAnchoredTo` | | for a relative date ("that same day"), the earlier event it was counted from |
-| `event.location`, `location_type` | `mk:eventLocation`, `mk:locationType` | not aligned (see below) | |
+| edge `nextInStory` (6.3.0) | `mk:nextInStory` | not aligned — page order, not time order | from each event to the one its frame tells next: Origin then Spread read as one story, one chain per frame, derived from sentence positions (`build.story_order`) |
+| `event.locations` (6.2.0; was `location`), `location_type` | `mk:eventLocation`, one triple per place; `mk:locationType` | not aligned (see below) | the platform AND the venue on it ("Facebook", "the Star Wars Sithposting shitposting group") |
 | `event.certainty` | `mk:certainty` | | the source's own hedging |
 | `event.actors` | `mk:eventActor`, one triple each | ⊑ `sem:hasActor` | |
 | `event.extraction_model`, `extraction_version` | `mk:extractionModel`, `mk:extractionVersion` | ⊑ `prov:wasGeneratedBy` | which model, under which contract |
@@ -298,6 +299,7 @@ What was taken and what was not:
 | Per-statement named graphs (`eventKG-s:`) | **Not taken.** The graph must stay ground (`ntdiff` raises on blank nodes), `graph` is a reserved morph-kgc column, and each build already *is* a named graph |
 | One event shared by many sources | **Not in 6.0.0.** EventKG merges on Wikipedia/Wikidata anchors; there are none here, and a wrong merge destroys information where a missing one only omits a link. Because ids are frame-scoped and content-addressed, a later linking pass can add `mk:sameEventAs` edges without re-minting an IRI |
 | Emitting `sem:` terms | **Not taken** — aligned in the ontology only, like `schema:` and `prov:` (pinned by `test_event_terms_align_to_sem_without_emitting_it`) |
+| Previous / next event (DBpedia `dbo:previousEvent`/`followingEvent`, Wikidata "follows"/"followed by") | **Changed (6.3.0).** Those are the order of a SERIES in time. `mk:nextInStory` is the order a frame's page TELLS its events in, Origin then Spread — how people narrate a meme's evolution, "x happened, then during the following week y happened". It places the ~21% of events no date could be given, and it is deliberately not aligned to any temporal relation: KYM tells flashbacks ("But a month earlier, ..."), and 30 of 753 dated neighbours in the 2026-09-25 samples step back in time. Time order is `mk:eventStart` |
 
 The pipeline is its own stage, `kym_events`, between parse and kg:
 `kg/events.py` (one LLM call per Origin/Spread section, validated against

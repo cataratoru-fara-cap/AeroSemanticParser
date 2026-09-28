@@ -26,7 +26,7 @@ import time
 
 import streamlit as st
 
-from lib import components as ui, review
+from lib import components as ui, data, review
 from lib.theme import active_palette
 
 st.set_page_config(page_title="Review · KYM", page_icon="🔍", layout="wide")
@@ -149,7 +149,7 @@ for n, e in enumerate(doc["events"], 1):
         st.markdown(head)
         st.markdown(f"> {e['source_text']}")
         bits = [f"**when** {e.get('date_text') or '—'}",
-                f"**where** {e.get('location') or '—'} "
+                f"**where** {' · '.join(data.event_places(e)) or '—'} "
                 f"({e.get('location_type')})",
                 f"**who** {', '.join(e['actors']) or '—'}",
                 f"**certainty** {e['certainty']}"]

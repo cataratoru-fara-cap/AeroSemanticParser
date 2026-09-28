@@ -1,7 +1,67 @@
 # The event layer is a language model's reading, and nobody has checked it
 
 **Status:** open — narrowed 2026-09-18 by extraction 2.0.0, 2026-09-21 by
-2.2.0 / 2.3.0 and 2026-09-22 by 2.4.0–2.6.0 (see the updates), not closed.
+2.2.0 / 2.3.0, 2026-09-22 by 2.4.0–2.6.0 and 2026-09-25 by 3.0.0–3.2.0
+(see the updates), not closed.
+
+## Update 2026-09-25 — an automated review loop, and what it leaves
+
+Gabi reviewed one section on the Review page, found it slow going, and
+handed the rest over: re-extract, read every event against its sentences,
+fix the cause, repeat. **The reader was Claude, not a person** — the same
+caveat as below (the system's author reviewing the system's output), with a
+model now doing the reading. It narrows this gap; it does not close it.
+
+The rubric is Gabi's own verdict on `star-wars-the-rise-of-skywalker-
+poster-parodies` / Spread: a sentence left out of every event is an error
+(a reception line belongs to its post's event, a spread development IS an
+event); the group a post was made in is a place, not an actor; a place is
+the platform AND the venue on it; a date resolves across Origin into
+Spread. Material: the 127 review sections with their partner sections (236),
+re-extracted seven times and read in full; then a 60-entry holdout (116
+sections) nobody had looked at, so the fixes are not just tuned to the sample.
+
+| | 2.6.0 | 3.2.0, prompt 8 |
+|---|---|---|
+| clean sections of the 127, by the rubric | ~52 | 94 |
+| reception lines ("The post received 2,000 likes") in no event | 127 of 1,370 sentences | 7 of 1,324 |
+| holdout, clean | — | ~66%, before the fixes it prompted |
+| failures / audit violations | 0 / 0 | 0 / 0 |
+
+As on 2026-09-22, nearly everything fixed was THIS repo's code: the
+sentence splitter cut quotations, titles and initials in half; reception
+lines, a post's own quoted words and descriptions of the work were left out
+of their event or made events of their own; places and actors borrowed from
+a LATER sentence (WhiteCrowWolf's May 16th post put in the subreddit of the
+May 17th one); "until January 5th, 2017, when @x posted" read as a bound;
+"over the following month" read as the next month; the verb "may" read as
+May; "Spider-Woman 2099" read as a year. Each fix is pinned by a test that
+fails without it. The model side got one line of prompt (8: a sentence
+carrying its own time words is almost always a happening). A second "look
+again" call over the sentences no event covered was tried and dropped: it
+was right about half the time, inventing events out of video descriptions
+while still missing the clearest misses.
+
+**What is left is the model's judgement**, in about 1 section in 4 on the
+sample and 1 in 3 on the holdout, half of them one small field: a
+description of a video made into an event, a "the trend spread" sentence
+missed, a hedge on "first" or "original" read as doubt about the posting,
+a date in mid-sentence the model does not quote.
+
+Two things for whoever runs the backfill:
+
+* **ministral at temperature 0 is not deterministic.** 54 of 236 replies
+  differed between two runs of identical prompts. A re-extraction is a new
+  sample, not a replay; to compare pipeline changes on FIXED model output,
+  keep the replies (the validator's input) and replay them.
+* **A relative date counts from the nearest DATED event before it**, past
+  any undated one. Measured: right 13 times in 15 where an undated event
+  sits between. One wrong case was the "until ..., when" bound, fixed; the
+  other — "On the day of the song's release, ... That day, Hendry posted"
+  (i-believe-in-joe-hendry) — is a known residual.
+
+Still open, and still the point of the Review page: a PERSON's verdict on a
+sample of 3.2.0 output, published as the agreement number.
 
 ## Update 2026-09-22 — the review is drawn and the tool exists
 

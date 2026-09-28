@@ -376,7 +376,7 @@ class EventTripleTests(unittest.TestCase):
                 "date_precision": "year", "date_text": "2010",
                 "date_start": "2010-01-01T00:00:00Z",
                 "date_end": "2010-12-31T23:59:59Z",
-                "location": "Tumblr", "location_type": "platform",
+                "locations": ["Tumblr"], "location_type": "platform",
                 "certainty": "unconfirmed", "actors": ["Atsuko Sato", "u/k"],
                 "extraction_model": "ministral-3:14b",
                 "extraction_version": "1.0.0"}

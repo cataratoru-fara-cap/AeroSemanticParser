@@ -252,6 +252,15 @@ class EventStore(MongoStoreBase):
                     out.append(unit)
         return out
 
+    def origin_events(self, entry_id: str) -> list[dict]:
+        """The stored Origin events of one entry — what its Spread is dated
+        against when only Spread needs re-extracting (kg/events.extract's
+        ``prior_lookup``)."""
+        doc = self.events.find_one(
+            {"_id": kg_events.unit_id_for_entry(entry_id, "origin")},
+            {"events": 1})
+        return list((doc or {}).get("events") or [])
+
     # -- writes -------------------------------------------------------------
 
     def save_extraction(self, records: Iterable[dict]) -> dict[str, int]:
@@ -539,6 +548,11 @@ def units_for(unit_ids: Iterable[str],
               sections: Iterable[str] = kg_events.SOURCE_SECTIONS) -> list[dict]:
     with get_store() as store:
         return store.units_for(unit_ids, sections)
+
+
+def origin_events(entry_id: str) -> list[dict]:
+    with get_store() as store:
+        return store.origin_events(entry_id)
 
 
 def save_extraction(records: Iterable[dict]) -> dict[str, int]:

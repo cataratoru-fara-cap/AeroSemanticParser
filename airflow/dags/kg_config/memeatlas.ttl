@@ -63,7 +63,7 @@
 MemeAtlas describes the full parsed record of each Know Your Meme entry —
 its section text, links, references, images, regions and corpus grading —
 on top of IMKG's model of media frames, which it reuses unchanged.""" ;
-    owl:versionInfo "6.1.0" ;
+    owl:versionInfo "6.3.0" ;
     rdfs:seeAlso <https://doi.org/10.1007/978-3-031-33455-9_21> ,
                  <https://github.com/riccardotommasini/imkg> ;
     prov:wasDerivedFrom <https://doi.org/10.5281/zenodo.7457166> .
@@ -316,6 +316,12 @@ mk:dateAnchoredTo a owl:ObjectProperty ;
     rdfs:label "date anchored to" ;
     rdfs:comment "The earlier event a relative date was counted from, so a derived date is always traceable to a stated one." .
 
+mk:nextInStory a owl:ObjectProperty ;
+    rdfs:domain mk:Event ;
+    rdfs:range mk:Event ;
+    rdfs:label "next in story" ;
+    rdfs:comment "The event the frame's page tells next: its Origin and Spread sections read as one story, Origin first, and every event links to the one after it, so each frame's events form a single chain whose first event has no predecessor. Derived from where each event sits on the page, never from a model. This is the order of the TELLING, which is the order of the happening almost always but not always: KYM narrates flashbacks on purpose (\"But a month earlier, ...\"), and 4% of dated neighbours step back in time. For time order compare mk:eventStart; for an event with no date, this chain is its only place in the story." .
+
 mk:dateText a owl:DatatypeProperty ;
     rdfs:domain mk:Event ;
     rdfs:label "date text" ;
@@ -324,12 +330,12 @@ mk:dateText a owl:DatatypeProperty ;
 mk:eventLocation a owl:DatatypeProperty ;
     rdfs:domain mk:Event ;
     rdfs:label "event location" ;
-    rdfs:comment "Where it happened — a place, a platform, or both — as free text. Not aligned to sem:hasPlace: that is an object property, so a datatype property cannot be its subproperty. Resolving platforms to mk:origin/ concepts is deliberately left to a later version." .
+    rdfs:comment "Where it happened, in the page's words — one value per place (since 6.2.0): the platform and the venue on it where something was posted (a group, subreddit, board, channel), or a geographic place. Not aligned to sem:hasPlace: that is an object property, so a datatype property cannot be its subproperty. Resolving platforms to mk:origin/ concepts is deliberately left to a later version." .
 
 mk:locationType a owl:DatatypeProperty ;
     rdfs:domain mk:Event ;
     rdfs:label "location type" ;
-    rdfs:comment "What kind of value eventLocation holds: geo, platform, both, or unknown." .
+    rdfs:comment "What kind of places the event's eventLocation values are: geo, platform, both, or unknown." .
 
 mk:certainty a owl:DatatypeProperty ;
     rdfs:domain mk:Event ;

@@ -131,7 +131,7 @@ Edge types
     relatesToMeme  citesExternal  hasImage  hasEvent
     fromTitle  fromTags  fromAbout                      (6.1.0, to a wikidata_entity)
   and, from an event node: eventLink  eventCitation  eventEmbed  eventImage
-  eventDateAnchor
+  eventDateAnchor  nextInStory                         (6.3.0, event -> event)
   plus the concept edges ``subTypeOf`` (kg/taxonomy.py, kg/origin.py) and
   ``coOccursWith`` (kg/cooccurs.py, tags only as of 5.0.1) — neither
   emitted by this function.
@@ -168,6 +168,19 @@ from . import tag_normalize
 
 _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 
+# 6.3.0: a frame's events form ONE chain, Origin then Spread, in the order
+# the page tells them: mk:nextInStory from each to the next (see
+# story_order). The page narrates a meme's evolution as a sequence — "x
+# happened, then during the following week y happened" — and the chain
+# carries that sequence even for the fifth of events no date could be
+# given. It is PAGE order, not time order: 30 of 753 dated neighbours in
+# the 2026-09-25 samples step back in time, because KYM tells flashbacks
+# ("But a month earlier, ...") on purpose; time order is in the dates.
+# 6.2.0: an event's place is a LIST (``locations``), one mk:eventLocation
+# per place — the platform AND the venue on it ("Facebook", "the Star Wars
+# Sithposting shitposting group"), which one literal could not hold (Gabi's
+# review of the event layer, 2026-09-24). The property graph's `location`
+# becomes `locations`; nothing had been published under the old name.
 # 6.1.0: the entity layer. Entities recognised in the title, tags and About
 # (kg/entities.py, modules/entity_store.py) become `wikidata_entity` nodes
 # with fromTitle / fromTags / fromAbout edges from their frame. MINOR:
@@ -188,7 +201,7 @@ _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 # and origin promoted from frame literals / a literal string to concepts
 # (badge_concept/hasBadge, origin_concept/hasOrigin); tags plural-folded
 # (kg/tag_normalize.py). Bumping this makes the staleness gate rebuild.
-KG_BUILD_VERSION = "6.1.0"
+KG_BUILD_VERSION = "6.3.0"
 
 NODE_KINDS: tuple[str, ...] = (
     "frame", "frame_stub", "entry_type_concept", "tag_concept",
@@ -199,7 +212,7 @@ EDGE_TYPES: tuple[str, ...] = (
     "hasEntryType", "hasTag", "hasRegion", "hasOrigin", "hasBadge",
     "partOfSeries", "relatesToMeme", "citesExternal", "hasImage", "hasEvent",
     "eventLink", "eventCitation", "eventEmbed", "eventImage",
-    "eventDateAnchor", "fromTitle", "fromTags", "fromAbout",
+    "eventDateAnchor", "nextInStory", "fromTitle", "fromTags", "fromAbout",
 )
 
 # The three narrative sections IMKG keeps as frame literals, mapped to the
@@ -251,7 +264,7 @@ LIST_PROPERTIES: frozenset[str] = frozenset(
 # enough.
 EVENT_PROPERTIES: tuple[str, ...] = (
     "source_text", "source_section", "date", "date_precision",
-    "date_basis", "date_text", "date_start", "date_end", "location", "location_type",
+    "date_basis", "date_text", "date_start", "date_end", "locations", "location_type",
     "certainty", "actors", "extraction_model", "extraction_version",
 )
 
@@ -269,6 +282,12 @@ EVENT_IMAGE_EDGE = "eventImage"   # a photo shown with its paragraph
 # A date the pipeline worked out from "that same day" points at the event it
 # was counted from, so a derived date is always traceable to a stated one.
 EVENT_DATE_ANCHOR_EDGE = "eventDateAnchor"
+# 6.3.0: from each event to the one its frame tells next.
+EVENT_STORY_EDGE = "nextInStory"
+# The order a frame tells its story in — kg/events.SOURCE_SECTIONS, restated
+# here because this module must not import the extractor (and with it the
+# model client); tests/test_kg_build.py holds the two equal.
+STORY_SECTIONS: tuple[str, ...] = ("origin", "spread")
 EVENT_LIST_PROPERTIES: frozenset[str] = frozenset({"actors"})
 
 # 6.1.0. The field a mention was read from (kg/entities.SOURCE_FIELDS) ->
@@ -353,6 +372,31 @@ def iso_utc(value) -> str | None:
 
 
 _DATE_FORMATS = {"day": "%Y-%m-%d", "month": "%Y-%m", "year": "%Y"}
+
+
+def story_order(events: Sequence[dict]) -> list[dict]:
+    """A frame's events in the order its page tells them, one per id.
+
+    Origin before Spread; within a section by the event's first sentence,
+    then its last; within one sentence by where its date words sit in it
+    ("In April 2024 ..., with one example on April 8th, 2024" is two events
+    of one sentence, told in that order), an event with no date words
+    first; the event id last, so the order never depends on the order the
+    events arrive in. Derived from positions alone — no model is asked.
+    """
+    rank = {s: i for i, s in enumerate(STORY_SECTIONS)}
+
+    def key(ev: dict) -> tuple:
+        sentences = ev.get("sentences") or [0]
+        text, words = ev.get("source_text") or "", ev.get("date_text") or ""
+        at = text.find(words) if words else -1
+        return (rank.get(ev.get("source_section"), len(rank)),
+                sentences[0], sentences[-1], max(at, 0), ev["event_id"])
+
+    seen: set[str] = set()
+    unique = [ev for ev in events if ev.get("event_id")
+              and not (ev["event_id"] in seen or seen.add(ev["event_id"]))]
+    return sorted(unique, key=key)
 
 
 def date_range(date: str | None, precision: str) -> tuple[str | None, str | None]:
@@ -644,7 +688,7 @@ def build_nodes_and_edges(
             "date_basis": ev.get("date_basis"),
             "date_text": ev.get("date_text"),
             "date_start": start, "date_end": end,
-            "location": ev.get("location"),
+            "locations": list(ev.get("locations") or []),
             "location_type": ev.get("location_type"),
             "certainty": ev.get("certainty"),
             "actors": list(ev.get("actors") or []),
@@ -671,6 +715,13 @@ def build_nodes_and_edges(
                 event_edge(EVENT_IMAGE_EDGE, image_node_id(image["src"]))
         if ev.get("date_anchor"):
             event_edge(EVENT_DATE_ANCHOR_EDGE, event_node_id(ev["date_anchor"]))
+
+    # The story: each event to the one the page tells next (6.3.0).
+    story = story_order(events)
+    for told, then in zip(story, story[1:]):
+        edges.append({"src": event_node_id(told["event_id"]),
+                      "dst": event_node_id(then["event_id"]),
+                      "type": EVENT_STORY_EDGE})
 
     # -- Wikidata entities from the title, tags and About (6.1.0) --------------
     # One node per QID, one frame edge per (field, QID), one occurrence per

@@ -28,7 +28,7 @@ a quote, a "(TV series)" appended to a name. So:
     module from the page, verbatim, citation markers and all. The model has
     no way to alter it.
   * There is no summary. The event IS its sentences plus when/where/who.
-  * Every textual value the model does return — ``date_text``, ``location``,
+  * Every textual value the model does return — ``date_text``, ``locations``,
     each ``actor`` — is a POINTER, not text. It is resolved against the
     section and replaced by the section's own words (``ground_value``,
     ``ground_date_text``); what is stored is always a span of the page.
@@ -169,11 +169,65 @@ __all__ = [
 
 # Bump when the system prompt or the user template changes: the store
 # re-queues every unit whose stored prompt_version differs.
-PROMPT_VERSION = "5"
+PROMPT_VERSION = "8"
 
 # Bump when THIS MODULE's contract changes — the output shape, the
 # validator's rules, the sentence splitter, the event_id recipe, how media
 # are attached. Same effect: every unit is re-queued.
+#   3.2.0  third pass: a sentence that only reports a post's reception
+#          ("The post received 2,000 reactions in three days") joins that
+#          post's event, and an event made only of such sentences is
+#          folded into it — 127 of 1,370 sentences had been left out of
+#          every event; "face" is no longer a stem of "Facebook"; a poster
+#          named twice ("IDF", "IDF YouTube channel") is one actor, and
+#          "the person who uploaded the clip" is nobody's name; a sentence
+#          opening "On <date>," dates its event when the model gave no
+#          date words; the verb "may" is not May, "Spider-Woman 2099" not
+#          a year. With prompt 8 (a sentence carrying its own time words
+#          is almost always a happening). Then, from reading all 127 again:
+#          the splitter no longer cuts inside a quotation, after a title
+#          ("RAdm.", "a.k.a.", "Bros.") or before "singer K. Michelle";
+#          an actor or place named only AFTER its event joins it from the
+#          very next sentence or is dropped; names are grounded verbatim
+#          from the event's own and earlier sentences before any near
+#          match; "liked 124 times", "1,300 smiles" and a post's own quoted
+#          words are its reception; "That month, ..." dates its event;
+#          role-only names, crowds, "... channel" and quote marks are
+#          cleaned from actors, all-lowercase common nouns from places.
+#          From a 60-entry holdout never looked at before: "until <date>,
+#          when X posted" dates X's post; "over the following month" is a
+#          stretch of time, not the next month; "May, 1st, 2019"; "George
+#          R.R. Martin"; Vine loops and a duration ("In two months") in a
+#          reception line; "iFunnyer" -> iFunny; an @handle is an account
+#          (an actor) unless only quoted; "Viner"/"Instagrammer" titles.
+#   3.1.0  second pass over the same 127 sections:
+#          * two bounds of 3.0.0's were too broad: a bare "after <date>,
+#            when X posted" dates X's post, and "did not ... until <date>"
+#            is a start — only an attributive date ("after Cody Ko's April
+#            30th video") and an un-negated "until" are bounds;
+#          * the same date words read twice from one sentence are one time,
+#            not a relative step from each other;
+#          * "that date"; values grounded in the event's OWN sentences
+#            first; a place or actor the page introduces with "a"/"an" and
+#            a common noun names nobody; a source "according to" is not an
+#            actor; the poster's own page/channel/account is an actor, not
+#            a place.
+#   3.0.0  from reviewing 127 sections by hand (2026-09-24):
+#          * the page is ONE timeline: a missing year, month or relative
+#            anchor comes from the events dated before this one — Origin's
+#            too, for Spread — not from the nearest date string. Spread
+#            whose year sat only in Origin had lost every date (9 in one
+#            section), and a referenced "April 2011" had re-dated an
+#            April 2013 event;
+#          * "as of", "prior to", "by", "after X's ... video" are bounds,
+#            not the event's date, and never anchors;
+#          * joined dates are dated at the precision that CONTAINS them
+#            ("Between 2009 and 2013" is undated, not 2009);
+#          * relative shifts in months and years, "meanwhile", bare
+#            ordinals ("on the 21st"), and "<Month> of <Year>";
+#          * `location` becomes `locations`, a LIST: platform and venue;
+#          * actors lose role words and unnamed ones; a venue listed as an
+#            actor moves to locations.
 #   2.6.0  when NOTHING dated precedes the event's date words, a year
 #          the section names exactly once supplies them.
 #   2.5.0  a DECADE ("the 2010s") no longer dates an event to its first
@@ -209,7 +263,7 @@ PROMPT_VERSION = "5"
 #   2.0.0  extractive-only: sentence numbers instead of quotes, no summary,
 #          every returned string verified against the section, media by
 #          position, no caps. (1.x asked for quotes and summaries.)
-EXTRACTION_VERSION = "2.6.0"
+EXTRACTION_VERSION = "3.2.0"
 
 SOURCE_SECTIONS: tuple[str, ...] = ("origin", "spread")
 
@@ -247,17 +301,61 @@ SYSTEM_PROMPT = (
     "You extract EVENTS from one section of a knowyourmeme.com (KYM) "
     "entry, for a knowledge graph of internet memes. The section is "
     "given as numbered sentences. An event is something that HAPPENED "
-    "at a time, in a place, or to someone — a first upload, a post, a "
-    "video, a ban, a lawsuit, a death, a trend crossing to another "
-    "platform."
+    "in the world at a time: a post, an upload, a video, a release, an "
+    "airing, a ban, a lawsuit, a death, a trend spreading to a "
+    "platform, a hashtag trending, coverage by a news site."
     "\n"
     "\n"
-    "Work through the sentences in order and return one event for each "
-    "happening. A sentence that gives a date almost always narrates "
-    "one: do not skip it because it is worded as an illustration (\"For "
-    "instance, on January 3rd, 2025, TikToker @x posted ...\"). Return "
-    "nothing for a sentence that only describes the meme, comments on "
-    "it, or lists examples with no date and nobody acting."
+    "WHAT IS AN EVENT. Work through the sentences in order and return "
+    "one event for each happening. A spread development narrated as "
+    "happening IS an event: \"parodies became much more common\", \"the "
+    "hashtag began trending\", \"the trend spread to TikTok\". A dated "
+    "sentence worded as an illustration (\"For instance, on January 3rd, "
+    "2025, TikToker @x posted ...\") is an event too. So is a sentence "
+    "that carries its own time words, even in the middle of another "
+    "story, even with a view count after it: \"That October, a forum "
+    "thread claimed ...\", \"The next day, a TikToker stitched the "
+    "video ...\", \"A fan wiki was also started that day\", \"Discord "
+    "added the feature in March of 2019\". "
+    "Read every sentence with a date or a time word twice before "
+    "leaving it out."
+    "\n"
+    "Ask of every sentence: did someone DO something here, at some "
+    "time? If it only describes, counts or explains, it is not an "
+    "event. These are NOT events, and must not be returned:"
+    "\n"
+    "- what happens INSIDE a video, image, comic, episode, song or "
+    "story (\"In the video, the man says ...\", \"The comic depicts ...\"); "
+    "the posting, release or airing of it is the event;"
+    "\n"
+    "- events inside fiction, lore or a creepypasta's own mythology "
+    "(\"According to the mythology, The Rake was documented in 1691\");"
+    "\n"
+    "- descriptions of a work, where footage came from, or who someone "
+    "is (\"The screen capture is taken from a video by ...\", \"the women "
+    "in the photo are ...\");"
+    "\n"
+    "- counts of views, likes, followers, results or posts, with or "
+    "without a date (\"the video has 2.9 million views as of June 2017\", "
+    "\"It has nearly 1,700 followers as of December 2nd\", \"there are "
+    "over 2 million images tagged #murica\");"
+    "\n"
+    "- how something is commonly used (\"'Murica is often used on "
+    "Twitter as commentary\");"
+    "\n"
+    "- commentary, and lists of examples with no date and nobody "
+    "acting."
+    "\n"
+    "\n"
+    "ONE EVENT, ALL ITS SENTENCES. A sentence that only reports how a "
+    "post was received (\"The post received over 2,000 likes in three "
+    "days\"), or continues its quote or description, belongs to the SAME "
+    "event: put its number in that event's sentences, never make it an "
+    "event of its own. When one sentence names a happening and the next "
+    "one dates it, return ONE event covering both. But never merge two "
+    "sentences that each state their own date, or their own poster, "
+    "into one event — and never merge a rumor or claim with a dated "
+    "fact it is about."
     "\n"
     "\n"
     "For each event, return:"
@@ -265,39 +363,58 @@ SYSTEM_PROMPT = (
     "- sentences: the numbers of the sentences that narrate it, "
     "consecutive."
     "\n"
-    "- date_text: the words in those sentences that say WHEN it "
-    "happened, copied exactly — \"May 4th, 2013\", \"early 2013\", \"Between "
-    "May 28th and June 6th, 2025\", \"that same day\", \"the following day\" "
-    "— or null if the sentences say nothing about when. Copy the words "
-    "only: do NOT work out a date, a year or a day yourself. If the "
-    "sentence gives a day but no year, write just the day as it stands "
-    "(\"June 16th\"); the pipeline takes the year from earlier in the "
-    "section."
+    "- date_text: the words in those sentences that say WHEN this "
+    "happening took place, copied exactly — \"May 4th, 2013\", \"early "
+    "2013\", \"sometime in 2007\", \"throughout 2023\", \"In 2008\", \"2002's\", "
+    "\"that August\", \"that same day\", \"the following month\" — or null if "
+    "the sentences say nothing about when. Quote vague words too; do "
+    "not skip them. Copy the words only: do NOT work out a date, a year "
+    "or a day yourself. If a sentence gives a day but no year, write "
+    "just the day as it stands (\"June 16th\"). The words must date THIS "
+    "happening: in \"After Cody Ko's April 30th video, TikToker @x "
+    "clipped it\", April 30th dates the video, not the clip, so "
+    "date_text is null."
     "\n"
-    "- location: where it happened — a platform (\"TikTok\", "
-    "\"/r/roblox\"), a place (\"Longyearbyen, Norway\"), or both — copied "
-    "exactly as the section writes it, or null."
+    "- locations: every place where it happened, most general first, "
+    "each copied exactly as the section writes it: the platform AND the "
+    "venue on it where it was posted — a group, subreddit, board, "
+    "server or forum, somewhere OTHERS post too — or a geographic "
+    "place. The poster's own page, channel or account is not a "
+    "location: it is an actor. \"posted ... in the Star Wars Sithposting "
+    "shitposting group\" on Facebook -> [\"Facebook\", \"Star Wars "
+    "Sithposting shitposting group\"]; \"submitted to /r/OutOfTheLoop\" -> "
+    "[\"/r/OutOfTheLoop\"]; \"at the Fox Theater in Atlanta, Georgia\" -> "
+    "[\"Fox Theater in Atlanta, Georgia\"]. Only places the section NAMES "
+    "for this happening — not where an earlier post was. A TV show, "
+    "film, game or other work is not a place. [] if none."
     "\n"
     "- location_type: \"platform\", \"geo\", \"both\", or \"unknown\" when "
-    "location is null."
+    "locations is empty."
     "\n"
-    "- actors: the people, accounts, communities or organizations that "
-    "TOOK PART, copied exactly as written (\"@blockboy_192\", "
-    "\"u/Shibetoshi\", \"/r/dogecoin\", \"Atsuko Sato\"); [] if none. Each "
-    "one must NAME somebody — a handle, a person, a channel, a "
-    "subreddit. \"users\", \"people\", \"fans\", \"viewers\", \"they\", \"a "
-    "TikToker\" name nobody: leave them out, and return [] if that "
-    "empties the list. Only who acted, not everyone the sentence "
-    "happens to mention."
+    "- actors: who PERFORMED the happening, by name, copied as written: "
+    "\"@blockboy_192\", \"u/Shibetoshi\", \"Atsuko Sato\", \"Duolingo\". Write "
+    "the name without its role: \"Caiden Butler\", not \"Facebook user "
+    "Caiden Butler\". A page, channel or account that posted something "
+    "is an actor: \"the Facebook page King K Rool posted a video\" -> "
+    "actors [\"King K Rool\"], locations [\"Facebook\"]. NOT actors: the "
+    "work being released (a film, book, game, show); fictional "
+    "characters; a source being cited (\"According to Pixiv "
+    "Encyclopedia\"); the subject of a photo; someone who was replied to "
+    "or reacted to; a person whose earlier post others built on (\"After "
+    "@x's usage, others ...\" -> the others acted); a venue (a group or "
+    "subreddit is a location); anyone unnamed (\"an anonymous user\", \"a "
+    "Reuters photojournalist\", \"users\", \"they\"). [] if none."
     "\n"
     "- certainty: whether the SECTION is sure THIS HAPPENING happened."
     "\n"
-    "  \"confirmed\" — the section states it plainly. This is the normal "
-    "case."
+    "  \"confirmed\" — stated plainly. The normal case. \"earliest known\", "
+    "\"as early as\", \"sometime in\", \"one of the first\" describe the "
+    "evidence or the date, not doubt: still confirmed."
     "\n"
     "  \"unconfirmed\" — the section hedges the happening itself: "
     "\"reportedly posted\", \"is said to have originated\", \"allegedly "
-    "filmed\", \"purportedly the first\"."
+    "filmed\", \"it appears to have been first posted\", \"is believed to "
+    "have begun\"."
     "\n"
     "  \"disputed\" — the section says people disagree about whether it "
     "happened."
@@ -305,10 +422,13 @@ SYSTEM_PROMPT = (
     "  \"debunked\" — the section says it turned out to be false, staged "
     "or a hoax."
     "\n"
-    "  Someone posting a claim is a CONFIRMED event: in \"TikToker @x "
-    "posted a video claiming Y\", the posting happened — it is Y that is "
-    "a claim. Judge the verb of the event, not what was said inside it. "
-    "Never upgrade a hedge to a fact."
+    "  Judge the verb of the event, not what surrounds it. A hedge on "
+    "whether it was the FIRST or the ORIGINAL (\"may have been the "
+    "first\", \"it is unclear if this is the original\"), on intent "
+    "(\"possibly accidentally\"), on authorship, or on a claim made "
+    "INSIDE the post (\"@x posted a video claiming Y\", \"a post "
+    "purportedly debunking the claim\") does not make the posting "
+    "unconfirmed. Never upgrade a hedge to a fact."
     "\n"
     "\n"
     "COPY, NEVER ADD. Every text value you return is matched back "
@@ -320,25 +440,25 @@ SYSTEM_PROMPT = (
     "\n"
     "\n"
     "DATES: return the WORDS only. A relative expression (\"that same "
-    "day\", \"the following day\", \"three days later\") is a perfectly good "
-    "date_text — keep it exactly as written; it is resolved afterwards "
-    "against the events before it. Never write a date that the "
-    "sentences do not spell out."
+    "day\", \"the following day\", \"three days later\", \"that month\", "
+    "\"later that year\") is a perfectly good date_text — keep it exactly "
+    "as written; it is resolved afterwards against the events before "
+    "it."
     "\n"
     "\n"
-    "MERGE RULE: if two happenings are known only by their relative "
-    "order and neither carries a date, return ONE event covering both "
-    "sentences."
+    "Respond ONLY with JSON: {\"events\": [...]}. Three example events:"
     "\n"
+    "{\"sentences\": [1, 2], \"date_text\": \"February 23rd, 2010\", "
+    "\"locations\": [\"Tumblr\"], \"location_type\": \"platform\", \"actors\": "
+    "[\"Atsuko Sato\"], \"certainty\": \"confirmed\"}"
     "\n"
-    "Respond ONLY with JSON: {\"events\": [...]}. Two example events:"
-    "\n"
-    "{\"sentences\": [1], \"date_text\": \"February 23rd, 2010\", \"location\": "
-    "\"Tumblr\", \"location_type\": \"platform\", \"actors\": [\"Atsuko Sato\"], "
+    "{\"sentences\": [4], \"date_text\": \"that day\", \"locations\": "
+    "[\"Facebook\", \"Star Wars Sithposting shitposting group\"], "
+    "\"location_type\": \"platform\", \"actors\": [\"elliott.boydstringer\"], "
     "\"certainty\": \"confirmed\"}"
     "\n"
-    "{\"sentences\": [4], \"date_text\": \"that same day\", \"location\": null, "
-    "\"location_type\": \"unknown\", \"actors\": [], \"certainty\": "
+    "{\"sentences\": [7], \"date_text\": \"sometime in 2007\", \"locations\": "
+    "[], \"location_type\": \"unknown\", \"actors\": [], \"certainty\": "
     "\"unconfirmed\"}"
 )
 
@@ -404,7 +524,21 @@ _ABBREVIATIONS = frozenset({
     "ltd", "co", "corp", "no", "vol", "ep", "fig", "approx", "dept", "est",
     "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct",
     "nov", "dec", "u.s", "u.k", "e.g", "i.e", "a.m", "p.m", "d.c",
+    # titles and ranks, "a.k.a." and "Bros." (2026-09-24 review: "RAdm.
+    # Daniel Hagari", "Wojak a.k.a. That Feel Guy", "Super Smash Bros.
+    # Ultimate" were each cut in two)
+    "adm", "radm", "vadm", "gen", "lt", "col", "capt", "cpt", "sgt", "maj",
+    "cmdr", "gov", "sen", "rep", "rev", "hon", "pres", "a.k.a", "aka",
+    "bros", "feat", "ft", "mt",
 })
+# A lowercase word before a single capital letter makes it a name's
+# initial ("singer K. Michelle") — unless the word is one that puts a
+# PLATFORM there ("went viral on X. For example"), or the letter is X.
+_BEFORE_A_PLACE = frozenset({"on", "to", "in", "at", "via", "from", "of", "and",
+                             "or", "with", "by", "for", "as", "into", "onto", "than"})
+# A quotation longer than this is not trusted to be one: an unclosed quote
+# (a KYM typo) must never swallow the rest of a paragraph.
+_MAX_QUOTE = 800
 # "J. K. Rowling", "George R. R. Martin": another initial follows.
 _INITIAL_NEXT = re.compile(r"\s*[A-Z]\.")
 
@@ -423,14 +557,21 @@ def split_sentences(paragraph: str) -> list[tuple[int, int]]:
     """
     spans: list[tuple[int, int]] = []
     start = 0
+    quotes = _quotations(paragraph)
     for m in _SENTENCE_END.finditer(paragraph):
+        # Inside a quotation that goes on after this point, a period ends
+        # a sentence of the QUOTE, not of the page: "posted, "If I have to
+        # see it one more time lol. I honestly think ..."" (2026-09-24).
+        if any(a < m.start() and m.end() <= b for a, b in quotes):
+            continue
         before = paragraph[start:m.start()].split()
         token = before[-1].lower().rstrip(".") if before else ""
         if token in _ABBREVIATIONS:
             continue
-        if len(token) == 1 and token.isalpha() and _is_initial(
+        if (len(token) == 1 and token.isalpha()
+                or re.fullmatch(r"(?:[a-z]\.)+[a-z]", token)) and _is_initial(
                 paragraph, before, m.end()):
-            continue
+            continue            # "J. K. Rowling", "George R.R. Martin"
         end = m.end()
         if paragraph[start:end].strip():
             spans.append(_trim(paragraph, start, end))
@@ -452,7 +593,35 @@ def _is_initial(paragraph: str, before: list[str], after: int) -> bool:
     """
     if _INITIAL_NEXT.match(paragraph, after):
         return True
-    return len(before) > 1 and before[-2][:1].isupper()
+    if len(before) > 1 and before[-2][:1].isupper():
+        return True
+    letter = before[-1].rstrip(".")
+    nxt = paragraph[after:].lstrip()[:1]
+    return (len(before) > 1 and letter.isupper() and letter not in "XI"
+            and before[-2].islower() and before[-2] not in _BEFORE_A_PLACE
+            and nxt.isupper())
+
+
+def _quotations(paragraph: str) -> list[tuple[int, int]]:
+    """(open, close) index pairs of the double-quoted passages.
+
+    Straight quotes pair up in order only when the paragraph has an even
+    number of them; an odd count means one is unclosed, and then none is
+    trusted. Curly quotes pair by direction. Longer than _MAX_QUOTE is
+    not a quotation either.
+    """
+    out: list[tuple[int, int]] = []
+    straight = [i for i, c in enumerate(paragraph) if c == '"']
+    if len(straight) % 2 == 0:
+        out += list(zip(straight[::2], straight[1::2]))
+    opened = None
+    for i, c in enumerate(paragraph):
+        if c == "“":
+            opened = i
+        elif c == "”" and opened is not None:
+            out.append((opened, i))
+            opened = None
+    return [(a, b) for a, b in out if b - a <= _MAX_QUOTE]
 
 
 def _trim(text: str, start: int, end: int) -> tuple[int, int]:
@@ -473,6 +642,11 @@ def frame_key(frame_url: str) -> str:
 
 def unit_id(frame_url: str, section: str) -> str:
     return f"{frame_key(frame_url)}:{section}"
+
+
+def unit_id_for_entry(entry_id: str, section: str) -> str:
+    """The same id, from an entry id already in hand."""
+    return f"{entry_id}:{section}"
 
 
 def event_id(frame_url: str, section: str, sentences: Sequence[int],
@@ -580,8 +754,12 @@ def section_unit(entry: dict, section: str) -> dict | None:
     full = "\n\n".join(paragraphs)
     # The staleness stamp covers everything the unit is built from: the text
     # (what the model reads) AND the media positions (what gets attached),
-    # so a re-parse that changes either re-queues this unit and no other.
-    fingerprint = json.dumps([paragraphs, links, images, embeds, citations],
+    # so a re-parse that changes either re-queues this unit. Spread is also
+    # DATED against Origin (resolve_dates' ``prior``), so for Spread it
+    # covers Origin's text too: an edited Origin re-queues both.
+    upstream = [p for s in entry.get("sections") or [] if s.get("kind") == "origin"
+                for p in (s.get("text") or [])] if section == "spread" else []
+    fingerprint = json.dumps([paragraphs, links, images, embeds, citations, upstream],
                              sort_keys=True, ensure_ascii=False, default=str)
     return {
         "unit_id": unit_id(url, section),
@@ -669,36 +847,93 @@ def _nullish(value: Any) -> str | None:
 
 _MONTH_RE = "|".join(_MONTHS) + "|" + "|".join(m[:3] for m in _MONTHS) + "|sept"
 # "February 23rd, 2010" / "Feb 23 2010" / "May 7th" (year from context)
-_DAY_DATE = re.compile(rf"\b(?P<month>{_MONTH_RE})\.?\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?"
+_DAY_DATE = re.compile(rf"\b(?P<month>{_MONTH_RE})\.?,?\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?"
                        rf"(?:\s*,)?(?:\s*(?P<year>(?:19|20)\d{{2}}))?\b", re.I)
 # "the 23rd of February, 2010"
 _DAY_DATE_OF = re.compile(rf"\b(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\s+of\s+(?P<month>{_MONTH_RE})\.?"
                           rf"(?:\s*,)?(?:\s*(?P<year>(?:19|20)\d{{2}}))?\b", re.I)
-_MONTH_DATE = re.compile(rf"\b(?P<month>{_MONTH_RE})\.?\s*,?\s*(?P<year>(?:19|20)\d{{2}})\b", re.I)
+# "May 2013", "May, 2013" and — since 3.0.0 — "May of 2013": "mid-May of
+# 2018" and "January of 2014" were read as bare YEARS, a month lost.
+_MONTH_DATE = re.compile(rf"\b(?P<month>{_MONTH_RE})\.?\s*,?\s*(?:of\s+)?"
+                         rf"(?P<year>(?:19|20)\d{{2}})\b", re.I)
+_MONTH_ONLY = re.compile(rf"\b(?P<month>{_MONTH_RE})\b\.?", re.I)
+# "it may have been posted in 2013" is no month: a bare "may" followed by a
+# word that is not a preposition or conjunction is the verb (dont-judge-
+# challenge, 2026-09-24 review). Checked wherever a BARE month is read.
+_MODAL_MAY = re.compile(
+    r"may\s+(?!(?:of|and|or|to|through|thru|until|till|when|after|before"
+    r"|in|on|at|as|with|while|through)\b)[a-z]", re.I)
+
+
+def _is_modal(text: str, at: int) -> bool:
+    return bool(_MODAL_MAY.match(text, at))
 # A DECADE is not a year. "the 2010s", "the mid-2000s" and "the late
 # 1990s" were all read as the decade's first year, which puts an
 # mk:eventStart of 2010-01-01 on a page that said "the first half of the
 # 2010s". date_precision has no "decade", and inventing one year out of
 # ten is exactly what this module refuses to do, so a decade names no
 # date. "2016's election" still does: the "s" there follows an apostrophe.
-_YEAR = re.compile(r"(?<!\d)(?P<year>(?:19|20)\d{2})(?!\d)(?!s\b)")
+_YEAR = re.compile(r"(?<!\d)(?P<year>19\d{2}|20[0-3]\d)(?!\d)(?!s\b)")
+# A day with no month: "on the 21st", "the 24th that month". Its month
+# comes from the timeline, like a missing year does.
+_ORDINAL = re.compile(r"(?<![\w-])(?P<day>\d{1,2})(?:st|nd|rd|th)\b", re.I)
+# Words that join two dates into a RANGE or an either/or.
+_RANGE_JOIN = re.compile(r"\b(?:and|or|to|through|thru|until|till)\b|[–—-]|&", re.I)
 
-# Relative expressions the pipeline can resolve ARITHMETICALLY against the
-# nearest earlier dated event. Deliberately narrow: only phrases whose day
-# offset is unambiguous. "shortly after", "the following week" and "later
-# that year" are NOT here — they do not name a day, so the event stays
-# undated rather than being given a date nobody wrote.
-_SAME_DAY = re.compile(
-    r"\b(?:(?:that|the) same (?:day|evening|morning|afternoon|night)"
-    r"|(?:later|earlier) (?:that|the same) day"
-    r"|(?:on )?that day"
-    r"|that (?:evening|morning|afternoon|night)"
-    r"|(?:a few |several |some )?(?:minutes|hours) later"
-    r"|an hour later|a minute later|moments later)\b", re.I)
-_NEXT_DAY = re.compile(r"\b(?:the (?:next|following) day|a day later|the day after)\b", re.I)
-_N_DAYS = re.compile(r"\b(?P<n>\d{1,2}|two|three|four|five|six|seven|eight|nine|ten)\s+days?\s+later\b", re.I)
-_WORD_NUMBERS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
-                 "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+# A date the event is measured AGAINST, not the date it happened: "as of
+# December 2nd" (a statistic), "prior to August 2019", "by March 26th"
+# (bounds), and "after Cody Ko's April 30th video" (the date of something
+# ELSE). 2.x dated all of these to the named day — and then used the
+# "as of" ones as anchors, so a "the following day" after one landed a
+# week late.
+_BOUND_TIGHT = re.compile(
+    r"\b(?:as\s+of|prior\s+to|before|until|till|up\s+(?:to|until)|by|"
+    r"no\s+later\s+than|ahead\s+of)\s+(?:the\s+)?(?:(?:early|mid|late)[-\s]+)?$",
+    re.I)
+_BOUND_LOOSE = re.compile(
+    r"\b(?:after|following)\s+(?:[\w'’.@&-]+\s+){1,3}$", re.I)
+# "did not start ... until August 2016" STARTED in August 2016: a negated
+# "until" is a start, not an end.
+_NEGATED = re.compile(r"\b(?:not|never|n[’']t|no\s+one|nobody)\b", re.I)
+
+# Relative expressions resolved ARITHMETICALLY against the nearest earlier
+# dated event. Each names a unit and a signed amount; the result is never
+# more precise than the anchor or the unit, so "the following month" after
+# "May 4th, 2013" is June 2013, not a June day nobody wrote. "shortly
+# after", "the following week" and "in the following days" name no unit
+# the graph has, and stay undated.
+_WORD_NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4,
+                 "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+                 "ten": 10, "eleven": 11, "twelve": 12}
+_REL_RULES: tuple[tuple[re.Pattern, str, int], ...] = tuple(
+    (re.compile(p, re.I), unit, n) for p, unit, n in (
+        (r"\b(?:(?:that|the)\s+(?:very\s+)?same\s+(?:day|evening|morning|afternoon|night)"
+         r"|(?:later|earlier)\s+(?:on\s+)?(?:that|the\s+same)\s+day"
+         r"|(?:on\s+)?that\s+(?:very\s+)?day"
+         r"|(?:from\s+|on\s+)?(?:that|the\s+same|that\s+same)\s+date"
+         r"|that\s+(?:evening|morning|afternoon|night)"
+         r"|(?:a\s+few\s+|several\s+|some\s+)?(?:minutes|hours)\s+later"
+         r"|an\s+hour\s+later|a\s+minute\s+later|moments\s+later"
+         r"|meanwhile|at\s+the\s+same\s+time|simultaneously)\b", "day", 0),
+        (r"\b(?:the\s+(?:next|following)\s+day|a\s+day\s+later|the\s+day\s+after)\b",
+         "day", 1),
+        (r"\b(?:the\s+(?:previous|preceding)\s+day|a\s+day\s+(?:earlier|before)"
+         r"|the\s+day\s+before)\b", "day", -1),
+        (r"\b(?:(?:later|earlier)\s+)?(?:that|the)\s+same\s+month\b"
+         r"|\b(?:later|earlier)\s+that\s+month\b|\bthat\s+month\b", "month", 0),
+        (r"\b(?:the\s+(?:next|following)\s+month|the\s+month\s+after)\b", "month", 1),
+        (r"\b(?:the\s+(?:previous|preceding)\s+month|the\s+month\s+before)\b",
+         "month", -1),
+        (r"\b(?:(?:later|earlier)\s+)?(?:that|the)\s+same\s+year\b"
+         r"|\b(?:later|earlier)\s+that\s+year\b|\bthat\s+year\b", "year", 0),
+        (r"\b(?:the\s+(?:next|following)\s+year|the\s+year\s+after)\b", "year", 1),
+        (r"\b(?:the\s+(?:previous|preceding)\s+year|the\s+year\s+before)\b", "year", -1),
+    ))
+_REL_COUNT = re.compile(
+    r"\b(?P<n>\d{1,2}|a|an|one|two|three|four|five|six|seven|eight|nine|ten"
+    r"|eleven|twelve)\s+(?P<unit>day|week|month|year)s?\s+"
+    r"(?P<dir>later|after(?:wards?)?|earlier|before|prior)\b", re.I)
+_PRECISION_RANK = {"day": 3, "month": 2, "year": 1, "none": 0}
 
 
 def _month_number(name: str) -> int:
@@ -709,120 +944,285 @@ def _month_number(name: str) -> int:
     return 0
 
 
-def parse_date_phrase(phrase: str, year_hint: int | None = None
-                      ) -> tuple[str | None, str]:
+def _points(text: str) -> list[tuple[int, int, int | None, int | None, int | None]]:
+    """(start, end, year, month, day) for every date point in ``text``, in
+    order, most specific pattern first; years and months a point leaves out
+    are filled from the other points of the SAME phrase ("April 13th and
+    14th, 2018" -> the 14th is April 2018 too)."""
+    taken: list[tuple[int, int]] = []
+    found: list[list] = []
+
+    def free(a: int, b: int) -> bool:
+        return not any(a < y and x < b for x, y in taken)
+
+    def add(a, b, y, m, d):
+        taken.append((a, b))
+        found.append([a, b, y, m, d])
+
+    for pattern in (_DAY_DATE, _DAY_DATE_OF):
+        for m in pattern.finditer(text):
+            month = _month_number(m.group("month"))
+            if month and free(*m.span()):
+                add(*m.span(), int(m.group("year")) if m.group("year") else None,
+                    month, int(m.group("day")))
+    for m in _MONTH_DATE.finditer(text):
+        if _month_number(m.group("month")) and free(*m.span()):
+            add(*m.span(), int(m.group("year")), _month_number(m.group("month")), None)
+    for m in _MONTH_ONLY.finditer(text):
+        if (_month_number(m.group("month")) and free(*m.span())
+                and not _is_modal(text, m.start())):
+            add(*m.span(), None, _month_number(m.group("month")), None)
+    for m in _YEAR.finditer(text):
+        if free(*m.span()):
+            add(*m.span(), int(m.group("year")), None, None)
+    for m in _ORDINAL.finditer(text):
+        if free(*m.span()):
+            add(*m.span(), None, None, int(m.group("day")))
+    found.sort()
+    # Fill within the phrase: a year from the nearest point that states one
+    # (later first — "September and October 2020"), a month from the
+    # point before (a bare "14th" after "April 13th").
+    for i, p in enumerate(found):
+        if p[2] is None and (p[3] is not None or p[4] is not None):
+            later = [q[2] for q in found[i + 1:] if q[2] is not None]
+            earlier = [q[2] for q in found[:i] if q[2] is not None]
+            p[2] = (later or earlier or [None])[0]
+        if p[3] is None and p[4] is not None:
+            earlier = [q[3] for q in found[:i] if q[3] is not None]
+            p[3] = earlier[-1] if earlier else None
+    # A bare year that only lends itself to another point ("April 13th and
+    # 14th, 2018") is that point's year, not a date of its own.
+    dated = {q[2] for q in found if q[3] is not None}
+    found = [q for q in found if q[3] is not None or q[4] is not None
+             or q[2] not in dated]
+    return [tuple(p) for p in found]
+
+
+def _joined(text: str, points) -> bool:
+    """Are the points of a phrase one range or either/or, rather than two
+    dates that merely share a sentence?"""
+    for (_a, b, *_), (c, _d, *_) in zip(points, points[1:]):
+        if not _RANGE_JOIN.search(text[b:c]):
+            return False
+    return True
+
+
+def parse_date_phrase(phrase: str, year_hint: int | None = None,
+                      month_hint: int | None = None) -> tuple[str | None, str]:
     """The date WORDS -> (normalized date, precision). Pure text parsing.
 
-    2.1.0 moved this out of the model. It used to hand back both the words
-    and its own normalization, and the two could disagree — on the first v2
-    pilot it read "On June 4th, 2014" as 2014-06-03. Now it points at the
-    words and this parses them, so that disagreement cannot exist.
+    ``year_hint`` / ``month_hint`` come from the page's timeline (see
+    _timeline_hints) and fill only what the phrase itself leaves out.
 
-    ``year_hint`` is the year stated most recently BEFORE the event; it is
-    used only when the phrase itself names no year.
+    Several points joined by and/or/to ("Between May 28th and June 6th,
+    2025", "April 13th and 14th", "June 7th or June 8th") are dated at the
+    precision that CONTAINS them all — a year, a month — or not at all when
+    they span years. 2.x dated them to their first point, which claimed a
+    day the page never gave.
     """
     text = _norm_ws(strip_footnotes(phrase))
     if not text:
         return None, "none"
-    for pattern in (_DAY_DATE, _DAY_DATE_OF):
-        m = pattern.search(text)
-        if m:
-            month, day = _month_number(m.group("month")), int(m.group("day"))
-            stated = m.group("year")
-            if not stated:
-                # A year the PHRASE states beats the hint even when it sits
-                # past the day the pattern matched: "Around June 7th or June
-                # 8th, 2026" attaches 2026 to the SECOND day, and the first
-                # was taking its year from elsewhere on the page entirely.
-                inline = _YEAR.search(text)
-                stated = inline.group("year") if inline else None
-            year = int(stated) if stated else year_hint
-            if month and year and 1 <= day <= 31:
-                try:
-                    return (datetime(year, month, day).strftime("%Y-%m-%d"), "day")
-                except ValueError:
-                    return None, "none"          # e.g. February 31st
-    m = _MONTH_DATE.search(text)
-    if m and _month_number(m.group("month")):
-        return f"{int(m.group('year')):04d}-{_month_number(m.group('month')):02d}", "month"
-    m = _YEAR.search(text)
-    if m:
-        return m.group("year"), "year"
-    # A month with no year at all: datable only if the section stated one.
-    m = re.search(rf"\b(?P<month>{_MONTH_RE})\b", text, re.I)
-    if m and year_hint and _month_number(m.group("month")):
-        return f"{year_hint:04d}-{_month_number(m.group('month')):02d}", "month"
-    return None, "none"
+    points = _points(text)
+    if not points:
+        return None, "none"
+    if len(points) > 1 and not _joined(text, points):
+        points = points[:1]
+    resolved = []
+    for _a, _b, y, m, d in points:
+        if d is not None and m is None:
+            m = month_hint
+        if y is None and (m is not None or d is not None):
+            y = year_hint
+        if y is None:
+            return None, "none"
+        resolved.append((y, m, d))
+    years = {y for y, _m, _d in resolved}
+    if len(years) != 1:
+        return None, "none"
+    year = years.pop()
+    months = {m for _y, m, _d in resolved}
+    if len(months) != 1 or None in months:
+        return f"{year:04d}", "year"
+    month = months.pop()
+    days = {d for _y, _m, d in resolved}
+    if len(days) != 1 or None in days:
+        return f"{year:04d}-{month:02d}", "month"
+    try:
+        return datetime(year, month, days.pop()).strftime("%Y-%m-%d"), "day"
+    except ValueError:
+        return None, "none"          # February 31st
 
 
-def relative_offset(phrase: str) -> int | None:
-    """Days to add to the previous dated event, or None if not relative."""
+def date_is_bound(phrase: str, source_text: str) -> bool:
+    """Is this date what the event is measured AGAINST ("as of", "prior
+    to", "after X's ... video") rather than when it happened? Checked in the
+    words themselves and in the event's text just before them."""
     text = _norm_ws(strip_footnotes(phrase))
-    if _SAME_DAY.search(text):
-        return 0
-    if _NEXT_DAY.search(text):
-        return 1
-    m = _N_DAYS.search(text)
+    points = _points(text)
+    head = text[:points[0][0]] if points else text
+    source = _norm_ws(strip_footnotes(source_text))
+    at = _comparable(source).find(_comparable(text)) if text else -1
+    before = source[:at] if at > 0 else ""
+    after = source[at + len(text):] if at >= 0 else ""
+    for context in (head, f"{before}{head}"):
+        tight = _BOUND_TIGHT.search(context)
+        # "did not ... until August 2016" STARTED then; and "remained
+        # unknown until January 5th, 2017, when @x posted" is WHEN @x posted
+        # (how-to-break-your-thumb-ligament, 2026-09-25 holdout).
+        if tight and re.match(r"(?:until|till|up\s+until)", tight.group(0), re.I) and (
+                _NEGATED.search(context[max(0, tight.start() - 80):tight.start()])
+                or re.match(r"\s*,?\s*when\b", after, re.I)):
+            continue
+        if tight or _BOUND_LOOSE.search(context):
+            return True
+    return False
+
+
+def relative_shift(phrase: str) -> tuple[str, int] | None:
+    """(unit, signed amount) a relative phrase moves from the anchor, or
+    None. Units: day / month / year; a week is seven days."""
+    text = _norm_ws(strip_footnotes(phrase))
+    m = _REL_COUNT.search(text)
     if m:
-        n = m.group("n").lower()
-        return int(n) if n.isdigit() else _WORD_NUMBERS.get(n)
+        raw = m.group("n").lower()
+        n = int(raw) if raw.isdigit() else _WORD_NUMBERS.get(raw)
+        if n is not None:
+            sign = -1 if m.group("dir").lower() in ("earlier", "before", "prior") else 1
+            unit = m.group("unit").lower()
+            if unit == "week":
+                return "day", sign * 7 * n
+            return unit, sign * n
+    for pattern, unit, n in _REL_RULES:
+        if pattern.search(text):
+            return unit, n
     return None
 
 
-def _shift_days(date: str, precision: str, days: int) -> str | None:
-    if days == 0:
-        return date
-    if precision != "day":
-        return None      # "the next day" after "May 2013" names no day
-    return (datetime.strptime(date, "%Y-%m-%d")
-            + timedelta(days=days)).strftime("%Y-%m-%d")
+# "OkCron continued posting updates over the following month" (no-poop-
+# july, 2026-09-25 holdout): a stretch of time after the anchor, not the
+# calendar month after it. Read in the words and just before them.
+_DURATION_LEAD = re.compile(r"\b(?:over|throughout|during|within|for)\s+$", re.I)
 
 
-def _year_before(unit: dict, covered: list[dict],
-                 phrase: str | None = None) -> int | None:
-    """The year a date phrase without one may take: the year of the most
-    recent DATE the section states before those very words.
+def _is_duration(phrase: str, source_text: str) -> bool:
+    text = _norm_ws(strip_footnotes(phrase))
+    m = re.search(r"\bthe\s+(?:next|following|coming)\b", text, re.I)
+    if m and _DURATION_LEAD.search(text[:m.start()]):
+        return True
+    source = _norm_ws(strip_footnotes(source_text))
+    at = source.lower().find(text.lower()) if text else -1
+    return at > 0 and bool(_DURATION_LEAD.search(source[max(0, at - 15):at]))
 
-    Two things this is careful about, both of them real pilot bugs:
 
-    * **A date, not a number.** Taking the last year token picked up years
-      out of quoted captions ("Reject modern memes, return to 2010"),
-      band-name years, festival names ("Stagecoach 2025") and editorial
-      asides ("it didn't establish the year 2026 as a start date") — 10 of
-      339 dated events in the 99-section pilot, all wrong. A year attached
-      to a month is a date the page is telling the time with.
-    * **Before the words, not before the event.** The context stops where
-      the event's own date phrase begins, so a date quoted LATER in the
-      same sentences ("We will return to January 1st, 2016") cannot supply
-      the year, while one earlier in them still can.
+def relative_offset(phrase: str) -> int | None:
+    """Days a phrase moves from the anchor, for phrases measured in days
+    (kept for callers that only ever dealt in days)."""
+    shift = relative_shift(phrase)
+    return shift[1] if shift and shift[0] == "day" else None
 
-    A bare year is still used when the section states no month-bearing
-    date before the event at all — and when nothing at all precedes them,
-    a year the SECTION names exactly once. KYM often states it after the
-    first event rather than before it ("On April 13th, YouTuber ... . On
-    May 2nd, 2019, ..."), which left 30 of 5,612 sampled events undated on
-    a day the page gives. Exactly once: a section naming two years says
-    nothing about which one an undated April belongs to.
+
+def shift_date(date: str, precision: str, unit: str, n: int
+               ) -> tuple[str, str] | None:
+    """Move an anchor date; the result is never finer than either."""
+    if not date or precision == "none":
+        return None
+    if unit == "day":
+        if n == 0:
+            return date, precision
+        if precision != "day":
+            return None      # "the next day" after "May 2013" names no day
+        return ((datetime.strptime(date, "%Y-%m-%d") + timedelta(days=n))
+                .strftime("%Y-%m-%d"), "day")
+    year = int(date[:4])
+    if unit == "month":
+        if precision not in ("day", "month"):
+            return None      # "the following month" after "2013" names none
+        index = year * 12 + int(date[5:7]) - 1 + n
+        return f"{index // 12:04d}-{index % 12 + 1:02d}", "month"
+    if unit == "year":
+        return f"{year + n:04d}", "year"
+    return None
+
+
+def _date_parts(date: str | None, precision: str) -> tuple[int | None, int | None]:
+    if not date or precision == "none":
+        return None, None
+    return int(date[:4]), (int(date[5:7]) if precision in ("day", "month") else None)
+
+
+def _timeline_hints(unit: dict, rows: Sequence[dict], index: int,
+                    prior: Sequence[dict] = ()) -> tuple[int | None, int | None]:
+    """(year, month) a date phrase may borrow — from the page's TIMELINE.
+
+    The timeline is what the page has dated so far, in reading order: the
+    events of the Origin section (``prior``, when this is Spread), then this
+    section's own events up to this one, with the month-bearing dates of
+    sentences that narrate no event in between. Three things this is careful
+    about, each a bug the 2026-09-24 review found:
+
+    * **Across sections.** Spread continues Origin's story; "On November
+      5th" there takes Origin's 2017. 2.x resolved each section alone, and a
+      Spread whose year was stated only in Origin lost every date it had —
+      one section all nine.
+    * **Events, not every date on the page.** "the tweet from April 2011"
+      inside an April 2013 event does not move the story to 2011; only an
+      event's own date does. 2.x dated the next "On April 15th" to 2011.
+    * **The event's own words first.** "Back in 2018, on July 3rd ..." takes
+      2018 from its own sentence before any timeline.
     """
-    first = covered[0]
-    head = "\n\n".join(unit["paragraphs"][:first["paragraph"]]
-                       + [unit["paragraphs"][first["paragraph"]][:first["start"]]])
-    if phrase:
-        _covered, span_text = _span(unit, [s["id"] for s in covered])
-        at = span_text.find(phrase)
-        if at > 0:
-            head = f"{head}\n\n{span_text[:at]}"
-    spans = _date_spans(_comparable(head))
-    for _start, _end, (year, month, _day) in reversed(spans):
-        if year and month:
-            return year
-    for _start, _end, (year, _month, _day) in reversed(spans):
-        if year:
-            return year
-    whole = {year for _s, _e, (year, month, _d)
-             in _date_spans(_comparable("\n\n".join(unit["paragraphs"])))
-             if year and month}
-    return whole.pop() if len(whole) == 1 else None
+    row = rows[index]
+    covered = [s for s in unit["sentences"] if s["id"] in row["sentences"]]
+    phrase = row.get("date_text") or ""
+    _c, span_text = _span(unit, row["sentences"])
+    at = _comparable(span_text).find(_comparable(phrase)) if phrase else -1
+    if at > 0:
+        own = _points(_comparable(span_text)[:at])
+        for _a, _b, y, m, _d in reversed(own):
+            if y and m:
+                return y, m
+        for _a, _b, y, _m, _d in reversed(own):
+            if y:
+                return y, None
+
+    first = row["sentences"][0]
+    markers: list[tuple[tuple[int, int], int, int | None]] = []
+    for n, event in enumerate(prior):
+        y, m = _date_parts(event.get("date"), event.get("date_precision", "none"))
+        if y:
+            markers.append(((-1, n), y, m))
+    spans = set()
+    for other in rows:
+        spans.update(range(other["sentences"][0], other["sentences"][-1] + 1))
+    for s in unit["sentences"]:
+        if s["id"] < first and s["id"] not in spans:
+            for _a, _b, y, m, _d in _points(_comparable(_sentence_text(unit, s))):
+                if y and m:
+                    markers.append(((s["id"], -1), y, m))
+    for n, other in enumerate(rows[:index]):
+        y, m = _date_parts(other.get("date"), other.get("date_precision", "none"))
+        if y:
+            markers.append(((other["sentences"][0], n), y, m))
+    markers.sort()
+    if markers:
+        year = markers[-1][1]
+        month = next((m for _p, y, m in reversed(markers) if m and y == year), None)
+        return year, month
+    whole = {y for _a, _b, y, m, _d in
+             _points(_comparable("\n\n".join(unit["paragraphs"]))) if y and m}
+    return (whole.pop() if len(whole) == 1 else None), None
+
+
+def _anchor_before(rows: Sequence[dict], index: int, prior: Sequence[dict]):
+    """The nearest DATED event before ``rows[index]`` — this section's, or
+    Origin's last when there is none here yet."""
+    for other in reversed(rows[:index]):
+        if other.get("date"):
+            return other
+    for event in reversed(prior):
+        if event.get("date"):
+            return event
+    return None
 
 
 # ------------------------------------------------------------- grounding ----
@@ -891,10 +1291,13 @@ def _same_word(a: str, b: str) -> bool:
     if a == b:
         return True
     short, long = (a, b) if len(a) < len(b) else (b, a)
-    return len(short) >= 4 and long.startswith(short)
+    # ...and most of the longer word: "face" is not a stem of "facebook"
+    # (muvvafukka's location came back as "face", 2026-09-24 review).
+    return (len(short) >= 4 and long.startswith(short)
+            and len(short) >= 0.6 * len(long))
 
 
-def ground_value(value: Any, hay: str) -> str | None:
+def ground_value(value: Any, hay: str, align: bool = True) -> str | None:
     """The page's own words for what ``value`` names, or None.
 
     Verbatim first — a value already in the text is kept exactly as the
@@ -909,6 +1312,8 @@ def ground_value(value: Any, hay: str) -> str | None:
         return None
     if _comparable(text) and _comparable(text) in _comparable(hay):
         return text
+    if not align:
+        return None
 
     wanted = _POSSESSIVE.sub("", _ASIDE.sub(" ", text))
     words = [w for w, _s, _e, _m in _token_spans(wanted)] or \
@@ -983,7 +1388,8 @@ def _date_components(text: str) -> tuple[int | None, int, int | None] | tuple[in
     m = _YEAR.search(text)
     if m:
         return int(m.group("year")), None, None
-    m = re.search(rf"\b(?P<month>{_MONTH_RE})\b", text, re.I)
+    m = next((m for m in _MONTH_ONLY.finditer(text)
+              if not _is_modal(text, m.start())), None)
     if m and _month_number(m.group("month")):
         return None, _month_number(m.group("month")), None
     return None, None, None
@@ -1003,7 +1409,7 @@ def _date_spans(text: str) -> list[tuple[int, int, tuple]]:
                     re.compile(rf"\b(?P<month>{_MONTH_RE})\b", re.I), _YEAR):
         for m in pattern.finditer(clean):
             a, b = m.span()
-            if not free(a, b):
+            if not free(a, b) or _is_modal(clean, a):
                 continue
             parts = _date_components(clean[a:b])
             if parts == (None, None, None):
@@ -1037,14 +1443,36 @@ def _date_agrees(candidate: tuple, wanted: tuple) -> bool:
     return True
 
 
-def _relative_span(text: str) -> str | None:
-    """The page's own words for a relative date ("that same day"), or None."""
+def _relative_span(text: str, days_only: bool = False) -> str | None:
+    """The page's own words for a relative date ("that same day"), or None.
+    ``days_only`` restricts it to shifts measured in days — the only kind
+    read from an event's sentences when the model quoted no date words."""
     clean, index = _without_markers(text)
-    for pattern in (_SAME_DAY, _NEXT_DAY, _N_DAYS):
+    patterns = [_REL_COUNT] + [p for p, unit, _n in _REL_RULES
+                               if not days_only or unit == "day"]
+    for pattern in patterns:
         m = pattern.search(clean)
-        if m:
+        if m and (not days_only or pattern is not _REL_COUNT
+                  or m.group("unit").lower() in ("day", "week")):
             return text[index[m.start()]:index[m.end() - 1] + 1]
     return None
+
+
+def _narrow(phrase: str) -> str:
+    """Just the date, when the model quoted half a sentence around it:
+    "November 18th, iFunny user Magmapanda77 posted a video" is stored as
+    "November 18th". A few words around the date stay ("Later on",
+    "as early as", "Between"); a clause does not."""
+    points = _points(phrase)
+    if not points:
+        return phrase
+    start, end = points[0][0], points[-1][1]
+    outside = phrase[:start].split() + phrase[end:].split()
+    if len(outside) <= 3:
+        return phrase
+    lead = re.search(r"(?:\b(?:early|mid|late|around|about|between|from|circa)"
+                     r"[-\s]+)+$", phrase[:start], re.I)
+    return phrase[lead.start() if lead else start:end].strip(" ,")
 
 
 def ground_date_text(phrase: Any, source_text: str) -> str | None:
@@ -1061,16 +1489,237 @@ def ground_date_text(phrase: Any, source_text: str) -> str | None:
     if not phrase:
         return None
     if _comparable(phrase) and _comparable(phrase) in _comparable(source_text):
-        return phrase
+        return _narrow(phrase)
     wanted = _date_components(phrase)
     if wanted != (None, None, None):
         for start, end, parts in _date_spans(source_text):
             if _date_agrees(parts, wanted):
                 return source_text[start:end]
         return None
-    if relative_offset(phrase) is not None:
+    if relative_shift(phrase) is not None:
         return _relative_span(source_text)
     return ground_value(phrase, source_text)
+
+
+# A role in front of a name is the page saying who someone IS, not part of
+# the name: "Facebook user Caiden Butler", "the YouTube channel for HUGEL",
+# "film critic Roger Ebert". Kept, one person is a different mk:eventActor
+# literal on every page that introduces them differently.
+_ROLES = ("user|account|page|channel|profile|member|poster|handle|redditor|"
+          "tiktoker|youtuber|streamer|vtuber|rapper|singer|actor|actress|"
+          "artist|illustrator|animator|cosplayer|journalist|writer|blogger|"
+          "critic|comedian|musician|producer|director|host|creator|editor|"
+          "reporter|influencer|podcaster|viner|instagrammer|ifunnyer")
+_ACTOR_ROLE = re.compile(
+    rf"^(?:the\s+)?(?:[\w.!/'’&-]+\s+){{0,3}}?(?:{_ROLES})s?"
+    rf"(?:\s+and\s+(?:[\w.-]+\s+)?(?:{_ROLES}))?\s+"
+    rf"(?:for\s+|called\s+|named\s+)?(?=\S)", re.I)
+# An actor or a place introduced with an indefinite ("a 4chan user", "an
+# anonymous Soyjak.party user", "a personal blog") names nobody in
+# particular — nothing a query could ever join on.
+_UNNAMED_LEAD = re.compile(
+    r"^(?:a|an|another|some|several|many|various|numerous|multiple|other|"
+    r"others|anonymous|unknown|unidentified)\b", re.I)
+# ...and so does a DESCRIPTION of someone: "the person who uploaded the
+# clip" is a role the page gives, not a name (chris-turns-blue, 2026-09-24).
+_DESCRIBED = re.compile(r"^(?:the\s+)?[a-z][\w-]*(?:\s+[a-z][\w-]*){0,2}"
+                        r"\s+(?:who|that|whose)\b")
+# The place a post was made IN is a location, not a participant: "the Star
+# Wars Sithposting shitposting group" is where elliott.boydstringer posted,
+# not someone who posted (Gabi's review, 2026-09-24).
+_VENUE_NOUN = re.compile(
+    r"\b(?:group|subreddit|sub|server|forum|board|imageboard|thread|"
+    r"chatroom|group\s?chat)s?$", re.I)
+_UNNAMED_PLACES = frozenset({
+    "online", "internet", "the internet", "the web", "social media",
+    "the site", "the website", "the platform", "the app", "the group",
+    "the subreddit", "the page", "the forum", "the board", "the thread",
+    "the channel", "the server", "various platforms", "other platforms",
+    "several platforms", "multiple platforms", "other sites", "various sites",
+    "other social media", "other social media platforms", "the same platform",
+    # bare kinds of place: a page with its name dropped
+    "website", "site", "blog", "forum", "platform", "app", "page", "group",
+    "subreddit", "server", "board", "channel", "thread", "profile", "account",
+})
+# Words that introduce a page, channel or account BY NAME: what follows is
+# the poster ("the Facebook page King K Rool posted"), not a place.
+_ACCOUNT_NOUN = re.compile(r"\b(?:page|channel|account|profile|handle|user)$", re.I)
+_LOWER_BRANDS = frozenset({"tumblr", "reddit", "twitter", "youtube", "tiktok",
+                           "instagram", "facebook", "imgur", "ifunny", "twitch",
+                           "discord", "snapchat", "pinterest", "vine", "myspace",
+                           "9gag"})
+_INDEFINITE = frozenset({"a", "an", "another", "some", "several", "many",
+                         "various", "numerous", "multiple"})
+
+
+# "the ApeThrowbacks channel", "the Couples Court YouTube channel": the
+# name is what comes before (atlorgy, ms-jacksons, 2026-09-24 review).
+# Lowercase only: "Ghost X Channel" is a channel's NAME.
+_ACCOUNT_SUFFIX = re.compile(
+    r"\s+(?:(?:YouTube|Twitch|Facebook|Instagram|TikTok|Twitter|Tumblr|Reddit"
+    r"|Discord)\s+)?(?:channel|page|account|profile)$")
+
+
+def _clean_actor(value: str) -> str:
+    stripped = _ACTOR_ROLE.sub("", value, count=1).strip()
+    stripped = _ACCOUNT_SUFFIX.sub("", stripped or value).strip()
+    return stripped or value
+
+
+def _unquote(value: str) -> str:
+    """'"Uzuki's ganbarimasu"' -> Uzuki's ganbarimasu: the quote marks
+    around a name are the page's punctuation, not the name."""
+    while len(value) > 2 and value[0] in "\"“'‘" and value[-1] in "\"”'’":
+        value = value[1:-1].strip()
+    # ...and one mark the name was cut from: 'Instagrammer "fawaz_Alfahad'
+    if sum(value.count(q) for q in "\"“”") == 1:
+        value = value.strip("\"“” ")
+    return value
+
+
+# A role with no name after it ("Yahoo Answers user posed the question")
+# and a crowd ("Tumblr users", "4chan's moderators", "Anonymous members")
+# name nobody a query could join on (bedroom-eyes, 4chumblr, 2026-09-24).
+# The role word in lowercase: "Chance the Rapper" is a name.
+_ROLE_ONLY = re.compile(rf"^(?i:the\s+)?(?:[\w.!/'’&-]+\s+){{0,3}}(?:{_ROLES})$")
+_CROWD = re.compile(
+    r"^(?:[\w.!/'’&-]+\s+){0,3}(?:users|members|fans|people|posters|commenters"
+    r"|viewers|moderators|mods|admins|redditors|tweeters|anons|netizens|followers"
+    r"|subscribers|players|gamers|critics|outlets|accounts|pages|channels)$")
+
+
+def _names_nobody(value: str) -> bool:
+    key = _comparable(value)
+    return (not key or key in _UNNAMED_ACTORS or key in _UNNAMED_PLACES
+            or bool(_UNNAMED_LEAD.match(value)) or bool(_DESCRIBED.match(value))
+            or bool(_ROLE_ONLY.match(value)) or bool(_CROWD.match(value)))
+
+
+def _split_places(value: str) -> list[str]:
+    """"Monorail and Funny Junk", "Facebook and Twitter" -> each place. Only
+    short parts are split, so a venue whose own name has an "and" in it
+    survives whole."""
+    joined = re.split(r"\s+and\s+|\s*&\s*", value)
+    if len(joined) == 1:
+        return [value]       # "Longyearbyen, Norway" is one place, not two
+    parts = [p.strip(" ,") for part in joined for p in part.split(",")]
+    parts = [p for p in parts if p]
+    if len(parts) > 1 and all(len(p.split()) <= 4 for p in parts):
+        return parts
+    return [value]
+
+
+def _words_before(value: str, hay: str) -> list[str]:
+    """The word just before each place ``value`` occurs in ``hay``."""
+    comp, needle = _comparable(hay), _comparable(value)
+    out, at = [], comp.find(needle)
+    while at >= 0 and needle:
+        words = comp[:at].split()
+        out.append(words[-1] if words else "")
+        at = comp.find(needle, at + 1)
+    return out
+
+
+def _introduced_indefinitely(value: str, hay: str) -> bool:
+    """"an anime forum about the show", "a Reuters photojournalist": the
+    page names no particular one. The model tends to drop the article, so
+    it is looked for on the page, in front of every occurrence."""
+    # Only a COMMON noun is unnamed this way: "an Imgur compilation" still
+    # names Imgur, while "an anime forum" names no forum.
+    head = (value.split() or [""])[-1]
+    if not head[:1].islower():
+        return False
+    before = _words_before(value, hay)
+    return bool(before) and all(w in _INDEFINITE for w in before)
+
+
+def _grounded_list(values, hay: str, *, clean=None, own: str = "",
+                   before: str = "") -> list[str]:
+    """Each value grounded, first match wins:
+
+    1. verbatim in the event's OWN sentences;
+    2. verbatim in the section up to the event's end (``before``) — the
+       page referring back: "in the group" is the group named two
+       sentences up, "Butler made ..." is the Caiden Butler named above;
+    3. by alignment in its own sentences — "Adam Warski" -> "Warski";
+    4. verbatim anywhere in the section — _settle_borrowed then decides
+       whether a value named only LATER belongs to this event at all.
+
+    Aligning against the whole section once resolved a subreddit to a
+    Tumblr blog's name two sentences away, so alignment is own-only; and
+    aligning before looking back turned "Caiden Butler" into "Butler" and
+    the group into "the group" (2026-09-24 review).
+    """
+    out, seen = [], set()
+    for value in values or []:
+        grounded = (ground_value(value, own, align=False)
+                    or (ground_value(value, before, align=False) if before else None)
+                    or ground_value(value, own)
+                    or ground_value(value, hay, align=False)
+                    if own else ground_value(value, hay))
+        if not grounded:
+            continue
+        grounded = _unquote(grounded)
+        if clean:
+            grounded = _unquote(clean(grounded))
+        key = _comparable(grounded)
+        if (key and key not in seen and not _names_nobody(grounded)
+                and not _introduced_indefinitely(grounded, hay)):
+            seen.add(key)
+            out.append(grounded)
+    return out
+
+
+# "On September 13th, user elie posted a video ..." — a sentence that OPENS
+# with its date is dated by it, whatever else it goes on to say. The model
+# returned no date words for four such events in the 2026-09-24 review
+# sample; the date is read only from the event's FIRST sentence, only when
+# it leads it, so a date deeper in ("a video from 2010", "after the game
+# was announced in 2020") is never taken for the event's.
+_LEAD_IN = re.compile(r"(?:(?:for\s+(?:example|instance)|then|later|also|finally"
+                      r"|afterwards?|meanwhile|however|additionally),?\s+)?on\s*", re.I)
+
+
+_LEAD_WORDS = re.compile(r"\s*(?:(?:for\s+(?:example|instance)|then|also|and|but),?\s+)?", re.I)
+
+
+def _leading_date(sentence: str) -> str | None:
+    """...and "That month, the Moran appeared ..." (get-a-brain-morans): a
+    relative date the sentence opens with, in any unit."""
+    rel = _relative_span(sentence)
+    if rel:
+        rest = sentence[_LEAD_WORDS.match(sentence).end():]
+        if rest.lower().startswith(rel.lower()) and rest[len(rel):len(rel) + 1] in (",", " "):
+            return rel
+    spans = _date_spans(sentence)
+    if not spans:
+        return None
+    a, b, _parts = spans[0]
+    if (_LEAD_IN.fullmatch(strip_footnotes(sentence[:a]).lstrip())
+            and sentence[b:b + 1] == ","):
+        return sentence[a:b]
+    return None
+
+
+def _only_quoted(value: str, text: str) -> bool:
+    """Named only inside quoted words: "... has no place on @YouTube" in
+    PETA's tweet addresses YouTube; it does not say YouTube did anything."""
+    spans = [m.span() for m in _QUOTED.finditer(text)]
+    hits = [m.start() for m in re.finditer(re.escape(value), text)]
+    return bool(hits) and all(any(a <= h < b for a, b in spans) for h in hits)
+
+
+def _platform_in(place: str) -> str:
+    key = _comparable(place)
+    for brand in _LOWER_BRANDS:
+        if re.fullmatch(re.escape(brand) + r"(?:m?e?rs?|ors?)", key) and key != brand:
+            return place[:len(brand)]
+    return place
+
+
+def _contains_run(longer: list[str], shorter: list[str]) -> bool:
+    n = len(shorter)
+    return any(longer[i:i + n] == shorter for i in range(len(longer) - n + 1))
 
 
 def _check_event(raw: dict, checker: Draft202012Validator, unit: dict) -> dict:
@@ -1087,13 +1736,15 @@ def _check_event(raw: dict, checker: Draft202012Validator, unit: dict) -> dict:
     resolve_dates() computes the date from them afterwards (2.1.0).
     """
     row = {k: raw[k] for k in checker.schema["properties"] if k in raw}
-    for key in ("date_text", "location"):
-        if key in row:
-            row[key] = _nullish(row[key])
-    row.setdefault("actors", [])
+    if "date_text" in row:
+        row["date_text"] = _nullish(row["date_text"])
+    for key in ("actors", "locations"):
+        value = row.get(key)
+        if isinstance(value, str):           # a model that sent one string
+            value = [value]
+        row[key] = [v for v in (value or []) if _nullish(v)]
     row.setdefault("location_type", "unknown")
-    for key in ("date_text", "location"):
-        row.setdefault(key, None)
+    row.setdefault("date_text", None)
     try:
         checker.validate(row)
     except ValidationError as exc:
@@ -1108,85 +1759,387 @@ def _check_event(raw: dict, checker: Draft202012Validator, unit: dict) -> dict:
     section = "\n\n".join(unit["paragraphs"])
 
     date_text = ground_date_text(row.get("date_text"), source_text)
-    location = ground_value(row.get("location"), section)
-    location_type = (row.get("location_type") or "unknown") if location else "unknown"
-
-    actors: list[str] = []
-    seen: set[str] = set()
-    for actor in row.get("actors") or []:
-        grounded = ground_value(actor, section)
-        key = _comparable(grounded) if grounded else ""
-        if key and key not in seen and key not in _UNNAMED_ACTORS:
-            seen.add(key)
-            actors.append(grounded)
+    if date_text is None:
+        # The model gave no words, or words that are not in the event's
+        # sentences — "September 9th, 2005" for "That month, the Moran
+        # appeared ..." (the sentence before's date): the page's own
+        # opening words win over both.
+        date_text = _leading_date(_sentence_text(unit, covered[0]))
+    places = [part for value in row["locations"] for part in _split_places(value)]
+    last = covered[-1]
+    before = "\n\n".join(unit["paragraphs"][:last["paragraph"]]
+                         + [unit["paragraphs"][last["paragraph"]][:last["end"]]])
+    actors = _grounded_list(row["actors"], section, clean=_clean_actor,
+                            own=source_text, before=before)
+    # A source being CITED is not a participant: "According to Pixiv
+    # Encyclopedia, the first ..." (ahegao, 2026-09-24 review).
+    own_comp = _comparable(source_text)
+    actors = [a for a in actors if f"according to {_comparable(a)}" not in own_comp]
+    # A venue listed as a participant is moved to where it belongs.
+    venues = [a for a in actors if _VENUE_NOUN.search(a)]
+    actors = [a for a in actors if a not in venues]
+    locations = _grounded_list(places + venues, section, own=source_text,
+                               before=before)
+    # ...and the poster's own page, channel or account listed as a place is
+    # moved the other way: "the Facebook page King K Rool posted" names who
+    # posted. Anything that is already an actor is not also a place.
+    # "iFunnyer Choctaw posted": the place is the iFunny in "iFunnyer" —
+    # still the page's own letters (holdout, 2026-09-25).
+    locations = [_platform_in(l) for l in locations]
+    # ...and a place is no place when it is all lowercase common words
+    # ("personal blog", the-rake): a named place has a capital, a digit or
+    # a sigil somewhere, the platforms their own brand spelling.
+    locations = [l for l in locations
+                 if not re.fullmatch(r"[a-z][a-z\s-]*", l) or _comparable(l) in _LOWER_BRANDS]
+    # Whoever the sentence says DID it is an actor, whatever the model
+    # filed it as: "Relentlessly Optimistic posted the image", "TMZ
+    # published footage" (the model put some outlets under actors and
+    # others under places; 2026-09-24 review).
+    doers = [l for l in locations
+             if l[:1].isupper() or l[:1].isdigit() or l[:1] == "@"]
+    doers = [l for l in doers
+             if _comparable(l) not in _LOWER_BRANDS | {"x"}
+             and re.search(r"(?<!\w)" + re.escape(_comparable(l)) + r"(?:['’]s)?\s+"
+                           r"(?:then\s+|also\s+|later\s+)?(?:posted|published|uploaded"
+                           r"|tweeted|shared|released|reposted|covered"
+                           r"|reported|featured|wrote|announced)\b", own_comp)]
+    posters = [l for l in locations
+               if l in doers
+               or ((l.startswith("@") or re.match(r"u/\w", l))
+                   and not _only_quoted(l, source_text))
+               or _ACCOUNT_NOUN.search(l)
+               or any(_ACCOUNT_NOUN.search(w) for w in _words_before(l, source_text))
+               or (_comparable(l) not in _LOWER_BRANDS | {"x"}
+                   and re.search(re.escape(_comparable(l)) + r"\s+(?:(?:youtube|twitch"
+                                 r"|facebook|instagram|tiktok|twitter|tumblr|reddit"
+                                 r"|discord)\s+)?(?:channel|page|account|profile)\b",
+                                 own_comp))]
+    actor_keys = {_comparable(a) for a in actors}
+    for poster in posters:
+        name = _clean_actor(poster)
+        if _comparable(name) not in actor_keys:
+            actors.append(name)
+        actor_keys |= {_comparable(name), _comparable(poster)}
+    locations = [l for l in locations
+                 if l not in posters and _comparable(l) not in actor_keys]
+    # ...nor is the actor's own page named around the actor: "the personal
+    # blog of Something Awful user Brian Somerville" (the-rake, 2026-09-25).
+    locations = [l for l in locations
+                 if not any(re.search(r"(?<!\w)" + re.escape(k) + r"(?!\w)", _comparable(l))
+                            for k in actor_keys if len(k) > 2)]
+    # A part of a name listed beside the whole: "Cody Ko", "Cody", "Ko".
+    words = {a: _comparable(a).split() for a in actors}
+    actors = [a for a in actors
+              if not any(len(words[b]) > len(words[a]) and _contains_run(words[b], words[a])
+                         for b in actors)]
+    # One poster named twice: "IDF" and "IDF YouTube channel" (there-is-a-
+    # list, 2026-09-24 review). The name is kept, its channel dropped.
+    actors = [a for a in actors
+              if not (_ACCOUNT_NOUN.search(_comparable(a)) and any(
+                  _comparable(a).startswith(k + " ")
+                  and len(_comparable(a)[len(k):].split()) <= 3
+                  for k in actor_keys if k != _comparable(a)))]
+    location_type = (row.get("location_type") or "unknown") if locations else "unknown"
+    if locations and location_type == "unknown":
+        location_type = "platform"
 
     return {
         "sentences": ids,
         "source_text": source_text,
         "date": None, "date_precision": "none", "date_basis": None,
         "date_text": date_text,
-        "location": location,
+        "locations": locations,
         "location_type": location_type,
         "actors": actors,
         "certainty": row["certainty"],
     }
 
 
-def resolve_dates(rows: list[dict], unit: dict) -> None:
-    """Date every event, in document order, from the text alone.
+# A sentence that only reports how a post was RECEIVED — "The post received
+# more than 2,000 reactions, 410 comments and 500 shares in three days" —
+# narrates no happening of its own: it is part of the event of the post it
+# reports on. The prompt says so, and the model still left 127 of 1,370
+# sentences of the 2026-09-24 review sample out of every event, and made
+# another few events of their own (the reviewer's "missed sentence 3").
+# So the pipeline puts them where they belong, and only when nothing on
+# the way could be a happening the model missed: no posting verb, no named
+# poster, no date (an "as of" bound is not one), no relative date.
+_RECEPTION = re.compile(
+    r"\d[\d,.]*\+?\s*(?:million|thousand|[km])?\s+(?:up\s*|down\s*)?"
+    r"(?:views|likes|dislikes|shares|retweets|reposts|quote[\s-]tweets|reactions"
+    r"|votes|points|notes|comments|replies|favorites|favourites|faves|bookmarks"
+    r"|reblogs|plays|listens|streams|subscribers|followers|members|karma"
+    r"|downloads|hits|impressions|interactions|smiles|saves|loops|revines)\b"
+    r"|\b(?:watched|viewed|liked|shared|retweeted|reblogged|favorited|upvoted"
+    r"|played|streamed|downloaded)\s+(?:over\s+|more\s+than\s+|nearly\s+"
+    r"|almost\s+|about\s+|roughly\s+|approximately\s+|around\s+)?"
+    r"\d[\d,.]*\s*(?:million|thousand|[km])?\s+times\b", re.I)
+# ...and one that only gives the words of the post just narrated: "They
+# wrote, "Churches should pay property tax periodt."" (periodt, she-took-
+# the-fucking-kids: left out, or made an event of its own).
+_SPEECH = re.compile(
+    r"^(?:(?:in|on)\s+(?:the|their|his|her|its)\s+(?:post|tweet|video|caption"
+    r"|comment|reply|thread|story)\s*,?\s*)?(?:they|he|she|it|the\s+(?:user"
+    r"|poster|post|tweet|caption|video|comment|reply|thread|account|page|artist"
+    r"|creator))\b[^\"“]{0,40}?\b(?:wrote|writes|said|says|captioned|added"
+    r"|asked|stated|explained|replied|commented|joked|noted)\b", re.I)
+_QUOTED = re.compile(r'["“][^"”]*(?:["”]|$)')
+_HAPPENING = re.compile(
+    r"\b(?:posted|uploaded|re-?uploaded|reposted|re-?shared|shared|tweeted"
+    r"|retweeted|created|made|published|released|launched|submitted|aired"
+    r"|premiered|began|started|appeared|founded|established|drew|edited"
+    r"|remixed|dubbed)\b|@\w|(?<![\w/])u/\w", re.I)
+# "One such post by YouTuber Nathan Zed ... has gained 22,800 retweets" is
+# another post, not the last one's reception. Only a WORK by someone: a
+# passive "struck by the Hinox" in a description is not a new post.
+_BY_NAME = re.compile(
+    r"\b(?i:posts?|videos?|tweets?|comics?|images?|clips?|edits?|versions?"
+    r"|threads?|drawings?|gifs?|remix(?:es)?|(?:re)?uploads?|photos?|pictures?"
+    r"|one|examples?|submissions?)\b[^.;]{0,20}?\bby\s+"
+    r"(?:(?:[a-z]+\s+){0,2}[A-Z@]"          # "by YouTuber Nathan Zed"
+    r"|(?!(?:the|a|an|its|his|her|their|this|that|these|those|some|many|other"
+    r"|others|users?|people|fans)\b)[a-z0-9_.]+\b)")  # "by crybabygrande"
 
-    Two ways, both the pipeline's arithmetic and never the model's:
 
-    * **stated** — the event's date words parse to a date. A year the words
-      do not give is taken from the most recent year stated EARLIER in the
-      section (never from later on the page).
-    * **relative** — the words are "that same day", "the following day",
-      "three days later"...: the date is that offset from the nearest
-      earlier dated event, and ``date_anchor`` names it. Chains are
-      allowed, because a chain is how the page itself reads.
+def _narrates_nothing_new(text: str) -> bool:
+    """No happening, poster or date of its own in this sentence — quoted
+    words and the reception counts themselves aside ("shared 27 times")."""
+    text = _RECEPTION.sub(" ", _QUOTED.sub(" ", text))
+    if _HAPPENING.search(text) or _BY_NAME.search(text) or _relative_span(text):
+        return False
+    clean, _index = _without_markers(text)
+    return all(date_is_bound(clean[a:b], clean) for a, b, _p in _date_spans(clean))
+
+
+# A sentence ABOUT the work the event before posted — "The post features
+# host Matthew O'Dowd discussing ...", "In the video, the sound effect ...
+# accompanies a clip" — describes; the model made events of them in 8 of
+# the 127 sections it was prompted not to (2026-09-24 review). Only when
+# it narrates nothing new and says nothing about the work spreading.
+_ABOUT_THE_WORK = re.compile(
+    r"^(?:(?:in|at)\s+(?:the|this|that|its|his|her|their)\s+(?:[\w-]+\s+){0,2}?"
+    r"(?:video|clip|episode|film|movie|scene|comic|strip|image|picture|photo|post"
+    r"|tweet|game|song|stream|trailer|footage|recording)\b"
+    r"|(?:the|this|that|its|his|her|their)\s+(?:[\w-]+\s+){0,3}?(?:video|clip"
+    r"|episode|film|movie|scene|comic|strip|image|picture|photo|photograph"
+    r"|screenshot|screen\s+capture|post|tweet|game|song|audio|recording|footage"
+    r"|gif|caption|copypasta|story|thread|artwork|drawing|template)\b)", re.I)
+_SPREADING = re.compile(
+    r"\b(?:viral|spread\w*|trend\w*|popular\w*|became|become|grew|grow\w*"
+    r"|began|begun|start\w*|inspir\w+|went|resurfac\w+|circulat\w+|meme[ds]?"
+    r"|exploitable|parod\w+|remix\w*)\b", re.I)
+
+
+# ...and "the picture ..." must say what it SHOWS: "The picture was very
+# well-received, and variations flowed forth" is its spread.
+_DEPICTS = re.compile(
+    r"\b(?:features?|featuring|depict(?:s|ed|ing)?|show(?:s|n|ing)?|contain(?:s|ed|ing)?"
+    r"|consist(?:s|ed|ing)?|includ(?:es|ed|ing)|had|has|reads?|says?|sings?|plays?"
+    r"|accompan\w+|(?:is|was|are|were)\s+(?:a|an|the)\b)", re.I)
+
+
+def _describes_the_work(text: str) -> bool:
+    m = _ABOUT_THE_WORK.match(text)
+    return (bool(m) and (m.group(0).lower().startswith(("in ", "at ")) or bool(_DEPICTS.search(text)))
+            and not _SPREADING.search(text) and _narrates_nothing_new(text))
+
+
+def _reception_only(text: str) -> bool:
+    """Only how the post before was received, or only its own words."""
+    reports = _RECEPTION.search(text) or (_SPEECH.search(text) and _QUOTED.search(text))
+    return bool(reports) and _narrates_nothing_new(text)
+
+
+def _same_day_only(text: str) -> bool:
+    """No time of its own beyond "that day" / "the same day"."""
+    clean, _index = _without_markers(text)
+    if any(not date_is_bound(clean[a:b], clean) for a, b, _p in _date_spans(clean)):
+        return False
+    phrase = _relative_span(text)
+    return phrase is None or relative_shift(phrase) == ("day", 0)
+
+
+def _settle_borrowed(rows: list[dict], unit: dict) -> None:
+    """An actor or place the page first names AFTER the event's sentences.
+
+    Named earlier, it is the page referring back ("the group" -> the group
+    named above) and stays. Named only later, the model took it from
+    another sentence, and there are two cases (2026-09-24 review):
+
+    * the very next sentence, in no event and adding no time of its own,
+      is where the model read it — "The claim was refuted online that day
+      by many. For example, that day, X user @zoo_bear made a post ..." —
+      and that sentence is part of this event: the span grows to it, so
+      the event's quoted evidence contains its own actor;
+    * otherwise it belongs to a later happening — WhiteCrowWolf's May 16th
+      post placed in the subreddit of the May 17th one — and is dropped.
+    """
+    texts = {s["id"]: _comparable(_sentence_text(unit, s)) for s in unit["sentences"]}
+    covered = {i for r in rows for i in range(r["sentences"][0], r["sentences"][-1] + 1)}
+
+    def named(value: str) -> re.Pattern:
+        # "YouTuber x uploaded", "TikToker @y", "Redditor z", "tweeted":
+        # the page names the platform in the word for its user or its post.
+        key = _comparable(value)
+        alt = re.escape(key) + r"(?:e?rs?|ors?)?"
+        if key in ("twitter", "x", "x (twitter)", "twitter / x", "x / twitter"):
+            alt += r"|tweet(?:s|ed|ing)?|retweet(?:s|ed|ing)?"
+        return re.compile(rf"(?<!\w)(?:{alt})(?!\w)")
+    for row in rows:
+        for key in ("actors", "locations"):
+            kept = []
+            for value in row[key]:
+                pat = named(value)
+                where = [i for i in sorted(texts) if pat.search(texts[i])]
+                last = row["sentences"][-1]
+                if not where or where[0] <= last:
+                    kept.append(value)
+                    continue
+                nxt = last + 1
+                if (where[0] == nxt and nxt not in covered
+                        and _same_day_only(_sentence_text(unit, unit["sentences"][nxt - 1]))):
+                    row["sentences"] = sorted(set(row["sentences"]) | {nxt})
+                    _c, row["source_text"] = _span(unit, row["sentences"])
+                    covered.add(nxt)
+                    kept.append(value)
+            row[key] = kept
+        if not row["locations"]:
+            row["location_type"] = "unknown"
+
+
+_DURATION = re.compile(
+    r"^(?:in|within|over|for|during|throughout)\s+(?:the\s+)?(?:(?:first|next"
+    r"|following|past|last)\s+)?(?:\S+\s+)?(?:hours?|days?|weeks?|months?|years?"
+    r"|decades?)$", re.I)
+
+
+def _absorb_reception(rows: list[dict], unit: dict) -> list[dict]:
+    """Fold each reception-only sentence into the event just before it.
+
+    An event made of nothing but reception sentences, with no date words,
+    place or actor, is folded the same way; one with no event before it
+    to join stays as it was, so nothing the model returned is lost. The
+    sentences between the event and the reception sentence join it too,
+    since each narrates nothing new (the comic's description, a quote).
+    Returns the rows that remain, in their original order.
+    """
+    texts = {s["id"]: strip_footnotes(_sentence_text(unit, s))
+             for s in unit["sentences"]}
+
+    def stat_only(row: dict) -> bool:
+        # "In two months, the Vine received over 26,000 loops" came back
+        # with "In two months" as its date words: a duration, not a date.
+        timeless = not row["date_text"] or bool(_DURATION.match(row["date_text"]))
+        return (timeless and not row["locations"] and not row["actors"]
+                and all(_reception_only(texts[i]) or _describes_the_work(texts[i])
+                        for i in range(row["sentences"][0], row["sentences"][-1] + 1)))
+
+    folded = [r for r in rows if stat_only(r)]
+    kept = [r for r in rows if not stat_only(r)]
+    # what a folded event narrated joins the event before it, like reception
+    joins = {i for r in folded for i in range(r["sentences"][0], r["sentences"][-1] + 1)}
+    covered: dict[int, list[dict]] = {}
+    for row in kept:
+        for i in range(row["sentences"][0], row["sentences"][-1] + 1):
+            covered.setdefault(i, []).append(row)
+
+    for sid in sorted(texts):
+        if sid in covered or not (_reception_only(texts[sid]) or sid in joins):
+            continue
+        j = sid - 1
+        while j >= 1 and j not in covered and _narrates_nothing_new(texts[j]):
+            j -= 1
+        ending = [r for r in covered.get(j, []) if r["sentences"][-1] == j]
+        if not ending:
+            continue
+        # A sentence two events end on belongs to the one that STARTS
+        # there: "E1 [1, 2], E2 [2]" — the reception of s2 is E2's post's.
+        start = max(r["sentences"][0] for r in ending)
+        for row in ending:
+            if row["sentences"][0] != start:
+                continue
+            row["sentences"] = sorted(set(row["sentences"]) | set(range(j + 1, sid + 1)))
+            _covered, row["source_text"] = _span(unit, row["sentences"])
+        for i in range(j + 1, sid + 1):
+            covered[i] = [r for r in ending if r["sentences"][0] == start]
+
+    # A stat-only event nothing absorbed stays an event of its own.
+    kept.extend(r for r in folded
+                if any(i not in covered for i in
+                       range(r["sentences"][0], r["sentences"][-1] + 1)))
+    order = {id(r): n for n, r in enumerate(rows)}
+    return sorted(kept, key=lambda r: order[id(r)])
+
+
+def resolve_dates(rows: list[dict], unit: dict,
+                  prior: Sequence[dict] = ()) -> None:
+    """Date every event, in reading order, from the text and the timeline.
+
+    Three outcomes, all the pipeline's arithmetic and never the model's:
+
+    * **stated** — the date words parse to a date; a year or month they
+      leave out comes from the page's timeline (_timeline_hints), which for
+      Spread begins with Origin's events (``prior``).
+    * **relative** — "that same day", "the following month", "two weeks
+      later": that shift from the nearest earlier DATED event, which for the
+      opening of Spread is Origin's last; ``date_anchor`` names it.
+    * **bound** — "as of December 2nd", "prior to August 2019", "after Cody
+      Ko's April 30th video": the date is what the event is measured
+      against. Undated — and so never an anchor for the events after it.
 
     Anything else stays undated with its words kept: "shortly after" and
-    "the following week" name no day, and inventing one is exactly what
-    this module exists to prevent. So does a relative phrase with no dated
-    event before it, and one measured from a date that names no day.
+    "the following week" name no unit the graph has, and inventing one is
+    exactly what this module exists to prevent.
     """
     ordered = sorted(rows, key=lambda r: (r["sentences"][0], r["sentences"][-1]))
-    anchor: dict | None = None
-    for row in ordered:
+    for i, row in enumerate(ordered):
         phrase = row.get("date_text") or ""
-        covered = [s for s in unit["sentences"] if s["id"] in row["sentences"]]
+        if phrase and date_is_bound(phrase, row["source_text"]):
+            continue
         date, precision = parse_date_phrase(
-            phrase, _year_before(unit, covered, phrase))
+            phrase, *_timeline_hints(unit, ordered, i, prior))
         if date:
             row.update(date=date, date_precision=precision, date_basis="stated")
-            anchor = row
             continue
-        # A relative phrase is unambiguous wherever it sits, so if the
-        # model gave no usable date words, the event's OWN sentences are
-        # read for one. (An absolute date is NOT taken this way: a sentence
-        # often carries a date belonging to what it reports — "the
-        # screenshot shows that on June 3rd, 2014 ..." — and picking it
-        # would date the event by guesswork.)
-        offset = relative_offset(phrase) if phrase else None
-        if offset is None:
-            offset = relative_offset(row["source_text"])
-            if offset is not None:
-                # The sentences carry the relative wording the model did not
-                # quote; date_text is the page's, as everywhere else.
-                row["date_text"] = _relative_span(row["source_text"]) or phrase or None
-        if offset is None or anchor is None:
+        # A relative phrase measured in DAYS is unambiguous wherever it
+        # sits, so when the model gave no usable date words the event's own
+        # sentences are read for one. Months and years are not read this
+        # way ("the meme of that year"), and an absolute date never is: a
+        # sentence often carries a date belonging to what it reports.
+        shift = relative_shift(phrase) if phrase else None
+        if shift is None:
+            found = _relative_span(row["source_text"], days_only=True)
+            if found:
+                shift = relative_shift(found)
+                row["date_text"] = phrase = found
+        if shift and _is_duration(phrase, row["source_text"]):
+            shift = None
+        # The same date words read twice from one sentence name one time.
+        # Resolving the second against the first chained "the next day" into
+        # a day later still (hallway-swimming, 2026-09-24 review). Checked
+        # on the EFFECTIVE words, wherever they came from.
+        twin = next((o for o in ordered[:i] if o.get("date") and phrase
+                     and o["sentences"][0] == row["sentences"][0]
+                     and _comparable(o.get("date_text") or "") == _comparable(phrase)),
+                    None) if shift else None
+        if twin is not None:
+            row.update(date=twin["date"], date_precision=twin["date_precision"],
+                       date_basis=twin["date_basis"])
+            if twin.get("date_anchor") is not None:
+                row["date_anchor"] = twin["date_anchor"]
             continue
-        shifted = _shift_days(anchor["date"], anchor["date_precision"], offset)
-        if shifted is None:
+        anchor = _anchor_before(ordered, i, prior) if shift else None
+        if anchor is None:
             continue
-        row.update(date=shifted, date_precision=anchor["date_precision"],
-                   date_basis="relative", date_anchor=anchor)
-        anchor = row
-    # date_anchor carries the anchor ROW itself while ids do not exist yet;
-    # make_validator swaps it for that row's event_id. Not its first
-    # sentence number: 74 of 5,612 events in a 1,528-section sample share a
-    # first sentence with another event, and an undated one between anchor
-    # and anchored would have pointed mk:dateAnchoredTo at the wrong event.
+        moved = shift_date(anchor["date"], anchor["date_precision"], *shift)
+        if moved is None:
+            continue
+        row.update(date=moved[0], date_precision=moved[1], date_basis="relative",
+                   date_anchor=anchor)
+    # date_anchor carries the anchor itself while ids do not exist yet — a
+    # row of this section, or an Origin event that already has its id —
+    # and make_validator swaps it for an event_id. Not a sentence number:
+    # 74 of 5,612 sampled events share a first sentence with another.
 
 
 def _attach(row: dict, unit: dict) -> dict:
@@ -1268,9 +2221,11 @@ def make_validator(checker: Draft202012Validator,
                 raise TypeError("an event is not an object")
             kept.append(_check_event(raw, checker, unit))
 
+        _settle_borrowed(kept, unit)
+        kept = _absorb_reception(kept, unit)
         # Dates come last: they are the pipeline's arithmetic over the
         # whole section, and a relative one needs the events before it.
-        resolve_dates(kept, unit)
+        resolve_dates(kept, unit, unit.get("prior") or ())
         out: list[dict] = []
         by_id: dict[str, dict] = {}
         ids_by_row: dict[int, str] = {}
@@ -1283,8 +2238,10 @@ def make_validator(checker: Draft202012Validator,
                                        row["date_precision"])
             anchor_row = original.get("date_anchor")
             if anchor_row is not None:
-                # Identity, not sentence number — see resolve_dates.
-                row["date_anchor"] = ids_by_row.get(id(anchor_row))
+                # Identity, not sentence number — see resolve_dates. An
+                # Origin event already carries its id.
+                row["date_anchor"] = (ids_by_row.get(id(anchor_row))
+                                      or anchor_row.get("event_id"))
             ids_by_row[id(original)] = row["event_id"]
             first = by_id.get(row["event_id"])
             if first is not None:
@@ -1303,14 +2260,15 @@ def make_validator(checker: Draft202012Validator,
 
 def _merge_event(into: dict, other: dict) -> None:
     """Fold a second reading of the same event into the first."""
-    for key in ("date_text", "location", "location_type"):
+    for key in ("date_text", "location_type"):
         if not into.get(key) or into.get(key) == "unknown":
             if other.get(key):
                 into[key] = other[key]
-    seen = {_comparable(a) for a in into["actors"]}
-    into["actors"].extend(a for a in other["actors"]
-                          if _comparable(a) not in seen
-                          and not seen.add(_comparable(a)))
+    for key in ("actors", "locations"):
+        seen = {_comparable(a) for a in into[key]}
+        into[key].extend(a for a in other[key]
+                         if _comparable(a) not in seen
+                         and not seen.add(_comparable(a)))
 
 
 def audit(record: dict, unit: dict) -> list[str]:
@@ -1329,7 +2287,13 @@ def audit(record: dict, unit: dict) -> list[str]:
     known_images = {i["src"] for i in unit["images"]}
     known_embeds = {e["url"] for e in unit["embeds"]}
     n = len(unit["sentences"])
-    for i, ev in enumerate(record.get("events") or []):
+    prior = unit.get("prior") or ()
+    events = record.get("events") or []
+    ordered = sorted((e for e in events if e.get("sentences")),
+                     key=lambda e: (e["sentences"][0], e["sentences"][-1]))
+    by_id = {e.get("event_id"): e for e in events}
+    by_id.update({e.get("event_id"): e for e in prior})
+    for i, ev in enumerate(events):
         where = f"event {i}"
         ids = ev.get("sentences") or []
         if not ids or any(not 1 <= s <= n for s in ids):
@@ -1344,35 +2308,19 @@ def audit(record: dict, unit: dict) -> list[str]:
         hay = _comparable(expected)
         if ev.get("date_text") and _comparable(ev["date_text"]) not in hay:
             problems.append(f"{where}: date_text {ev['date_text']!r} not in its sentences")
-        if ev.get("location") and _comparable(ev["location"]) not in section_hay:
-            problems.append(f"{where}: location {ev['location']!r} not in the section")
+        for place in ev.get("locations") or []:
+            if _comparable(place) not in section_hay:
+                problems.append(f"{where}: location {place!r} not in the section")
+            elif _names_nobody(place):
+                problems.append(f"{where}: location {place!r} names no place")
         for actor in ev.get("actors") or []:
             if _comparable(actor) not in section_hay:
                 problems.append(f"{where}: actor {actor!r} not in the section")
+            elif _names_nobody(actor):
+                problems.append(f"{where}: actor {actor!r} names nobody")
         if ev.get("date"):
-            # Recompute it from the words: a stored date must be exactly what
-            # the pipeline derives, so neither the model nor a bug can put a
-            # date on the page that the page does not carry.
-            basis = ev.get("date_basis")
-            phrase = ev.get("date_text") or ""
-            if basis == "stated":
-                date, precision = parse_date_phrase(
-                    phrase, _year_before(unit, covered, phrase))
-                if (date, precision) != (ev["date"], ev.get("date_precision")):
-                    problems.append(f"{where}: date {ev['date']!r} is not what "
-                                    f"{phrase!r} parses to ({date!r})")
-            elif basis == "relative":
-                # The same two places resolve_dates reads: the date words,
-                # then the event's own sentences (2.1.1).
-                if (relative_offset(phrase) is None
-                        and relative_offset(ev.get("source_text") or "") is None):
-                    problems.append(f"{where}: date {ev['date']!r} is marked "
-                                    f"relative but neither {phrase!r} nor its "
-                                    f"sentences hold a relative phrase")
-                if not ev.get("date_anchor"):
-                    problems.append(f"{where}: relative date with no anchor")
-            else:
-                problems.append(f"{where}: date {ev['date']!r} with no basis")
+            problems.extend(f"{where}: {p}" for p in
+                            _audit_date(ev, ordered, by_id, prior, unit))
         for link in ev.get("links") or []:
             if (link.get("url"), link.get("kind")) not in known_links:
                 problems.append(f"{where}: link {link.get('url')!r} is not on the page")
@@ -1383,6 +2331,43 @@ def audit(record: dict, unit: dict) -> list[str]:
             if embed.get("url") not in known_embeds:
                 problems.append(f"{where}: embed {embed.get('url')!r} is not on the page")
     return problems
+
+
+def _audit_date(ev: dict, ordered: list[dict], by_id: dict,
+                prior: Sequence[dict], unit: dict) -> list[str]:
+    """Recompute a stored date exactly as resolve_dates does — through the
+    same timeline — so neither the model nor a bug can put a date on the
+    page that the page does not carry."""
+    phrase = ev.get("date_text") or ""
+    basis = ev.get("date_basis")
+    got = (ev["date"], ev.get("date_precision"))
+    if phrase and date_is_bound(phrase, ev.get("source_text") or ""):
+        return [f"date {ev['date']!r} comes from a bound ({phrase!r}), "
+                f"not from when it happened"]
+    if basis == "stated":
+        index = next(i for i, e in enumerate(ordered) if e is ev)
+        want = parse_date_phrase(phrase, *_timeline_hints(unit, ordered, index, prior))
+        if want != got:
+            return [f"date {got} is not what {phrase!r} resolves to ({want})"]
+        return []
+    if basis == "relative":
+        anchor = by_id.get(ev.get("date_anchor"))
+        if anchor is None or not anchor.get("date"):
+            return [f"relative date {ev['date']!r} with no dated anchor "
+                    f"({ev.get('date_anchor')!r})"]
+        shift = relative_shift(phrase) if phrase else None
+        if shift is None:
+            found = _relative_span(ev.get("source_text") or "", days_only=True)
+            shift = relative_shift(found) if found else None
+        if shift is None:
+            return [f"date {ev['date']!r} is marked relative but neither "
+                    f"{phrase!r} nor its sentences hold a relative phrase"]
+        want = shift_date(anchor["date"], anchor["date_precision"], *shift)
+        if want != got:
+            return [f"relative date {got} is not {shift} from its anchor "
+                    f"{anchor['date']!r} ({want})"]
+        return []
+    return [f"date {ev['date']!r} with no basis"]
 
 
 # ---------------------------------------------------------------- model ----
@@ -1457,14 +2442,23 @@ def completed_keys(path: str) -> set[tuple[str, str]]:
 def extract(client: OpenWebUIClient, units: Iterable[dict], out_path: str,
             request: ModelRequest, *, schema_path: str, resume: bool = True,
             on_record: Callable[[dict], None] | None = None,
+            prior_lookup: Callable[[str], Sequence[dict]] | None = None,
             progress: Callable[[str], None] = print) -> dict[str, Any]:
     """Run one batch of units, appending a line per unit to ``out_path``.
 
     Failures are DATA in the summary, not exceptions. ``on_record`` is
     called with each record right after its line is on disk — how the DAG
     gets a unit into Mongo the moment it is durable.
+
+    An entry's Origin is always extracted before its Spread, and Spread is
+    dated against Origin's events (resolve_dates' ``prior``): the ones just
+    extracted in this batch, else whatever ``prior_lookup(entry_id)``
+    returns — the stored Origin, when only Spread needed redoing.
     """
-    units = list(units)
+    order = {name: i for i, name in enumerate(SOURCE_SECTIONS)}
+    units = sorted(units, key=lambda u: (u["entry_id"],
+                                         order.get(u["source_section"], 99)))
+    origin_events: dict[str, list[dict]] = {}
     item_schema, schema_sha = load_schema(schema_path)
     fmt = request_format(item_schema)
     checker = item_checker(item_schema)
@@ -1485,6 +2479,11 @@ def extract(client: OpenWebUIClient, units: Iterable[dict], out_path: str,
     failed: list[dict] = []
     for i, unit in enumerate(todo, 1):
         section = unit["source_section"]
+        if section == "spread":
+            prior = origin_events.get(unit["entry_id"])
+            if prior is None and prior_lookup is not None:
+                prior = list(prior_lookup(unit["entry_id"]) or [])
+            unit = {**unit, "prior": prior or []}
         started = time.monotonic()
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -1548,6 +2547,8 @@ def extract(client: OpenWebUIClient, units: Iterable[dict], out_path: str,
         if on_record is not None:
             on_record(record)
         records.append(record)
+        if section == "origin":
+            origin_events[unit["entry_id"]] = record["events"]
         progress(f"  [{i}/{len(todo)}] {unit['frame_url']} {section}: "
                  f"{record['event_count']} events ({elapsed}s)")
 
@@ -1615,6 +2616,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "audit":
         by_id = {u["unit_id"]: u for u in units}
         records = {r["unit_id"]: r for r in iter_jsonl(args.events)}
+        # A Spread record was dated against its Origin's events: audit it
+        # against the same ones, from the same artifact.
+        for uid, unit in by_id.items():
+            if unit["source_section"] == "spread":
+                origin = records.get(unit_id(unit["frame_url"], "origin"))
+                unit["prior"] = (origin or {}).get("events") or []
         problems = {uid: audit(r, by_id[uid]) for uid, r in records.items()
                     if uid in by_id}
         bad = {k: v for k, v in problems.items() if v}

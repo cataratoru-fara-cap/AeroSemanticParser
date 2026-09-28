@@ -56,7 +56,7 @@ NODES = [
      "date_precision": "day", "date_basis": "stated",
      "date_text": "February 23rd, 2010",
      "date_start": "2010-02-23T00:00:00Z", "date_end": "2010-02-23T23:59:59Z",
-     "location": "Tumblr", "location_type": "platform",
+     "locations": ["Tumblr", "the Doge fan group"], "location_type": "platform",
      "certainty": "confirmed", "actors": ["Atsuko Sato", "u/kabosu"],
      "extraction_model": "ministral-3:14b", "extraction_version": "1.0.0"},
     # The embedded post's own node: in a real build the frame's citesExternal
@@ -66,7 +66,7 @@ NODES = [
     {"id": "event:abc123def456-5566778899", "kind": "event",
      "source_text": "Shortly afterwards it spread to 4chan.",
      "source_section": "spread", "date_precision": "none",
-     "location": "4chan", "location_type": "platform",
+     "locations": ["4chan"], "location_type": "platform",
      "certainty": "unconfirmed",
      "extraction_model": "ministral-3:14b", "extraction_version": "1.0.0"},
     # 6.1.0: two linked Wikidata items, one of them named from two fields.
@@ -104,6 +104,9 @@ EDGES = [
      "dst": "https://www.tiktok.com/@a/video/1"},
     {"src": "event:abc123def456-5566778899", "type": "eventDateAnchor",
      "dst": "event:abc123def456-0011223344"},
+    # 6.3.0: the frame's story, in page order
+    {"src": "event:abc123def456-0011223344", "type": "nextInStory",
+     "dst": "event:abc123def456-5566778899"},
     # 6.1.0: one occurrence per mention; the NER label only where there is one.
     {"src": F1, "type": "fromTitle", "dst": "wd:Q15894956", "occurrences": [
         {"mention_text": "Doge", "link_score": 1.0, "link_method": "kym_id"}]},
@@ -294,6 +297,7 @@ class EventFileTests(Built):
     """6.0.0: what the event layer puts on disk for the RML path."""
 
     EV = "https://meme4.science/atlas/event/abc123def456-0011223344"
+    EV2 = "https://meme4.science/atlas/event/abc123def456-5566778899"
     UNDATED = "https://meme4.science/atlas/event/abc123def456-5566778899"
 
     def test_one_row_per_event_keyed_by_its_iri(self):
@@ -318,6 +322,15 @@ class EventFileTests(Built):
         self.assertEqual(sorted((r["iri"], r["actor"]) for r in rows),
                          [(self.EV, "Atsuko Sato"), (self.EV, "u/kabosu")])
 
+    def test_one_location_row_per_place_and_no_location_column(self):
+        """6.2.0: a platform AND the venue on it are two places, so they are
+        two rows — one literal could hold only one of them."""
+        rows = self.rml("event_locations.csv")
+        self.assertEqual(sorted((r["iri"], r["location"]) for r in rows),
+                         sorted([(self.EV, "Tumblr"), (self.EV, "the Doge fan group"),
+                                 (self.EV2, "4chan")]))
+        self.assertNotIn("location", self.rml("events.csv")[0])
+
     def test_the_edge_file_carries_the_bare_event_id(self):
         # The mapping templates it back onto https://meme4.science/atlas/event/.
         rows = self.rml("event_edges.csv")
@@ -336,6 +349,11 @@ class EventFileTests(Built):
                          [{"event": "abc123def456-5566778899",
                            "target_url": "https://www.tiktok.com/@a/video/1"}])
 
+    def test_the_story_chain_is_one_row_per_link_both_ends_bare(self):
+        self.assertEqual(self.rml("event_story_edges.csv"),
+                         [{"event": "abc123def456-0011223344",
+                           "next": "abc123def456-5566778899"}])
+
     def test_graph_nt_carries_the_event_as_mk_event(self):
         with open(os.path.join(self.out, "graph.nt"), encoding="utf-8") as fh:
             nt = fh.read()
@@ -347,6 +365,7 @@ class EventFileTests(Built):
         self.assertNotIn(f"<{self.UNDATED}> <{mk}eventStart>", nt)
         self.assertIn(f"<{self.EV}> <{mk}eventImage> <{IMG}> .", nt)
         self.assertIn(f"<{self.EV}> <{mk}eventCitation> <{EXT}> .", nt)
+        self.assertIn(f"<{self.EV}> <{mk}nextInStory> <{self.EV2}> .", nt)
         self.assertNotIn("eventSummary", nt)
 
 

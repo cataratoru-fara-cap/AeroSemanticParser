@@ -10,7 +10,7 @@
     "source_text",
     "date_precision",
     "date_text",
-    "location",
+    "locations",
     "location_type",
     "actors",
     "certainty",
@@ -72,12 +72,12 @@
       ],
       "description": "The words the date was read from ('early 2013', 'May 4th, 2013', 'that same day'), copied exactly from the event's own sentences. This is the ONLY date field the model fills in; everything else about the date is derived from these words."
     },
-    "location": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "description": "Where the event happened — a geographic place, a platform (Reddit, TikTok, 4chan), or both — copied exactly as the section writes it. Null if nothing extractable."
+    "locations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Where it happened, most general first, each copied exactly as the section writes it: the platform AND the place on it where it was posted — the group, subreddit, forum board, server, channel or page ('Facebook', 'Star Wars Sithposting shitposting group'; 'Reddit', '/r/roblox') — or a geographic place ('Kyoto'). A venue something was posted IN is a location, never an actor. A TV show, film, game or other work is not a place. Empty when the section names none. Each value is matched back to the section and stored in its words."
     },
     "location_type": {
       "type": "string",
@@ -87,7 +87,7 @@
         "both",
         "unknown"
       ],
-      "description": "Coarse tag for what kind of value 'location' holds. Lets downstream RDF mapping choose the right treatment without re-parsing the string."
+      "description": "Coarse tag for what kind of places 'locations' holds: 'platform' (websites, apps and venues on them), 'geo' (physical places), 'both', or 'unknown' when there are none."
     },
     "actors": {
       "type": "array",

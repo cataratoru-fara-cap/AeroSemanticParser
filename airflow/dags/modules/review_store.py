@@ -52,7 +52,7 @@ log = logging.getLogger(__name__)
 
 DISPLAY_EVENT_FIELDS = (
     "event_id", "sentences", "source_text", "date", "date_precision",
-    "date_basis", "date_anchor", "date_text", "location", "location_type",
+    "date_basis", "date_anchor", "date_text", "locations", "location_type",
     "actors", "certainty",
 )
 

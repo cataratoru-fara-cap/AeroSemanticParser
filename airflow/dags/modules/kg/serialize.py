@@ -89,7 +89,7 @@ RML_NODE_FILES: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
         ("date_precision", "date_precision"), ("date_basis", "date_basis"),
         ("date_text", "date_text"),
         ("date_start", "date_start"), ("date_end", "date_end"),
-        ("location", "location"), ("location_type", "location_type"),
+        ("location_type", "location_type"),
         ("certainty", "certainty"),
         ("extraction_model", "extraction_model"),
         ("extraction_version", "extraction_version"))),
@@ -114,6 +114,8 @@ RML_LIST_FILES: dict[str, tuple[str, str]] = {
 # ``url``; an event's rows are keyed by the event IRI.
 RML_EVENT_LIST_FILES: dict[str, tuple[str, str]] = {
     "event_actors.csv": ("actors", "actor"),
+    # 6.2.0: an event's places, one row each — platform and venue on it.
+    "event_locations.csv": ("locations", "location"),
 }
 
 # Concept/scheme sources with their own shape. "scheme.csv" holds one row
@@ -150,6 +152,7 @@ EDGE_TYPE_TO_RML_FILE: dict[str, tuple[str, tuple[str, str]]] = {
     "eventEmbed":    ("event_embed_edges.csv",    ("event", "target_url")),
     "eventImage":    ("event_image_edges.csv",    ("event", "image")),
     "eventDateAnchor": ("event_date_anchor_edges.csv", ("event", "anchor")),
+    "nextInStory":   ("event_story_edges.csv", ("event", "next")),       # 6.3.0
     # 6.1.0. "qid" is the bare Q-number (_rml_id strips "wd:"): never
     # numeric to pandas, because of its leading "Q".
     "fromTitle":     ("entity_title_edges.csv", ("url", "qid")),

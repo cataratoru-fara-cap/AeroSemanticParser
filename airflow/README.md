@@ -130,7 +130,13 @@ policy, not a name: never a reasoning model; `ministral-3:14b` on
 ollama-ccdd by default (`kg/events.py`, "Model policy"). Four models were
 measured on the same 99 sections before settling there — a bigger one is
 not better at this, and `llama3.3:70b` is worse in the way that matters
-(`kg/events.py`, "Why not a bigger model").
+(`kg/events.py`, "Why not a bigger model"). Extraction 3.2.0 (2026-09-25)
+came out of reading the 127 review sections, re-extracted seven times, and a
+60-entry holdout: 94 of the 127 now clean, the residual being the model's
+judgement rather than this code — gap 08 has the numbers and the caveat
+that the reader was Claude, not a person. In the graph (6.3.0) each frame's
+events are one chain, Origin then Spread, in the order the page tells them
+(`mk:nextInStory`) — page order, not time order; time order is in the dates.
 
 **Reviewing the event layer.** The events are a model's reading, so the
 dashboard has one page that WRITES: `:8080/dashboard/` → *Review*. Draw the

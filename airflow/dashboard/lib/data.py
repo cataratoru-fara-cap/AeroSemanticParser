@@ -242,6 +242,15 @@ def event_state() -> dict[str, Any]:
 
 
 @st.cache_data(ttl=CACHE_TTL)
+def event_places(ev: dict[str, Any]) -> list[str]:
+    """An event's places: ``locations`` since extraction 3.0.0, a single
+    ``location`` before it — both are in Mongo until the backfill replaces
+    every section, and the review snapshots keep the old shape for good."""
+    if ev.get("locations"):
+        return list(ev["locations"])
+    return [ev["location"]] if ev.get("location") else []
+
+
 def event_samples(limit: int = 40) -> list[dict[str, Any]]:
     """The most recently extracted events, flattened for a table — the
     page's way of letting a reader check the model's work against the
@@ -259,7 +268,7 @@ def event_samples(limit: int = 40) -> list[dict[str, Any]]:
                 "precision": ev.get("date_precision"),
                 "evidence (verbatim)": ev.get("source_text"),
                 "date words": ev.get("date_text") or "—",
-                "where": ev.get("location") or "—",
+                "where": " · ".join(event_places(ev)) or "—",
                 "who": ", ".join(ev.get("actors") or []) or "—",
                 "certainty": ev.get("certainty"),
                 "links": len(ev.get("links") or []),

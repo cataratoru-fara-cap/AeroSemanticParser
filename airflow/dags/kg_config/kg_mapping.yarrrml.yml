@@ -305,7 +305,6 @@ mappings:
       - [mk:dateText, $(date_text)]
       - [mk:eventStart, $(date_start), xsd:dateTime]
       - [mk:eventEnd, $(date_end), xsd:dateTime]
-      - [mk:eventLocation, $(location)]
       - [mk:locationType, $(location_type)]
       - [mk:certainty, $(certainty)]
       - [mk:extractionModel, $(extraction_model)]
@@ -319,6 +318,15 @@ mappings:
     subjects: $(iri)
     po:
       - [mk:eventActor, $(actor)]
+
+  # 6.2.0. Where it happened, one row per place: the platform and the venue
+  # on it ("Facebook", "the Star Wars Sithposting shitposting group").
+  event_location:
+    sources:
+      - [rml_data/event_locations.csv~csv]
+    subjects: $(iri)
+    po:
+      - [mk:eventLocation, $(location)]
 
   has_event:
     sources:
@@ -366,6 +374,15 @@ mappings:
     subjects: https://meme4.science/atlas/event/$(event)
     po:
       - [mk:dateAnchoredTo, https://meme4.science/atlas/event/$(anchor)~iri]
+
+  # A frame's events in the order its page tells them, Origin then Spread
+  # (6.3.0): each to the next. Page order, not time order.
+  event_next_in_story:
+    sources:
+      - [rml_data/event_story_edges.csv~csv]
+    subjects: https://meme4.science/atlas/event/$(event)
+    po:
+      - [mk:nextInStory, https://meme4.science/atlas/event/$(next)~iri]
 
   # ---- MemeAtlas: Wikidata entities from the title, tags and About (6.1.0) ---
   # The item's IRI is Wikidata's, not minted here. Its rdfs:label is the one

@@ -76,12 +76,12 @@ class EventPropertyTests(unittest.TestCase):
     def test_event_fields_reach_neo4j_including_the_bare_date(self):
         props = L.node_properties({
             "id": "event:x-y", "kind": "event", "summary": "s",
-            "date": "2010", "date_precision": "year", "location": None,
+            "date": "2010", "date_precision": "year", "locations": [],
             "actors": ["Atsuko Sato"], "certainty": "confirmed"})
         # ``date`` has no RDF triple but IS a property-graph property.
         self.assertEqual(props["date"], "2010")
         self.assertEqual(props["actors"], ["Atsuko Sato"])
-        self.assertNotIn("location", props)      # Neo4j cannot store null
+        self.assertNotIn("locations", props)     # nothing to store, no key
 
 
 class EntityPropertyTests(unittest.TestCase):

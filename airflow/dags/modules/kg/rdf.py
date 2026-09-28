@@ -237,7 +237,7 @@ NODE_LITERALS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
         # place this repo formats a timestamp.
         ("date_start", MK + "eventStart", XSD_DATETIME),
         ("date_end", MK + "eventEnd", XSD_DATETIME),
-        ("location", MK + "eventLocation", None),
+        ("locations", MK + "eventLocation", None),     # one per place
         ("location_type", MK + "locationType", None),
         ("certainty", MK + "certainty", None),
         ("actors", MK + "eventActor", None),
@@ -271,6 +271,7 @@ EDGE_PREDICATES: dict[str, tuple[str, bool, str | None]] = {
     "eventEmbed": (MK + "eventEmbed", False, None),
     "eventImage": (MK + "eventImage", False, None),
     "eventDateAnchor": (MK + "dateAnchoredTo", False, None),
+    "nextInStory": (MK + "nextInStory", False, None),   # 6.3.0, page order
     # 6.1.0: frame -> a Wikidata item, named by the field the mention was
     # read from. The first two are IMKG's own predicates, verbatim (kym/
     # mappings/kym.media.frames.textual.enrichment.yaml in the IMKG repo);

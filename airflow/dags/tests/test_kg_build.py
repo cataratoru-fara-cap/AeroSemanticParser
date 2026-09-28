@@ -83,12 +83,12 @@ class VocabularyTests(unittest.TestCase):
                           "hasBadge", "partOfSeries", "relatesToMeme",
                           "citesExternal", "hasImage", "hasEvent",
                           "eventLink", "eventCitation", "eventEmbed",
-                          "eventImage", "eventDateAnchor",
+                          "eventImage", "eventDateAnchor", "nextInStory",
                           "fromTitle", "fromTags", "fromAbout"})
         self.assertLessEqual(set(build.OCCURRENCE_EDGE_TYPES), set(build.EDGE_TYPES))
 
     def test_version_is_stamped(self):
-        self.assertEqual(build.KG_BUILD_VERSION, "6.1.0")
+        self.assertEqual(build.KG_BUILD_VERSION, "6.3.0")
 
     def test_emitted_kinds_types_and_occurrence_fields_stay_in_the_vocabulary(self):
         nodes, edges = build.build_nodes_and_edges(entry(
@@ -516,7 +516,7 @@ class EventTests(unittest.TestCase):
         "source_text": "The photo was posted to Tumblr on February 23rd, 2010.",
         "source_section": "origin", "date": "2010-02-23",
         "date_precision": "day", "date_text": "February 23rd, 2010",
-        "location": "Tumblr", "location_type": "platform",
+        "locations": ["Tumblr"], "location_type": "platform",
         "certainty": "confirmed", "actors": ["Atsuko Sato"],
         "model": "ministral-3:14b", "extraction_version": "1.0.0",
     }
@@ -576,6 +576,51 @@ class EventTests(unittest.TestCase):
         self.assertIn(("eventDateAnchor", "event:anchor01-0000000000"),
                       {(e["type"], e["dst"]) for e in edges
                        if e["src"] == "event:derived1-1111111111"})
+
+    def story(self, events):
+        _, edges = self.build(events)
+        chain = {e["src"]: e["dst"] for e in edges if e["type"] == "nextInStory"}
+        heads = set(chain) - set(chain.values())
+        out = list(heads)
+        while out and out[-1] in chain:
+            out.append(chain[out[-1]])
+        return [n.split("-")[0].split(":")[1] for n in out], len(chain)
+
+    def ev(self, eid, section, sentences, date_text=None, text="x"):
+        return dict(self.EV, event_id=f"{eid}-0000000000", source_section=section,
+                    sentences=sentences, date_text=date_text, source_text=text)
+
+    def test_the_story_is_one_chain_origin_then_spread_in_page_order(self):
+        """Arrival order must not matter: spread's events before origin's,
+        and a later sentence before an earlier one."""
+        order, links = self.story([
+            self.ev("s2", "spread", [3]), self.ev("o1", "origin", [1]),
+            self.ev("s1", "spread", [1, 2]), self.ev("o2", "origin", [2, 3])])
+        self.assertEqual(order, ["o1", "o2", "s1", "s2"])
+        self.assertEqual(links, 3)
+
+    def test_two_events_of_one_sentence_follow_their_date_words(self):
+        text = "In April 2024, he posted memes, with one example on April 8th, 2024."
+        order, _ = self.story([
+            self.ev("b", "spread", [1], "April 8th, 2024", text),
+            self.ev("a", "spread", [1], "In April 2024", text)])
+        self.assertEqual(order, ["a", "b"])
+
+    def test_the_story_is_page_order_even_when_time_steps_back(self):
+        """spengbab: "But a month earlier, user russxl had posted ..." is
+        told after the December post and stays after it in the chain."""
+        order, _ = self.story([
+            dict(self.ev("dec", "origin", [2]), date="2006-12", date_precision="month"),
+            dict(self.ev("nov", "origin", [3]), date="2006-11", date_precision="month")])
+        self.assertEqual(order, ["dec", "nov"])
+
+    def test_one_event_or_a_repeated_id_makes_no_link(self):
+        self.assertEqual(self.story([self.EV])[1], 0)
+        self.assertEqual(self.story([self.EV, dict(self.EV)])[1], 0)
+
+    def test_story_sections_are_the_extractors(self):
+        from modules.kg import events
+        self.assertEqual(build.STORY_SECTIONS, events.SOURCE_SECTIONS)
 
     def test_an_event_without_media_has_only_its_hasevent_edge(self):
         _, edges = self.build([self.EV])

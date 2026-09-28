@@ -165,10 +165,21 @@ def kym_events_dag():
 
     @task
     def chunk_units(selected: dict, params: dict | None = None) -> list[list[str]]:
+        """Chunks of about ``chunk_size`` units that never split an entry:
+        its Spread is dated against its Origin (kg/events.extract), so the
+        two are extracted together, Origin first."""
         size = (params or {}).get("chunk_size", 50)
-        ids = selected["unit_ids"]
-        chunks = [ids[i:i + size] for i in range(0, len(ids), size)]
-        log.info("Split %d units into %d chunks of ≤%d", len(ids), len(chunks), size)
+        groups: dict[str, list[str]] = {}
+        for uid in selected["unit_ids"]:
+            groups.setdefault(uid.split(":", 1)[0], []).append(uid)
+        chunks: list[list[str]] = [[]]
+        for group in groups.values():
+            if chunks[-1] and len(chunks[-1]) + len(group) > size:
+                chunks.append([])
+            chunks[-1].extend(group)
+        chunks = [c for c in chunks if c]
+        log.info("Split %d units into %d chunks of ≤%d (entries kept whole)",
+                 len(selected["unit_ids"]), len(chunks), size)
         return chunks
 
     # -- Phase 2: extract (one mapped task per chunk) -------------------------
@@ -232,7 +243,7 @@ def kym_events_dag():
         summary = kg_events.extract(
             client, todo, out_path, request, schema_path=SCHEMA_PATH,
             progress=lambda line: log.info("%s", line),
-            on_record=persist)
+            on_record=persist, prior_lookup=store.origin_events)
 
         if summary["failed"]:
             store.save_failures(summary["failed"],
