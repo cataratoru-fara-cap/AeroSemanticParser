@@ -11,18 +11,16 @@
 #   http://<host>:8080/mongo/      -> mongo-express (basic auth)
 #   http://<host>:8080/pgadmin/    -> pgAdmin (its own login)
 #   http://<host>:8080/sparql/     -> Fuseki, READ-ONLY (the KG's RDF store)
+#   http://<host>:8080/browser/    -> Neo4j Browser (the KG's property graph)
+#   http://<host>:8080/db/         -> Neo4j HTTP Query API
+#   ws://<host>:8080/              -> Neo4j Bolt, over WebSocket
 #
 # No path is stripped: Streamlit (server.baseUrlPath), mongo-express
 # (ME_CONFIG_SITE_BASEURL) and pgAdmin (SCRIPT_NAME) are each configured to
-# expect their own prefix, so the links they generate already include it.
+# expect their own prefix, so the links they generate already include it,
+# and Neo4j serves /browser/ and /db/ under those names natively.
 # The ONE exception is /sparql/ — Fuseki has no base-path setting, so that
 # route uses handle_path, which strips the prefix. See the note at the route.
-#
-# Neo4j (the KG's property graph) is deliberately NOT routed here: its
-# Browser on 7474 opens its own Bolt connection to 7687 from the client, so
-# proxying 7474 alone yields a UI that loads and cannot connect. Both ports
-# are bound to 127.0.0.1; tunnel both:
-#   ssh -L 7474:localhost:7474 -L 7687:localhost:7687 <host>
 {
 	admin off
 	auto_https off
@@ -53,11 +51,78 @@
 	# here; the kym_kg DAG writes to fuseki:3030 directly over the Docker
 	# network, never through this route. Query at /sparql/kg/query (or
 	# /sparql/kg with ?query=).
+	#
+	# The one opening in /$/: Fuseki's own UI (served at /sparql/) pings
+	# /$/ping and lists datasets from /$/server before it will run a query;
+	# with those refused it shows the server as offline. Those few READS pass
+	# — GET/HEAD only, fixed paths — and the proxy adds the admin login itself
+	# (FUSEKI_UI_AUTH, derived from FUSEKI_ADMIN_PASSWORD when the container
+	# starts; see docker-compose.yml), because Fuseki's shiro.ini guards all
+	# of /$/ except ping. Anyone on the network can therefore see the dataset
+	# list and its stats — accepted 2026-09-28; nothing that changes state
+	# matches.
 	redir /sparql /sparql/ 308
 	handle_path /sparql/* {
+		@uiReads {
+			method GET HEAD
+			path /$/ping /$/server /$/datasets /$/datasets/* /$/stats /$/stats/*
+		}
+		handle @uiReads {
+			reverse_proxy fuseki:3030 {
+				header_up Authorization "Basic {env.FUSEKI_UI_AUTH}"
+			}
+		}
 		@writes path /$/* /kg/update* /kg/data* /kg/upload*
-		respond @writes "read-only SPARQL endpoint" 403
-		reverse_proxy fuseki:3030
+		handle @writes {
+			respond "read-only SPARQL endpoint" 403
+		}
+		handle {
+			reverse_proxy fuseki:3030
+		}
+	}
+
+	# Neo4j. Unlike /sparql/ this is NOT read-only: Community edition has no
+	# read-only roles, so whoever has the neo4j password can write the graph
+	# from the network, over plain HTTP. Accepted 2026-09-28.
+	#
+	# The Browser opens its own Bolt connection from the client, which is
+	# why this used to need an SSH tunnel on 7687. Through here it goes as
+	# Bolt-over-WebSocket, which Neo4j accepts on its Bolt port, to
+	# ws://<host>:8080/ — the root, so it is told apart from Airflow by the
+	# Upgrade header, not the path. Airflow serves no WebSockets; the
+	# dashboard's lives under /dashboard/ and is matched before this.
+	#
+	# The Browser learns where Bolt is from <its base>/discovery.json, which
+	# Neo4j does not serve (404); answering it here with this proxy's own
+	# host:port makes the connect form pre-fill bolt://<host>:8080. Its
+	# fallback, Neo4j's root discovery document, would say :7687 and sits on
+	# the root path, which is Airflow's.
+	#
+	# X-Forwarded-Host is dropped on the way to 7474: Neo4j 5.26's Query API
+	# answers 500 UnknownError when it carries this host with a port
+	# (134.214.143.250:8080 — tested 2026-09-28; without the port it passes).
+	# Host already carries the same host:port and is handled fine.
+	redir /browser /browser/ 308
+	handle /browser/discovery.json {
+		header Content-Type application/json
+		respond `{"bolt_direct": "bolt://{hostport}"}` 200
+	}
+	handle /browser/* {
+		reverse_proxy neo4j:7474 {
+			header_up -X-Forwarded-Host
+		}
+	}
+	handle /db/* {
+		reverse_proxy neo4j:7474 {
+			header_up -X-Forwarded-Host
+		}
+	}
+	@bolt {
+		path /
+		header_regexp Upgrade (?i)^websocket$
+	}
+	handle @bolt {
+		reverse_proxy neo4j:7687
 	}
 
 	# Everything else is Airflow, which keeps the root so existing

@@ -561,8 +561,9 @@ services:
 
   # Neo4j Community: exactly one user database and no node-key constraints,
   # which is why the loader uses a build_id property plus a synthetic uid
-  # rather than per-build databases. Bolt/Browser are loopback-only — the
-  # campus firewall drops them anyway; tunnel BOTH ports to use the Browser.
+  # rather than per-build databases. Its ports stay loopback-only (the campus
+  # firewall drops them anyway); from the network, the Browser, the HTTP
+  # Query API and Bolt-over-WebSocket all go through the proxy on 8080.
   neo4j:
     image: neo4j:5.26-community
     container_name: kym_neo4j
@@ -592,7 +593,8 @@ services:
   # Fuseki (TDB2): the RDF store. FUSEKI_DATASET_1 creates the `kg` dataset
   # at first start. Writes are password-protected and only ever arrive over
   # the Docker network from the DAG; the public route (/sparql/ via Caddy)
-  # refuses the admin and update paths outright.
+  # refuses the update paths, and every admin path except the few GETs its
+  # own UI needs to list the dataset.
   fuseki:
     image: stain/jena-fuseki:5.1.0
     container_name: kym_fuseki
@@ -624,8 +626,8 @@ services:
 
   # The only service reachable from the network. The campus firewall in
   # front of this host drops most ports; 8080 gets through, so Airflow, the
-  # dashboard, mongo-express and the SPARQL endpoint are all routed through
-  # it. See proxy/Caddyfile.
+  # dashboard, mongo-express, the SPARQL endpoint and Neo4j are all routed
+  # through it. See proxy/Caddyfile.
   proxy:
     image: caddy:2.10-alpine
     container_name: kym_proxy
@@ -633,6 +635,20 @@ services:
       - "${PROXY_PORT:-8080}:8080"
     volumes:
       - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+    environment:
+      # Read only by the entrypoint below, to derive FUSEKI_UI_AUTH.
+      FUSEKI_ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:?set FUSEKI_ADMIN_PASSWORD in .env}
+    # The image's own command, preceded by one derived value: the Basic-auth
+    # token the /sparql/ route adds to the Fuseki UI's read-only admin GETs.
+    # Caddy can read an env var but not base64 one, hence the shell; the raw
+    # password is unset before Caddy starts.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        export FUSEKI_UI_AUTH="$$(printf 'admin:%s' "$$FUSEKI_ADMIN_PASSWORD" | base64 | tr -d '\n')" &&
+        unset FUSEKI_ADMIN_PASSWORD &&
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     restart: always
     mem_limit: 128m
     mem_reservation: 32m
@@ -648,6 +664,8 @@ services:
       pgadmin:
         condition: service_started
       fuseki:
+        condition: service_started
+      neo4j:
         condition: service_started
 
 networks:

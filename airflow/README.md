@@ -40,13 +40,14 @@ rather than published on ports of their own:
 | **Dashboard** | **http://&lt;host&gt;:8080/dashboard/** | corpus analytics (read-only) |
 | mongo-express | http://&lt;host&gt;:8080/mongo/ | raw collection browser; login is `MONGO_EXPRESS_USER` / `MONGO_EXPRESS_PASSWORD` in `.env` |
 | pgAdmin | http://&lt;host&gt;:8080/pgadmin/ | Airflow metadata DB; login is `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD` in `.env` |
-| **SPARQL** | **http://&lt;host&gt;:8080/sparql/kg/query** | the KG's RDF store (Fuseki), **read-only** through the proxy — admin and update paths are refused there; `?query=SELECT…` |
-| Neo4j Browser | http://localhost:7474 (tunnel) | the KG's property graph; not proxied — the Browser opens its own Bolt connection, so tunnel **both** ports: `ssh -L 7474:localhost:7474 -L 7687:localhost:7687 <host>`, user `neo4j` / `NEO4J_PASSWORD` |
+| **SPARQL** | **http://&lt;host&gt;:8080/sparql/kg/query** | the KG's RDF store (Fuseki), **read-only** through the proxy — update and admin paths are refused there, except the GETs Fuseki's own UI needs to list the dataset (so http://&lt;host&gt;:8080/sparql/ works as a query page); `?query=SELECT…` |
+| **Neo4j Browser** | **http://&lt;host&gt;:8080/browser/** | the KG's property graph; connects to `bolt://<host>:8080` (Bolt over WebSocket, pre-filled), user `neo4j` / `NEO4J_PASSWORD`. **Not read-only** — Community has no read-only users. The HTTP Query API is at `http://<host>:8080/db/neo4j/query/v2`. Every build is kept as a generation, so filter on the published one: `MATCH (p:KGPointer {name:'current'}) MATCH (f:Frame {build_id: p.build_id}) …` |
 | Flower | http://localhost:5555 | `--profile flower` |
 
-The dashboard (8501), mongo-express (8081) and pgAdmin (5050) also listen
-on `127.0.0.1` only, for SSH tunnels and debugging — note the dashboard's prefix still
-applies there: `http://localhost:8501/dashboard/`.
+The dashboard (8501), mongo-express (8081), pgAdmin (5050), Fuseki (3030)
+and Neo4j (7474, 7687) also listen on `127.0.0.1` only, for SSH tunnels and
+debugging — note the dashboard's prefix still applies there:
+`http://localhost:8501/dashboard/`.
 
 ## The stages
 
