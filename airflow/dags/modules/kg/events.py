@@ -56,9 +56,16 @@ and which paragraph each photo or embed follows, so an event gets the links
 inside its own sentences, the references its ``[n]`` markers cite, and the
 media KYM shows right after the paragraph(s) narrating it.
 
-Coverage: nothing is capped. No truncation of the section (the longest in
-the corpus is 6.6k characters, well inside the model's context), no ceiling
-on events per section.
+Coverage: nothing is capped, and nothing is left out. No truncation of the
+section (the longest in the corpus is 6.6k characters, well inside the
+model's context), no ceiling on events per section — and since 4.0.0 every
+sentence of the section is in an event. The section is one story: each
+sentence either starts an event (someone does something, at some time) or
+continues the one before it (its description, its reception, a comment on
+it), and background before the first happening belongs to the first. The
+model is asked for exactly that; ``_cover_every_sentence`` guarantees it for
+whatever the model still leaves out, and ``audit()`` refuses a record with a
+sentence in no event.
 
 Model policy — criteria, not a name
 -----------------------------------
@@ -169,11 +176,34 @@ __all__ = [
 
 # Bump when the system prompt or the user template changes: the store
 # re-queues every unit whose stored prompt_version differs.
-PROMPT_VERSION = "8"
+PROMPT_VERSION = "9"
 
 # Bump when THIS MODULE's contract changes — the output shape, the
 # validator's rules, the sentence splitter, the event_id recipe, how media
 # are attached. Same effect: every unit is re-queued.
+#   4.0.0  EVERY SENTENCE IS IN AN EVENT (asked for 2026-09-29). 3.2.0 left
+#          15.3% of the corpus's sentences, in 43.5% of its sections, out
+#          of every event: prompt 8 told the model descriptions, counts and
+#          commentary were not events "and must not be returned", and it
+#          also skipped real happenings. Prompt 9: each sentence starts an
+#          event or continues the one before it (background joins the
+#          first), with a worked five-sentence example — asked only to
+#          place every sentence, the model made 118 sentences of the review
+#          sample into events of their own ("This is the earliest known
+#          version of the meme."). So, around it:
+#          * _cover_every_sentence: whatever the model still leaves out
+#            continues the event before it, or — when it narrates a
+#            happening of its own — is an event, dated from its own words
+#            with its @handles; an empty reply covers the section as one
+#            event; each event's `sentences` is the full run its
+#            source_text quotes; a joined sentence never dates the event;
+#          * _absorb_reception folds an event of pure commentary (nothing
+#            narrated, nothing spreading, no one doing anything to the work:
+#            _commentary_only / _DEVELOPMENT) into the one before, as it
+#            already did reception and descriptions of the work;
+#          * a later reception ("The next day it had 900 upvotes") continues
+#            the work's event (_later_reception);
+#          * audit() refuses a record with a sentence in no event.
 #   3.2.0  third pass: a sentence that only reports a post's reception
 #          ("The post received 2,000 reactions in three days") joins that
 #          post's event, and an event made only of such sentences is
@@ -263,7 +293,7 @@ PROMPT_VERSION = "8"
 #   2.0.0  extractive-only: sentence numbers instead of quotes, no summary,
 #          every returned string verified against the section, media by
 #          position, no caps. (1.x asked for quotes and summaries.)
-EXTRACTION_VERSION = "3.2.0"
+EXTRACTION_VERSION = "4.0.0"
 
 SOURCE_SECTIONS: tuple[str, ...] = ("origin", "spread")
 
@@ -306,23 +336,53 @@ SYSTEM_PROMPT = (
     "platform, a hashtag trending, coverage by a news site."
     "\n"
     "\n"
-    "WHAT IS AN EVENT. Work through the sentences in order and return "
-    "one event for each happening. A spread development narrated as "
-    "happening IS an event: \"parodies became much more common\", \"the "
-    "hashtag began trending\", \"the trend spread to TikTok\". A dated "
-    "sentence worded as an illustration (\"For instance, on January 3rd, "
-    "2025, TikToker @x posted ...\") is an event too. So is a sentence "
-    "that carries its own time words, even in the middle of another "
-    "story, even with a view count after it: \"That October, a forum "
-    "thread claimed ...\", \"The next day, a TikToker stitched the "
-    "video ...\", \"A fan wiki was also started that day\", \"Discord "
-    "added the feature in March of 2019\". "
-    "Read every sentence with a date or a time word twice before "
-    "leaving it out."
+    "EVERY SENTENCE BELONGS TO AN EVENT. The section is one story told "
+    "in order, and every sentence of it is part of some event. Work "
+    "through the sentences in order and decide, for each one, whether "
+    "it STARTS a new event or CONTINUES the event before it. A section "
+    "has far FEWER events than sentences: most events are several "
+    "sentences long — the happening, then what describes, counts or "
+    "comments on it."
     "\n"
-    "Ask of every sentence: did someone DO something here, at some "
-    "time? If it only describes, counts or explains, it is not an "
-    "event. These are NOT events, and must not be returned:"
+    "\n"
+    "For example, from these sentences:"
+    "\n"
+    "1: On May 4th, 2013, Tumblr user x posted a comic."
+    "\n"
+    "2: The comic depicts a dog wearing a hat."
+    "\n"
+    "3: It received over 9,000 notes in a week."
+    "\n"
+    "4: In 2014, the comic spread to Reddit."
+    "\n"
+    "5: Many users found it relatable."
+    "\n"
+    "the events are [1, 2, 3] and [4, 5] — two events, not five: 2 "
+    "describes the comic, 3 counts its notes, 5 comments on its spread."
+    "\n"
+    "\n"
+    "A sentence STARTS a new event when someone DOES something in it, "
+    "at some time. A spread development narrated as happening starts "
+    "one: \"parodies became much more common\", \"the hashtag began "
+    "trending\", \"the trend spread to TikTok\". So does a dated sentence "
+    "worded as an illustration (\"For instance, on January 3rd, 2025, "
+    "TikToker @x posted ...\"), and a sentence that carries its own time "
+    "words, even in the middle of another story, even with a view count "
+    "after it: \"That October, a forum thread claimed ...\", \"The next "
+    "day, a TikToker stitched the video ...\", \"A fan wiki was also "
+    "started that day\", \"Discord added the feature in March of 2019\". "
+    "Read every sentence with a date or a time word twice before letting "
+    "it continue another event."
+    "\n"
+    "\n"
+    "A sentence CONTINUES the event before it when it only describes, "
+    "counts, quotes, explains or comments. These are NEVER events of "
+    "their own, not even when no other sentence is near — put their "
+    "numbers in the event they are about, normally the one just before "
+    "them:"
+    "\n"
+    "- how the post was received (\"The post received over 2,000 likes "
+    "in three days\"), and its own quoted words;"
     "\n"
     "- what happens INSIDE a video, image, comic, episode, song or "
     "story (\"In the video, the man says ...\", \"The comic depicts ...\"); "
@@ -347,24 +407,31 @@ SYSTEM_PROMPT = (
     "acting."
     "\n"
     "\n"
-    "ONE EVENT, ALL ITS SENTENCES. A sentence that only reports how a "
-    "post was received (\"The post received over 2,000 likes in three "
-    "days\"), or continues its quote or description, belongs to the SAME "
-    "event: put its number in that event's sentences, never make it an "
-    "event of its own. When one sentence names a happening and the next "
-    "one dates it, return ONE event covering both. But never merge two "
-    "sentences that each state their own date, or their own poster, "
-    "into one event — and never merge a rumor or claim with a dated "
-    "fact it is about."
+    "Sentences that come BEFORE the first happening (background: who "
+    "someone is, what a show or a game is) belong to the FIRST event. If "
+    "no sentence narrates a happening at all, return ONE event covering "
+    "every sentence."
+    "\n"
+    "\n"
+    "So the events you return cover EVERY sentence number from 1 to the "
+    "last, each event a run of consecutive numbers, in order — for a "
+    "seven-sentence section, for instance, [1, 2, 3], [4], [5, 6, 7]. "
+    "Never leave a sentence out. When one sentence names a happening and "
+    "the next one dates it, they are ONE event. But never put two "
+    "sentences that each state their own date, or their own poster, in "
+    "one event — and never merge a rumor or claim with a dated fact it "
+    "is about. A sentence that narrates two happenings, by two posters "
+    "or on two dates, starts two events."
     "\n"
     "\n"
     "For each event, return:"
     "\n"
-    "- sentences: the numbers of the sentences that narrate it, "
-    "consecutive."
+    "- sentences: the numbers of its sentences — the one that starts it "
+    "and every one that continues it — consecutive."
     "\n"
-    "- date_text: the words in those sentences that say WHEN this "
-    "happening took place, copied exactly — \"May 4th, 2013\", \"early "
+    "- date_text: the words in its sentences that say WHEN this "
+    "happening took place — not a date inside a description or a count "
+    "— copied exactly: \"May 4th, 2013\", \"early "
     "2013\", \"sometime in 2007\", \"throughout 2023\", \"In 2008\", \"2002's\", "
     "\"that August\", \"that same day\", \"the following month\" — or null if "
     "the sentences say nothing about when. Quote vague words too; do "
@@ -446,18 +513,19 @@ SYSTEM_PROMPT = (
     "it."
     "\n"
     "\n"
-    "Respond ONLY with JSON: {\"events\": [...]}. Three example events:"
+    "Respond ONLY with JSON: {\"events\": [...]}. The three events of a "
+    "seven-sentence section:"
     "\n"
-    "{\"sentences\": [1, 2], \"date_text\": \"February 23rd, 2010\", "
+    "{\"sentences\": [1, 2, 3], \"date_text\": \"February 23rd, 2010\", "
     "\"locations\": [\"Tumblr\"], \"location_type\": \"platform\", \"actors\": "
     "[\"Atsuko Sato\"], \"certainty\": \"confirmed\"}"
     "\n"
-    "{\"sentences\": [4], \"date_text\": \"that day\", \"locations\": "
+    "{\"sentences\": [4, 5], \"date_text\": \"that day\", \"locations\": "
     "[\"Facebook\", \"Star Wars Sithposting shitposting group\"], "
     "\"location_type\": \"platform\", \"actors\": [\"elliott.boydstringer\"], "
     "\"certainty\": \"confirmed\"}"
     "\n"
-    "{\"sentences\": [7], \"date_text\": \"sometime in 2007\", \"locations\": "
+    "{\"sentences\": [6, 7], \"date_text\": \"sometime in 2007\", \"locations\": "
     "[], \"location_type\": \"unknown\", \"actors\": [], \"certainty\": "
     "\"unconfirmed\"}"
 )
@@ -474,7 +542,8 @@ SECTION_FRAMING: dict[str, str] = {
 USER_TMPL = ('Entry: "{title}" ({category}).\n'
              'Section: {section} (heading: "{heading}")\n'
              '{framing}\n\n'
-             'Sentences:\n{numbered}')
+             'Sentences (1 to {count}; every one belongs to an event):\n'
+             '{numbered}')
 
 
 # ------------------------------------------------------------------ time ----
@@ -1901,6 +1970,10 @@ _BY_NAME = re.compile(
     r"|others|users?|people|fans)\b)[a-z0-9_.]+\b)")  # "by crybabygrande"
 
 
+# An account named in a sentence: "@blockboy_192", "u/Shibetoshi".
+_HANDLE = re.compile(r"(?<![\w/@])(?:@|u/)[A-Za-z0-9_](?:[\w.]*[A-Za-z0-9_])?")
+
+
 def _narrates_nothing_new(text: str) -> bool:
     """No happening, poster or date of its own in this sentence — quoted
     words and the reception counts themselves aside ("shared 27 times")."""
@@ -1938,10 +2011,68 @@ _DEPICTS = re.compile(
     r"|accompan\w+|(?:is|was|are|were)\s+(?:a|an|the)\b)", re.I)
 
 
+# "It", "the video", "the post": a subject that points back to the work
+# just narrated, not a new one ("A March 5th reupload of the clip ...").
+_BACK_REFERENCE = re.compile(
+    r"^(?:it|they|this|these|those|the\s+(?:[\w'’-]+\s+){0,2}?(?:video|clip|post"
+    r"|tweet|image|picture|photo|gif|comic|song|meme|thread|page|account|channel"
+    r"|hashtag|trend|upload|original|sound|audio|challenge|tiktok|reel|short"
+    r"|stream|episode|trailer|article|story))\b", re.I)
+_LEAD_PREPOSITIONS = re.compile(
+    r"^[\s,;:]*(?:(?:on|in|by|within|over|after|during|throughout|as\s+of"
+    r"|at|around|since)\b[\s,]*)*", re.I)
+
+
+def _later_reception(text: str) -> bool:
+    """How the work just narrated was received, at a time of its own —
+    "The next day it had 900 upvotes", "By 2015, the video had been viewed
+    3 million times". Its time words make it look new to
+    _narrates_nothing_new; nothing else in it is."""
+    if not _RECEPTION.search(text):
+        return False
+    body = _RECEPTION.sub(" ", _QUOTED.sub(" ", text))
+    if _HAPPENING.search(body) or _BY_NAME.search(body):
+        return False
+    phrase = _relative_span(text)
+    rest = text.replace(phrase, " ", 1) if phrase else text
+    clean, _index = _without_markers(rest)
+    for a, b, _p in reversed(_date_spans(clean)):
+        clean = clean[:a] + " " + clean[b:]
+    return bool(_BACK_REFERENCE.match(_LEAD_PREPOSITIONS.sub("", clean).strip(" ,")))
+
+
 def _describes_the_work(text: str) -> bool:
     m = _ABOUT_THE_WORK.match(text)
     return (bool(m) and (m.group(0).lower().startswith(("in ", "at ")) or bool(_DEPICTS.search(text)))
             and not _SPREADING.search(text) and _narrates_nothing_new(text))
+
+
+# What someone DID to or with the work, in words _HAPPENING does not list —
+# each from a sentence the review sample's model made an event and a
+# broader fold would have wrongly merged away (2026-09-29): "was eventually
+# added to horror story databases", "Snopes ultimately labeled the theory
+# as false", "This site spawned many other sites", "The raid managed to
+# temporarily bring down the home page", "users took footage of the dance
+# and paired it with other music", "the source of dozens of photoshops".
+_DEVELOPMENT = re.compile(
+    r"\b(?:added|featured|revived|led\s+to|disproven|debunked|label(?:l)?ed"
+    r"|spawn\w*|took|paired|decided|brought|called\s+(?:to|for|out|on)"
+    r"|critici[sz]\w*|variations?|photoshops?|source\s+of|referred\s+to|coined"
+    r"|continued|proceeded|(?:would|then|also|to|users?|people|fans)\s+post"
+    r"|posting|banned|removed|sued|arrested|announced|apologi[sz]ed"
+    r"|managed|flowed|received\s+(?:much\s+)?(?:criticism|backlash)"
+    r"|first\s+\w+ed|named)\b", re.I)     # "was allegedly first called doge"
+
+
+def _commentary_only(text: str) -> bool:
+    """Narrates nothing — no happening, poster or time of its own — and
+    says nothing about spreading or about anyone doing something with the
+    work: a description, an explanation, lore, a comment ("This is the
+    earliest known version of the meme.")."""
+    # "the meme" is a noun here, not "became a meme" / "was memed"
+    plain = re.sub(r"\b(?:the|a|this|that|its|of)\s+meme\b", " ", text, flags=re.I)
+    return (_narrates_nothing_new(text) and not _SPREADING.search(plain)
+            and not _DEVELOPMENT.search(text))
 
 
 def _reception_only(text: str) -> bool:
@@ -2016,23 +2147,38 @@ _DURATION = re.compile(
 def _absorb_reception(rows: list[dict], unit: dict) -> list[dict]:
     """Fold each reception-only sentence into the event just before it.
 
-    An event made of nothing but reception sentences, with no date words,
-    place or actor, is folded the same way; one with no event before it
-    to join stays as it was, so nothing the model returned is lost. The
-    sentences between the event and the reception sentence join it too,
-    since each narrates nothing new (the comic's description, a quote).
-    Returns the rows that remain, in their original order.
+    An event made of nothing but such sentences, with no date words, place
+    or actor, is folded the same way — reception, a description of the
+    work, or (4.0.0) any sentence that narrates nothing and says nothing
+    about spreading (_commentary_only): prompt 9's "every sentence belongs
+    to an event" made the model turn 118 such sentences of the review
+    sample into events of their own ("This is the earliest known version
+    of the meme.", five sentences of The Rake's lore). One with no event
+    before it to join is dropped here and its sentences placed by
+    _cover_every_sentence. The sentences between the event and the
+    reception sentence join it too, since each narrates nothing new (the
+    comic's description, a quote). Returns the rows that remain, in their
+    original order.
     """
     texts = {s["id"]: strip_footnotes(_sentence_text(unit, s))
              for s in unit["sentences"]}
 
     def stat_only(row: dict) -> bool:
         # "In two months, the Vine received over 26,000 loops" came back
-        # with "In two months" as its date words: a duration, not a date.
-        timeless = not row["date_text"] or bool(_DURATION.match(row["date_text"]))
-        return (timeless and not row["locations"] and not row["actors"]
-                and all(_reception_only(texts[i]) or _describes_the_work(texts[i])
-                        for i in range(row["sentences"][0], row["sentences"][-1] + 1)))
+        # with "In two months" as its date words: a duration, not a date —
+        # and "as of June 2017" is a bound, which dates nothing either.
+        timeless = (not row["date_text"] or bool(_DURATION.match(row["date_text"]))
+                    or date_is_bound(row["date_text"], row["source_text"]))
+        if not timeless or row["actors"]:
+            return False
+        ids = range(row["sentences"][0], row["sentences"][-1] + 1)
+        # A place the model gave does not save pure commentary: "In the game,
+        # the Scout character class says the phrase ..." came back placed in
+        # Team Fortress 2, a work and no place (prompt 9 review sample).
+        if row["locations"] and not all(_commentary_only(texts[i]) for i in ids):
+            return False
+        return all(_reception_only(texts[i]) or _describes_the_work(texts[i])
+                   or _commentary_only(texts[i]) for i in ids)
 
     folded = [r for r in rows if stat_only(r)]
     kept = [r for r in rows if not stat_only(r)]
@@ -2063,12 +2209,115 @@ def _absorb_reception(rows: list[dict], unit: dict) -> list[dict]:
         for i in range(j + 1, sid + 1):
             covered[i] = [r for r in ending if r["sentences"][0] == start]
 
-    # A stat-only event nothing absorbed stays an event of its own.
-    kept.extend(r for r in folded
-                if any(i not in covered for i in
-                       range(r["sentences"][0], r["sentences"][-1] + 1)))
+    # A stat-only event nothing absorbed here is not kept either (4.0.0):
+    # its sentences are left to _cover_every_sentence, which puts them in
+    # the event before them, in the first event when none comes before, or
+    # — when the section has nothing else — in one event covering it.
     order = {id(r): n for n, r in enumerate(rows)}
     return sorted(kept, key=lambda r: order[id(r)])
+
+
+def _cover_every_sentence(rows: list[dict], unit: dict,
+                          checker: Draft202012Validator) -> list[dict]:
+    """Put every sentence of the section in an event (4.0.0).
+
+    The section is one story, and every sentence of it belongs to some
+    event — Gabi's rule: a sentence left out of every event is an error.
+    3.2.0 left 15.3% of the corpus's sentences (in 43.5% of its sections)
+    out of every event, because prompt 8 told the model that descriptions,
+    counts and commentary "must not be returned"; prompt 9 asks it to
+    place every sentence, and this is the guarantee behind that request,
+    for whatever the model still leaves out:
+
+    * a sentence that narrates something of its own — a happening verb,
+      an @handle, "a video by X", a date or a relative time of its own
+      (``_narrates_nothing_new`` is False) — is a happening the model
+      missed, and becomes an EVENT OF ITS OWN, dated from its own words.
+      Folding it into the post before it would give that post someone
+      else's reception ("A March 5th reupload of the clip received over
+      400,000 views"), which _absorb_reception refuses for the same reason;
+    * any other sentence CONTINUES the event just before it — a
+      description, a count, a comment on it, or its reception at a later
+      time ("The next day it had 900 upvotes", _later_reception) — or,
+      before the first event, belongs to the first one (background);
+    * a section where nothing is left to join is ONE event covering it:
+      the story as the page tells it, with no happening of its own.
+
+    An event made here is dated from its own sentence — the one date it
+    states that is not a bound — and names as actors only the @handles
+    and u/ accounts in it. Nothing else: the model named nothing for it,
+    and guessing a name or a place is what this module exists to prevent.
+
+    Each event's ``sentences`` become the full run it spans, which is what
+    its ``source_text`` already quoted. A sentence two events share (one
+    sentence, two happenings) stays in both. This runs BEFORE
+    resolve_dates, so every date is computed — and audit() recomputes it —
+    over the spans that are stored.
+    """
+    n = len(unit["sentences"])
+    texts = {s["id"]: strip_footnotes(_sentence_text(unit, s)) for s in unit["sentences"]}
+
+    def made(ids: list[int], told: tuple[int, int] | None) -> dict:
+        date_text, actors = None, []
+        if told is not None:
+            # A missed happening's own words: the one date it states that
+            # is not a bound ("as of June 2017"), and the accounts it names
+            # outside a quotation. Two dates are ambiguous and give none.
+            clean, _index = _without_markers(texts[ids[0]])
+            own = [clean[a:b] for a, b, _p in _date_spans(clean)
+                   if not date_is_bound(clean[a:b], clean)]
+            date_text = own[0] if len(own) == 1 else None
+            actors = _HANDLE.findall(_QUOTED.sub(" ", clean))
+        row = _check_event({"sentences": ids, "date_text": date_text, "locations": [],
+                            "location_type": "unknown", "actors": actors,
+                            "certainty": "confirmed"}, checker, unit)
+        row["_told"] = told
+        return row
+
+    for row in rows:
+        row["sentences"] = list(range(row["sentences"][0], row["sentences"][-1] + 1))
+        # What the model (and _absorb_reception) put in the event, before
+        # any sentence joined it here: resolve_dates reads a relative
+        # phrase the model did not quote only from these (see there).
+        row["_told"] = (row["sentences"][0], row["sentences"][-1])
+    covered = {i for row in rows for i in row["sentences"]}
+    grown: set[int] = set()
+    leading: list[int] = []
+    for sid in range(1, n + 1):
+        if sid in covered:
+            continue
+        if not _narrates_nothing_new(texts[sid]) and not _later_reception(texts[sid]):
+            rows.append(made([sid], (sid, sid)))
+            covered.add(sid)
+            continue
+        before = [r for r in rows if r["sentences"][-1] < sid]
+        if not before:
+            leading.append(sid)
+            continue
+        # the run just filled ends at sid - 1, so this is the event the
+        # sentence follows; of two ending there, the one that STARTS
+        # later is the nearer (see _absorb_reception)
+        # (two readings of the SAME span grow together, so they still
+        # merge into one event afterwards)
+        end = max(r["sentences"][-1] for r in before)
+        start = max(r["sentences"][0] for r in before if r["sentences"][-1] == end)
+        for target in before:
+            if (target["sentences"][0], target["sentences"][-1]) == (start, end):
+                target["sentences"] = list(range(start, sid + 1))
+                grown.add(id(target))
+        covered.add(sid)
+    if leading and not rows:
+        return [made(list(range(1, n + 1)), None)]
+    if leading:
+        start, end = min((r["sentences"][0], -r["sentences"][-1]) for r in rows)
+        for first in rows:
+            if (first["sentences"][0], -first["sentences"][-1]) == (start, end):
+                first["sentences"] = list(range(1, -end + 1))
+                grown.add(id(first))
+    for row in rows:
+        if id(row) in grown:
+            _covered, row["source_text"] = _span(unit, row["sentences"])
+    return rows
 
 
 def resolve_dates(rows: list[dict], unit: dict,
@@ -2108,7 +2357,14 @@ def resolve_dates(rows: list[dict], unit: dict,
         # sentence often carries a date belonging to what it reports.
         shift = relative_shift(phrase) if phrase else None
         if shift is None:
-            found = _relative_span(row["source_text"], days_only=True)
+            # ...from the sentences the MODEL put in the event, never from
+            # one that joined it only to be covered (4.0.0): "the next day
+            # it had a million views" in a joined count does not date the
+            # post, and a section returned with no events at all (_told
+            # None) has no happening to date.
+            told = row.get("_told", (row["sentences"][0], row["sentences"][-1]))
+            found = (_relative_span(_span(unit, told)[1], days_only=True)
+                     if told else None)
             if found:
                 shift = relative_shift(found)
                 row["date_text"] = phrase = found
@@ -2205,7 +2461,8 @@ def make_validator(checker: Draft202012Validator,
     comes back in the page's words or not at all (2.2.0), so there is
     nothing here that drops an event for being worded badly.
 
-    ``{"events": []}`` is valid: a section that only describes has none.
+    ``{"events": []}`` is not a failure: it becomes one event covering the
+    section, like any sentence the model left out (_cover_every_sentence).
     """
 
     def validate(content: str) -> list[dict]:
@@ -2223,6 +2480,7 @@ def make_validator(checker: Draft202012Validator,
 
         _settle_borrowed(kept, unit)
         kept = _absorb_reception(kept, unit)
+        kept = _cover_every_sentence(kept, unit, checker)
         # Dates come last: they are the pipeline's arithmetic over the
         # whole section, and a relative one needs the events before it.
         resolve_dates(kept, unit, unit.get("prior") or ())
@@ -2231,6 +2489,7 @@ def make_validator(checker: Draft202012Validator,
         ids_by_row: dict[int, str] = {}
         for original in sorted(kept, key=lambda r: (r["sentences"][0], r["sentences"][-1])):
             row = _attach(original, unit)
+            row.pop("_told", None)
             row["frame_url"] = unit["frame_url"]
             row["source_section"] = unit["source_section"]
             row["event_id"] = event_id(unit["frame_url"], unit["source_section"],
@@ -2330,6 +2589,12 @@ def audit(record: dict, unit: dict) -> list[str]:
         for embed in ev.get("embeds") or []:
             if embed.get("url") not in known_embeds:
                 problems.append(f"{where}: embed {embed.get('url')!r} is not on the page")
+    # Every sentence is in an event (4.0.0) — a gap is lost story.
+    spanned = {i for ev in ordered
+               for i in range(min(ev["sentences"]), max(ev["sentences"]) + 1)}
+    missing = [i for i in range(1, n + 1) if i not in spanned]
+    if missing:
+        problems.append(f"sentences {missing} are in no event")
     return problems
 
 
@@ -2490,7 +2755,8 @@ def extract(client: OpenWebUIClient, units: Iterable[dict], out_path: str,
             {"role": "user", "content": USER_TMPL.format(
                 title=unit["title"], category=unit["category"],
                 section=section, heading=unit["heading"],
-                framing=SECTION_FRAMING[section], numbered=numbered_text(unit))}]
+                framing=SECTION_FRAMING[section], count=len(unit["sentences"]),
+                numbered=numbered_text(unit))}]
         result = client.chat(
             messages,
             request, purpose=EXTRACT_PURPOSE, format=fmt,

@@ -164,7 +164,9 @@ not better at this, and `llama3.3:70b` is worse in the way that matters
 came out of reading the 127 review sections, re-extracted seven times, and a
 60-entry holdout: 94 of the 127 now clean, the residual being the model's
 judgement rather than this code — gap 08 has the numbers and the caveat
-that the reader was Claude, not a person. In the graph (6.3.0) each frame's
+that the reader was Claude, not a person. Extraction 4.0.0 (2026-09-29)
+puts EVERY sentence of Origin and Spread in an event — 3.2.0's full run had
+left 15.3% of them out — and `audit()` refuses a record that does not. In the graph (6.3.0) each frame's
 events are one chain, Origin then Spread, in the order the page tells them
 (`mk:nextInStory`) — page order, not time order; time order is in the dates.
 

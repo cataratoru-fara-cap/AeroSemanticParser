@@ -283,6 +283,17 @@ class SaveTests(unittest.TestCase):
         self.assertEqual(doc["event_count"], 1)
         self.assertEqual(doc["events"][0]["sentences"], [1, 2])
 
+    def test_a_field_the_new_record_lacks_does_not_survive(self):
+        """2026-09-29: 99 documents re-extracted at 3.2.0 still carried
+        2.1's ``discarded`` list, because the save was a ``$set``."""
+        self.store.save_extraction([record(discarded=[{"x": 1}], truncated=False)])
+        first_seen = stored(self.store)["first_extracted_at"]
+        self.store.save_extraction([record()])
+        doc = stored(self.store)
+        self.assertNotIn("discarded", doc)
+        self.assertNotIn("truncated", doc)
+        self.assertEqual(doc["first_extracted_at"], first_seen)   # carried over
+
     def test_a_success_clears_the_dead_letter_record(self):
         self.store.save_failures([{"unit_id": kg_events.unit_id(URL, "origin"),
                                    "error": "x", "error_kind": "invalid"}],

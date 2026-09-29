@@ -22,8 +22,11 @@ What these pin, beyond "it works" (extraction 2.2.0):
   * **Nothing is capped:** no truncation, no ceiling on events.
   * **The model policy is criteria, not a name:** never a reasoning model,
     on the requested model or on any fallback.
-  * the artifact is APPENDED, never rewritten; ``{"events": []}`` is a
-    correct answer; frame_key agrees with mongo_base.url_doc_id.
+  * **Every sentence is in an event** (4.0.0, ``CoverageTests``): what the
+    model leaves out continues the event before it, or is an event of its
+    own when it narrates a happening; ``audit()`` refuses a gap.
+  * the artifact is APPENDED, never rewritten; ``{"events": []}`` is not a
+    failure; frame_key agrees with mongo_base.url_doc_id.
 
 Run inside the Airflow container:
     docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
@@ -114,6 +117,19 @@ def event(**over):
 
 def run(*rows, u=None):
     return validator(u)(json.dumps({"events": list(rows)}))
+
+
+def at(out, first):
+    """The event that starts at sentence ``first``. Since 4.0.0 every
+    sentence of the section is in an event, so a reply naming one event
+    comes back with the fixture's other sentences covered too: sentence 2
+    ("It was allegedly first called ...") continues sentence 1's event, and
+    3, 4 and 5 each narrate a happening of their own."""
+    return next(e for e in out if e["sentences"][0] == first)
+
+
+def spans(out):
+    return [e["sentences"] for e in out]
 
 
 def routes(handler):
@@ -266,13 +282,14 @@ class ExtractiveTests(unittest.TestCase):
     """Every addition seen in review, fed back in. None may survive."""
 
     def test_the_evidence_is_copied_from_the_page_not_written_by_the_model(self):
-        [row] = run(event())
-        first_sentence = P0[:P0.index(" It was")]
-        self.assertEqual(row["source_text"], first_sentence)   # [3] included
+        row = at(run(event()), 1)
+        # sentence 2, which only says what it was called, continues it
+        self.assertEqual(row["sentences"], [1, 2])
+        self.assertEqual(row["source_text"], P0)               # [3] included
         self.assertIn("[3]", row["source_text"])
 
     def test_a_span_across_paragraphs_is_joined_like_the_frame_text(self):
-        [row] = run(event(sentences=[2, 3], date_text=None))
+        row = at(run(event(sentences=[2, 3], date_text=None)), 2)
         self.assertIn("\n\n", row["source_text"])
         for part in row["source_text"].split("\n\n"):
             self.assertIn(part, P0 + "\n\n" + P1)
@@ -309,7 +326,7 @@ class ExtractiveTests(unittest.TestCase):
         # Coreference: "the same YouTuber" in sentence 4, named in sentence 3.
         out = run(event(sentences=[4], date_text="That same day", location=None,
                         actors=["KwandaoRen66"]))
-        self.assertEqual(out[0]["actors"], ["KwandaoRen66"])
+        self.assertEqual(at(out, 4)["actors"], ["KwandaoRen66"])
 
     def test_a_year_the_page_omits_no_longer_costs_the_date(self):
         """The regression this version exists for. KYM states the year once
@@ -318,8 +335,8 @@ class ExtractiveTests(unittest.TestCase):
         and every "that same day" after one of them was then anchored to
         the wrong event. The words are now grounded to the page's, and the
         year comes from earlier in the section, as it always did."""
-        [row] = run(event(sentences=[3], date_text="May 7th, 2010",
-                          location=None, actors=[]))
+        row = at(run(event(sentences=[3], date_text="May 7th, 2010",
+                           location=None, actors=[])), 3)
         self.assertEqual(row["date_text"], "May 7th")       # the page's words
         self.assertEqual((row["date"], row["date_basis"]), ("2010-05-07", "stated"))
 
@@ -327,11 +344,11 @@ class ExtractiveTests(unittest.TestCase):
         """Grounding resolves a WORDING difference, never a different date:
         "June 2nd" where the sentence says May 7th is not a near miss —
         the event is dated by the words the sentence OPENS with instead."""
-        [row] = run(event(sentences=[3], date_text="June 2nd, 2010",
-                          location=None, actors=[]))
+        row = at(run(event(sentences=[3], date_text="June 2nd, 2010",
+                           location=None, actors=[])), 3)
         self.assertEqual((row["date_text"], row["date"]), ("May 7th", "2010-05-07"))
-        [row] = run(event(sentences=[2], date_text="June 2nd, 2010",
-                          location=None, actors=[]))      # no opening date: none
+        row = at(run(event(sentences=[2], date_text="June 2nd, 2010",
+                           location="4chan", actors=[])), 2)  # no opening date: none
         self.assertIsNone(row["date_text"])
         self.assertIsNone(row["date"])
 
@@ -342,9 +359,9 @@ class ExtractiveTests(unittest.TestCase):
     def test_typography_and_markers_are_not_additions(self):
         out = run(event(sentences=[2], date_text=None, location="4chan", actors=[],
                         certainty="unconfirmed"))
-        self.assertEqual(out[0]["locations"], ["4chan"])
+        self.assertEqual(at(out, 2)["locations"], ["4chan"])
         out = run(event(location='"Tumblr"'))              # quote marks: not the name
-        self.assertEqual(out[0]["locations"], ["Tumblr"])
+        self.assertEqual(at(out, 1)["locations"], ["Tumblr"])
 
     def test_an_event_pointing_at_no_sentence_fails_the_reply(self):
         """Not silently dropped: an event with no evidence is a broken
@@ -388,19 +405,34 @@ class ExtractiveTests(unittest.TestCase):
 
     def test_valid_sentences_survive_an_invalid_one(self):
         out = run(event(sentences=[1, 99]))
-        self.assertEqual(out[0]["sentences"], [1])
+        self.assertEqual(at(out, 1)["sentences"], [1, 2])   # 2 continues it
 
     def test_the_same_sentences_and_date_twice_is_one_event(self):
         """Merged, not dropped — the same event read twice is one event,
         and whatever the second reading saw is kept."""
         out = run(event(location=None, actors=["Atsuko Sato"]),
                   event(location="Tumblr", actors=["Kabosu"]))
-        self.assertEqual(len(out), 1)
-        self.assertEqual(out[0]["locations"], ["Tumblr"])
-        self.assertEqual(out[0]["actors"], ["Atsuko Sato", "Kabosu"])
+        self.assertEqual([e["sentences"][0] for e in out].count(1), 1)
+        self.assertEqual(at(out, 1)["locations"], ["Tumblr"])
+        self.assertEqual(at(out, 1)["actors"], ["Atsuko Sato", "Kabosu"])
 
-    def test_an_empty_list_is_a_correct_answer(self):
-        self.assertEqual(list(run()), [])
+    def test_an_empty_reply_still_covers_every_sentence(self):
+        """4.0.0: ``{"events": []}`` no longer leaves a section with no
+        events. Each sentence that narrates a happening becomes one, dated
+        from its own words; the rest continue the event before them."""
+        out = run()
+        self.assertEqual(spans(out), [[1, 2], [3], [4], [5]])
+        self.assertEqual(at(out, 1)["date"], "2010-02-23")
+        self.assertEqual(at(out, 5)["date"], "2013")
+
+    def test_a_section_that_narrates_nothing_is_one_undated_event(self):
+        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
+            "The comic depicts a dog. It is drawn in pencil."]}])
+        [row] = run(u=u)
+        self.assertEqual(row["sentences"], [1, 2])
+        self.assertEqual(row["source_text"], "The comic depicts a dog. It is drawn in pencil.")
+        self.assertIsNone(row["date"])
+        self.assertEqual((row["actors"], row["locations"]), ([], []))
 
     def test_a_broken_reply_still_fails_the_unit(self):
         self.assertRaises(ValueError, validator(), "Here are the events:")
@@ -408,7 +440,7 @@ class ExtractiveTests(unittest.TestCase):
         self.assertRaises(TypeError, validator(), json.dumps({"events": {}}))
 
     def test_unknown_keys_never_reach_the_row(self):
-        [row] = run(event(summary="A made-up summary", confidence=0.9))
+        row = at(run(event(summary="A made-up summary", confidence=0.9)), 1)
         self.assertNotIn("summary", row)
         self.assertNotIn("confidence", row)
 
@@ -465,9 +497,11 @@ class RelativeDateTests(unittest.TestCase):
                         actors=[]),
                   event(sentences=[4], date_text="That same day", location=None,
                         actors=[]))
-        self.assertEqual([e["date"] for e in out], ["2010-05-07", "2010-05-07"])
-        self.assertEqual([e["date_basis"] for e in out], ["stated", "relative"])
-        self.assertEqual(out[1]["date_anchor"], out[0]["event_id"])
+        first, second = at(out, 3), at(out, 4)
+        self.assertEqual([first["date"], second["date"]], ["2010-05-07", "2010-05-07"])
+        self.assertEqual([first["date_basis"], second["date_basis"]],
+                         ["stated", "relative"])
+        self.assertEqual(second["date_anchor"], first["event_id"])
 
     def test_the_offset_is_applied(self):
         u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
@@ -483,8 +517,11 @@ class RelativeDateTests(unittest.TestCase):
                          ["2010-02-23", "2010-02-24", "2010-02-27"])
 
     def test_a_relative_phrase_with_nothing_before_it_stays_undated(self):
-        out = run(event(sentences=[4], date_text="That same day",
-                        location=None, actors=[]))
+        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
+            "The comic depicts a dog. That same day, @x posted it."]}])
+        out = run(event(sentences=[2], date_text="That same day",
+                        location=None, actors=[]), u=u)
+        self.assertEqual(spans(out), [[1, 2]])       # background joins the first
         self.assertIsNone(out[0]["date"])
         self.assertEqual(out[0]["date_text"], "That same day")   # words kept
 
@@ -653,7 +690,7 @@ class RelativeDateTests(unittest.TestCase):
     def test_a_later_event_never_dates_an_earlier_one(self):
         # The anchor must PRECEDE: a date further down the page is not
         # evidence for something narrated before it.
-        out = run(event(sentences=[2], date_text="That same day", location=None,
+        out = run(event(sentences=[2], date_text="That same day", location="4chan",
                         actors=[]), event())
         by_sentence = {e["sentences"][0]: e for e in out}
         self.assertIsNone(by_sentence[2]["date"])
@@ -797,7 +834,10 @@ class TimelineTests(unittest.TestCase):
             "The following day, singer Tyrese posted the photo."]}])
         out = run(bare([1], "November 26th, 2016"), bare([2], "December 2nd, 2016"),
                   bare([3], "The following day"), u=u)
-        self.assertEqual([e["date"] for e in out], ["2016-11-26", None, "2016-11-27"])
+        # 4.0.0: the count continues the account's event rather than
+        # standing as an undated one; either way it anchors nothing
+        self.assertEqual(spans(out), [[1, 2], [3]])
+        self.assertEqual([e["date"] for e in out], ["2016-11-26", "2016-11-27"])
         self.assertEqual(ev.audit({"events": out}, u), [])
 
     def test_bounds_are_not_dates(self):
@@ -922,11 +962,11 @@ class ActorLocationTests(unittest.TestCase):
         # Not verbatim anywhere: both spans carry all three words, and the
         # section-wide leftmost one is the Tumblr blog in sentence 1.
         # (The splitter cuts the title at "Murica!", as on the real page.)
-        [row] = run(event(sentences=[2], date_text=None,
-                          locations=["Murica Fuck Yeah"], actors=[]), u=u)
+        row = at(run(event(sentences=[2], date_text=None,
+                           locations=["Murica Fuck Yeah"], actors=[]), u=u), 2)
         self.assertNotIn("Fuck Yeah Murica", row["locations"])
-        [row] = run(event(sentences=[2, 3], date_text=None,
-                          locations=["Murica Fuck Yeah"], actors=[]), u=u)
+        row = at(run(event(sentences=[2, 3], date_text=None,
+                           locations=["Murica Fuck Yeah"], actors=[]), u=u), 2)
         self.assertEqual(row["locations"], ["Murica! Fuck Yeah"])
 
     def test_a_description_of_someone_is_not_a_name(self):
@@ -1021,8 +1061,8 @@ class ActorLocationTests(unittest.TestCase):
         Facebook is named, verbatim, earlier in the section."""
         u = self.u("It was first posted to Facebook on October 20th, 2019. "
                    "Butler made a screenshot of Hilzinger's face his cover photo.")
-        [row] = run(event(sentences=[2], date_text=None,
-                          locations=["Facebook"], actors=[]), u=u)
+        row = at(run(event(sentences=[2], date_text=None,
+                           locations=["Facebook"], actors=[]), u=u), 2)
         self.assertEqual(row["locations"], ["Facebook"])
         self.assertFalse(ev._same_word("face", "facebook"))
         self.assertTrue(ev._same_word("tiktok", "tiktoker"))
@@ -1128,13 +1168,16 @@ class ReceptionTests(unittest.TestCase):
                     u=u)
         self.assertEqual(row["sentences"], [1, 2])
 
-    def test_a_stat_only_event_with_nothing_before_it_stays(self):
+    def test_a_stat_only_event_with_nothing_before_it_joins_the_first(self):
+        """3.2.0 kept it as an event of its own, since nothing came before
+        it to join; 4.0.0 puts it in the first event, as any background."""
         u = self.u("The post received over 5,300 notes. On May 4th, 2013, "
                    "Tumblr user x posted a comic.")
         rows = run(event(sentences=[1], date_text=None, locations=[], actors=[]),
                    event(sentences=[2], date_text="May 4th, 2013",
                          locations=["Tumblr"], actors=["x"]), u=u)
-        self.assertEqual([r["sentences"] for r in rows], [[1], [2]])
+        self.assertEqual([r["sentences"] for r in rows], [[1, 2]])
+        self.assertEqual(rows[0]["date"], "2013-05-04")
 
     def test_counted_in_times_and_smiles_is_reception(self):
         for second in ("This post was liked 124 times and shared 27 times.",
@@ -1195,13 +1238,27 @@ class ReceptionTests(unittest.TestCase):
                 "A post by crybabygrande received 2,000 likes.",
                 "The next day, X user @y made a GIF that received 5.1 million views.",
                 "A March 5th reupload of the clip received over 400,000 views.",
-                "The next day, the video received 5.1 million views.",
                 "It was then reposted to Reddit, where it gained 1,200 upvotes."):
             with self.subTest(second=second):
                 u = self.u("On May 4th, 2013, Tumblr user x posted a comic. " + second)
                 rows = run(event(sentences=[1], date_text="May 4th, 2013",
                                  locations=["Tumblr"], actors=["x"]), u=u)
                 self.assertEqual(rows[0]["sentences"], [1])
+                # 4.0.0: and it is an event of its own, never left out
+                self.assertEqual(at(rows, 2)["sentences"], [2])
+
+    def test_the_works_reception_at_a_later_time_continues_it(self):
+        """Its own time words are all that is new in it: "the video" is
+        the one just posted. 3.2.0 left it out rather than guess; 4.0.0
+        must place it, and it is that video's reception."""
+        for second in ("The next day, the video received 5.1 million views.",
+                       "The next day it had 900 upvotes."):
+            with self.subTest(second=second):
+                u = self.u("On May 4th, 2013, Tumblr user x posted a comic. " + second)
+                rows = run(event(sentences=[1], date_text="May 4th, 2013",
+                                 locations=["Tumblr"], actors=["x"]), u=u)
+                self.assertEqual(spans(rows), [[1, 2]])
+                self.assertEqual(rows[0]["date"], "2013-05-04")
 
     def test_a_passive_by_in_a_description_is_crossed(self):
         """links-balls: "After Link is struck by the Hinox, he falls ..."
@@ -1216,9 +1273,12 @@ class ReceptionTests(unittest.TestCase):
     def test_a_gap_that_narrates_something_is_not_crossed(self):
         u = self.u("On May 4th, 2013, Tumblr user x posted a comic. In 2014, "
                    "Reddit users posted edits. The post received 900 upvotes.")
-        [row] = run(event(sentences=[1], date_text="May 4th, 2013",
-                          locations=["Tumblr"], actors=["x"]), u=u)
-        self.assertEqual(row["sentences"], [1])
+        out = run(event(sentences=[1], date_text="May 4th, 2013",
+                        locations=["Tumblr"], actors=["x"]), u=u)
+        self.assertEqual(at(out, 1)["sentences"], [1])
+        # 4.0.0: the 2014 edits are an event of their own, and the
+        # reception after them is theirs — never x's, across them
+        self.assertEqual(at(out, 2)["sentences"], [2, 3])
 
 
 class BorrowedValueTests(unittest.TestCase):
@@ -1272,10 +1332,16 @@ class BorrowedValueTests(unittest.TestCase):
     def test_a_next_sentence_a_day_later_is_not_joined(self):
         u = self.u("On May 4th, 2013, x posted a video. The next day, @y reposted "
                    "it on Tumblr.")
-        [row] = run(event(sentences=[1], date_text="May 4th, 2013",
-                          locations=["Tumblr"], actors=["x", "@y"]), u=u)
+        out = run(event(sentences=[1], date_text="May 4th, 2013",
+                        locations=["Tumblr"], actors=["x", "@y"]), u=u)
+        row = at(out, 1)
         self.assertEqual((row["sentences"], row["actors"], row["locations"]),
                          ([1], ["x"], []))
+        # 4.0.0: the repost the model missed is an event of its own, dated
+        # from its own words, with the account it names
+        repost = at(out, 2)
+        self.assertEqual((repost["sentences"], repost["actors"], repost["date"]),
+                         ([2], ["@y"], "2013-05-05"))
 
     def test_a_platform_named_by_its_users_word_is_named(self):
         for text, place in (
@@ -1312,16 +1378,18 @@ class BorrowedValueTests(unittest.TestCase):
         rows = run(event(sentences=[2], date_text=None,
                          locations=["Facebook", "Star Wars Sithposting shitposting group"],
                          actors=[]), u=u)
-        self.assertEqual(rows[0]["locations"],
+        self.assertEqual(at(rows, 2)["locations"],
                          ["Facebook", "Star Wars Sithposting shitposting group"])
 
     def test_a_next_sentence_with_its_own_date_is_not_joined(self):
         u = self.u("On October 13th, 2009, another video was uploaded by Kailyn "
                    "Jensen. Between 2009 and 2013, a handful of other videos were "
                    "uploaded to YouTube.")
-        [row] = run(event(sentences=[1], date_text="October 13th, 2009",
-                          locations=["YouTube"], actors=["Kailyn Jensen"]), u=u)
+        out = run(event(sentences=[1], date_text="October 13th, 2009",
+                        locations=["YouTube"], actors=["Kailyn Jensen"]), u=u)
+        row = at(out, 1)
         self.assertEqual((row["sentences"], row["locations"]), ([1], []))
+        self.assertEqual(at(out, 2)["sentences"], [2])
 
 
 class LeadingDateTests(unittest.TestCase):
@@ -1477,20 +1545,20 @@ class AttachmentTests(unittest.TestCase):
     """By position, never by the model."""
 
     def test_a_link_inside_the_events_sentence_is_attached(self):
-        [row] = run(event())
+        row = at(run(event()), 1)
         self.assertIn({"url": KYM_LINK, "text": "Tumblr", "kind": "link"}, row["links"])
 
     def test_the_reference_a_marker_cites_is_attached_as_a_citation(self):
-        [row] = run(event())
+        row = at(run(event()), 1)
         self.assertIn({"url": REF_3, "text": "[3]", "kind": "citation"}, row["links"])
 
     def test_a_link_in_another_sentence_is_not_attached(self):
-        [row] = run(event(sentences=[2], date_text=None, location="4chan", actors=[]))
+        row = at(run(event(sentences=[2], date_text=None, location="4chan", actors=[])), 2)
         self.assertEqual(row["links"], [])
 
     def test_media_shown_after_the_paragraph_go_with_its_events(self):
-        [p0] = run(event())
-        [p1] = run(event(sentences=[5], date_text="In 2013", location="Reddit", actors=[]))
+        p0 = at(run(event()), 1)
+        p1 = at(run(event(sentences=[5], date_text="In 2013", location="Reddit", actors=[])), 5)
         self.assertEqual([i["src"] for i in p0["images"]], [IMG])
         self.assertEqual(p0["embeds"], [])
         self.assertEqual(p1["embeds"], [{"url": TIKTOK, "platform": "tiktok"}])
@@ -1499,8 +1567,114 @@ class AttachmentTests(unittest.TestCase):
     def test_media_before_the_first_paragraph_go_with_the_first(self):
         e = entry()
         e["sections"][1]["images"][0]["after_paragraph"] = -1
-        [row] = run(event(), u=ev.section_unit(e, "origin"))
+        row = at(run(event(), u=ev.section_unit(e, "origin")), 1)
         self.assertEqual([i["src"] for i in row["images"]], [IMG])
+
+
+class CoverageTests(unittest.TestCase):
+    """4.0.0, asked for 2026-09-29: every sentence of Origin and Spread is
+    in an event. 3.2.0 left 15.3% of the corpus's sentences, in 43.5% of
+    its sections, out of every event."""
+
+    def u(self, *paragraphs):
+        return unit(sections=[{"kind": "origin", "heading": "Origin",
+                               "text": list(paragraphs)}])
+
+    def test_background_before_the_first_happening_joins_it(self):
+        u = self.u("Doge is a Shiba Inu. On May 4th, 2013, x posted a photo of her.")
+        out = run(event(sentences=[2], date_text="May 4th, 2013", locations=[],
+                        actors=["x"]), u=u)
+        self.assertEqual(spans(out), [[1, 2]])
+        self.assertEqual(out[0]["date"], "2013-05-04")      # still its own date
+
+    def test_a_description_or_a_count_continues_the_event_before_it(self):
+        u = self.u("On May 4th, 2013, x posted a comic. The comic depicts a dog. "
+                   "The post received 900 upvotes.")
+        out = run(event(sentences=[1], date_text="May 4th, 2013", locations=[],
+                        actors=["x"]), u=u)
+        self.assertEqual(spans(out), [[1, 2, 3]])
+        self.assertEqual(out[0]["source_text"], u["paragraphs"][0])
+
+    def test_a_joined_sentence_never_dates_the_event(self):
+        """Only the sentences the MODEL put in the event are read for a
+        relative phrase it did not quote: "the next day" in a joined count
+        is the count's time, not the post's."""
+        u = self.u("On May 4th, 2013, x posted a comic. Later, y posted a remix. "
+                   "The next day it had 900 upvotes.")
+        out = run(event(sentences=[1], date_text="May 4th, 2013", locations=[],
+                        actors=["x"]),
+                  event(sentences=[2], date_text=None, locations=[], actors=["y"]), u=u)
+        self.assertEqual(spans(out), [[1], [2, 3]])
+        self.assertIsNone(at(out, 2)["date"])
+
+    def test_a_missed_happening_is_its_own_event_with_its_own_date(self):
+        u = self.u("On May 4th, 2013, x posted a comic. On June 1st, 2013, u/zed "
+                   "reposted it to Reddit.")
+        out = run(event(sentences=[1], date_text="May 4th, 2013", locations=[],
+                        actors=["x"]), u=u)
+        missed = at(out, 2)
+        self.assertEqual((missed["sentences"], missed["date"], missed["actors"],
+                          missed["locations"]), ([2], "2013-06-01", ["u/zed"], []))
+
+    def test_every_record_extract_writes_covers_every_sentence(self):
+        for rows in ([], [event()], [event(sentences=[3], date_text="On May 7th",
+                                           location=None, actors=[])]):
+            out = run(*rows)
+            spanned = {i for e in out for i in range(e["sentences"][0], e["sentences"][-1] + 1)}
+            self.assertEqual(spanned, {1, 2, 3, 4, 5}, rows)
+            self.assertEqual(ev.audit({"events": list(out)}, unit()), [], rows)
+
+    def test_an_event_made_of_commentary_is_folded_into_the_one_before(self):
+        """Prompt 9 made 118 such events of the review sample's sentences."""
+        for second in ("One of the more prevalent names was \"Operation Crawler\".",
+                       "This is the earliest known version of the meme.",
+                       "The original dialogue was:"):
+            with self.subTest(second=second):
+                u = self.u("On May 4th, 2013, Tumblr user x posted a comic. " + second)
+                out = run(event(sentences=[1], date_text="May 4th, 2013",
+                                locations=["Tumblr"], actors=["x"]),
+                          event(sentences=[2], date_text=None, locations=[], actors=[]),
+                          u=u)
+                self.assertEqual(spans(out), [[1, 2]])
+
+    def test_a_count_as_of_a_date_is_folded_too(self):
+        u = self.u("On May 4th, 2013, Tumblr user x posted a comic. On Instagram, "
+                   "there are over 2 million images tagged #murica as of June 2017.")
+        out = run(event(sentences=[1], date_text="May 4th, 2013",
+                        locations=["Tumblr"], actors=["x"]),
+                  event(sentences=[2], date_text="as of June 2017",
+                        locations=["Instagram"], actors=[]), u=u)
+        self.assertEqual(spans(out), [[1, 2]])
+
+    def test_an_event_where_someone_does_something_is_not_folded(self):
+        """...but these 17 of them name a development, and stay events."""
+        for second in ("Snopes ultimately labeled the theory as false.",
+                       "The Rake was eventually added to horror story databases.",
+                       "This site spawned many other sites editing the GIF image.",
+                       "Other social media users took footage of the dance and "
+                       "paired it with other music.",
+                       "The picture was very well-received, and variations flowed forth."):
+            with self.subTest(second=second):
+                u = self.u("On May 4th, 2013, Tumblr user x posted a comic. " + second)
+                out = run(event(sentences=[1], date_text="May 4th, 2013",
+                                locations=["Tumblr"], actors=["x"]),
+                          event(sentences=[2], date_text=None, locations=[], actors=[]),
+                          u=u)
+                self.assertEqual(spans(out), [[1], [2]])
+
+    def test_an_opening_commentary_event_joins_the_first_happening(self):
+        u = self.u("The exact origin of the video is unknown. On May 4th, 2013, "
+                   "Tumblr user x posted it.")
+        out = run(event(sentences=[1], date_text=None, locations=[], actors=[]),
+                  event(sentences=[2], date_text="May 4th, 2013",
+                        locations=["Tumblr"], actors=["x"]), u=u)
+        self.assertEqual(spans(out), [[1, 2]])
+        self.assertEqual((out[0]["date"], out[0]["actors"]), ("2013-05-04", ["x"]))
+
+    def test_the_audit_refuses_a_sentence_in_no_event(self):
+        out = [e for e in run(event()) if e["sentences"][0] != 5]
+        self.assertEqual(ev.audit({"events": out}, unit()),
+                         ["sentences [5] are in no event"])
 
 
 class AuditTests(unittest.TestCase):
@@ -1518,9 +1692,9 @@ class AuditTests(unittest.TestCase):
                         actors=[]),
                   event(sentences=[4], date_text=None, location=None, actors=[]))
         record = {"events": list(out)}
-        self.assertEqual(record["events"][1]["date_basis"], "relative")
+        self.assertEqual(at(out, 4)["date_basis"], "relative")
         # 2.2.0 also gives it the page's own wording for that date.
-        self.assertEqual(record["events"][1]["date_text"], "That same day")
+        self.assertEqual(at(out, 4)["date_text"], "That same day")
         self.assertEqual(ev.audit(record, unit()), [])
 
     def test_the_audit_catches_what_a_broken_validator_would_let_through(self):
@@ -1622,7 +1796,7 @@ class ExtractTests(Tmp):
 
     def test_a_unit_is_extracted_audited_stamped_and_written(self):
         summary = self.extract(StubSession(reply([event()])))
-        self.assertEqual((summary["extracted"], summary["events"]), (1, 1))
+        self.assertEqual((summary["extracted"], summary["events"]), (1, 4))
         record = json.loads(self.lines()[0])
         self.assertEqual(record["extraction_version"], ev.EXTRACTION_VERSION)
         self.assertEqual(record["model"], MINISTRAL)
@@ -1633,7 +1807,7 @@ class ExtractTests(Tmp):
     def test_an_addition_never_reaches_the_record(self):
         summary = self.extract(StubSession(reply(
             [event(actors=["Kabosu (dog)", "Kabosu's vet"])])))
-        self.assertEqual(summary["events"], 1)
+        self.assertEqual(summary["events"], 4)
         record = json.loads(self.lines()[0])
         # "(dog)" is the model's aside and goes; the vet is nobody the page
         # names and is not stored at all. Neither is counted anywhere: the
@@ -1657,7 +1831,8 @@ class ExtractTests(Tmp):
 
         summary = self.extract(StubSession(routes(handler)))
         self.assertEqual((summary["extracted"], summary["failed_count"]), (1, 0))
-        self.assertEqual(summary["events"], 1)
+        # the model's one event, plus the fixture's other sentences covered
+        self.assertEqual(summary["events"], 4)
 
     def test_a_grammarless_reply_still_has_to_be_the_schemas_shape(self):
         """The fence is tolerated; nothing else is."""
@@ -1670,7 +1845,8 @@ class ExtractTests(Tmp):
         self.extract(StubSession(chat))
         [body] = bodies
         user = body["messages"][1]["content"]
-        self.assertIn("Sentences:\n1: The original photo", user)
+        self.assertIn("Sentences (1 to 5; every one belongs to an event):\n"
+                      "1: The original photo", user)
         self.assertNotIn("[3]", user)
         self.assertIn("ORIGIN section", user)
         self.assertEqual(body["format"], ev.request_format(schema()))

@@ -88,7 +88,7 @@ Neo4j and Mongo) to its RDF term.
 | edge `hasBadge` (5.0.0) | `mk:badge` (an `owl:ObjectProperty` as of 5.0.0 — was a literal in 4.0.0) | | `badges` |
 | node `event` (6.0.0) | `mk:event/<id> a mk:Event` | `mk:Event` ⊑ `sem:Event`, ⊑ `schema:Event` | `events` collection (see [Events](#events-drawn-from-eventkg-not-copied-from-it)) |
 | edge `hasEvent` (6.0.0) | `mk:hasEvent` | | |
-| `event.source_text` | `mk:sourceText` | | the verbatim sentences it was read from, copied from the page by the pipeline (the model only points at sentence numbers) |
+| `event.source_text` | `mk:sourceText` | | the verbatim sentences it was read from, copied from the page by the pipeline (the model only points at sentence numbers). Since extraction 4.0.0 these are ALL of the event's sentences — the happening and what describes, counts or comments on it — and a section's events together cover every one of its sentences |
 | `event.source_section` | `mk:sourceSection` (`origin` / `spread`) | | |
 | `event.date_start`, `date_end` | `mk:eventStart`, `mk:eventEnd` (`xsd:dateTime`) | ⊑ `sem:hasBeginTimeStamp`, `sem:hasEndTimeStamp` | `date` at `date_precision`, as an interval |
 | `event.date_precision`, `date_text` | `mk:datePrecision`, `mk:dateText` | | |
@@ -544,6 +544,7 @@ IMKG's authors' agreement) like every other `mk:` term.
 | The two derivations produce the same triples on real data | `kym_kg_validate` |
 | `sem:` is aligned to in the ontology and never emitted | `tests/test_kg_vocabulary.py` |
 | An event's `source_text` is really in the section the model saw; its date matches its precision | `tests/test_kg_events.py` |
+| Every sentence of Origin and Spread is in an event (extraction 4.0.0) | `tests/test_kg_events.py` (`CoverageTests`), and `audit()` refuses any record with a gap |
 | A re-extraction replaces a section's events, never merges them; a failing section is not retried until something changes | `tests/test_event_store.py` |
 | The lexicon keeps exactly what the filter says (no disambiguation pages; KYM-slug items kept without sitelinks; `mul` labels count) and frames join on P13484 | `tests/test_kg_wikidata.py` |
 | Every entity mention is the page's own words at its offsets; the KYM-slug item wins; context separates senses; an NER label never vetoes | `tests/test_kg_entities.py` |

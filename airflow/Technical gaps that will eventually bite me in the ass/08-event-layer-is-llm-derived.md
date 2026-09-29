@@ -1,8 +1,74 @@
 # The event layer is a language model's reading, and nobody has checked it
 
 **Status:** open — narrowed 2026-09-18 by extraction 2.0.0, 2026-09-21 by
-2.2.0 / 2.3.0, 2026-09-22 by 2.4.0–2.6.0 and 2026-09-25 by 3.0.0–3.2.0
-(see the updates), not closed.
+2.2.0 / 2.3.0, 2026-09-22 by 2.4.0–2.6.0, 2026-09-25 by 3.0.0–3.2.0 and
+2026-09-29 by 4.0.0 (see the updates), not closed.
+
+## Update 2026-09-29 — every sentence is in an event (extraction 4.0.0)
+
+The full 3.2.0 backfill (35,991 sections, 133,952 events, 2026-09-28/29)
+measured what the review samples had only hinted at: **15.3% of all
+sentences — in 43.5% of all sections, 26.9% of Origin's sentences — were
+in no event.** Gabi's rubric counts every one of them as an error, and
+Gabi asked for this fixed. Reading a sample of them: missed happenings
+("After Argentina completed a comeback victory over Egypt that day, Essie
+jokingly asked ..."), reception lines that belonged to their post, and
+background the prompt itself had told the model to drop — prompt 8 said
+descriptions, counts and commentary were not events "and must not be
+returned".
+
+4.0.0 makes coverage an invariant instead of a hope:
+
+* **Prompt 9**: the section is one story; each sentence STARTS an event
+  (someone does something, at some time) or CONTINUES the one before it
+  (its description, reception, a comment); background before the first
+  happening belongs to the first; a worked five-sentence example.
+* **`_cover_every_sentence`**: whatever the model still leaves out
+  continues the event before it — or, when it narrates something of its
+  own, becomes an event dated from its own words; an empty reply is one
+  event over the section.
+* **`audit()` refuses a record with a sentence in no event**, and
+  `extract()` never writes a record that fails the audit.
+
+The first cut of prompt 9 overshot: asked only to place every sentence,
+the model made 118 sentences of the review sample into events of their own
+("This is the earliest known version of the meme.", five sentences of The
+Rake's lore). The fold that already merged count-only events now also
+merges events of pure commentary (`_commentary_only`), and was narrowed
+by reading all 93 of its extra folds: 17 were real developments without a
+happening verb ("Snopes ultimately labeled the theory as false", "This
+site spawned many other sites") and are kept by `_DEVELOPMENT`.
+
+On the 127 review sections with their partners (236 sections), final code:
+
+| | 3.2.0 | 4.0.0 |
+|---|---|---|
+| sentences in an event | 1,124 of 1,324 (84.9%) | 1,324 (100%) — 1,323 placed by the model itself |
+| events | 947 | 990 |
+| sentences stating a date that sit in a dated event | 95.3% | 95.2% |
+| failures / audit violations | 0 / 0 | 0 / 0 |
+
+Of the 200 sentences 3.2.0 left out, 83 now continue an event and 86 are
+events of their own; reading the new events, about four in five are real
+happenings the old prompt missed ("In 2019, 'Periodt'-related posts began
+going viral in greater numbers", "the protestors sat in front of the main
+gate") and one in five is still a description or a quote made into an
+event where the model also gave it an actor ("The article quotes Nick
+Cicero, ..."), which the fold rightly does not touch. The 60-entry holdout (116 sections),
+which none of this was tuned on, agrees: sentences in an event 83.6% ->
+100% (every one placed by the model itself), 386 -> 402 events, dated
+sentences in a dated event 96.8% -> 97.5%, 0 failures; of its 28 new
+events about 22 are real happenings ("This began a trend of videos",
+"@__stendo__ hid the post's like count") and about 6 descriptions made
+events (a film's scene, a sanctuary's background).
+
+Two consequences for anyone reading the graph: an event's `mk:sourceText`
+is now ALL of its sentences — the happening and what describes or counts
+it — and `zero_event_units` is 0 by construction (the Events page's "Read,
+nothing found" tile will stay at zero). The Review page's recall question
+("which sentences narrate an event?") can no longer find a miss the way it
+did; under 4.0.0 a miss is a happening folded INTO another event, which it
+does not yet ask about.
 
 ## Update 2026-09-25 — an automated review loop, and what it leaves
 

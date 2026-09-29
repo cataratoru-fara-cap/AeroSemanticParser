@@ -39,7 +39,7 @@
         "minimum": 1
       },
       "minItems": 1,
-      "description": "The numbers of the section's sentences that narrate this event, as numbered in the prompt; consecutive where possible. The model returns these numbers INSTEAD of quoting the text, so it cannot alter the source: the pipeline copies the text itself."
+      "description": "The numbers of the section's sentences that make up this event, as numbered in the prompt: the one that starts it and every one that continues it (its description, its reception), consecutive. Together a section's events cover every one of its sentences (extraction 4.0.0). The model returns these numbers INSTEAD of quoting the text, so it cannot alter the source: the pipeline copies the text itself."
     },
     "source_text": {
       "x-derived": true,

@@ -264,37 +264,50 @@ class EventStore(MongoStoreBase):
     # -- writes -------------------------------------------------------------
 
     def save_extraction(self, records: Iterable[dict]) -> dict[str, int]:
-        """Upsert extraction records, REPLACING each unit's event list.
+        """Upsert extraction records, REPLACING each unit's whole document.
 
-        Never ``$push``/``$addToSet``: see the module docstring. A success
-        also clears the unit's dead-letter record, which is what makes
-        `event_failures` hold only currently-unresolved failures.
+        Never ``$push``/``$addToSet``: see the module docstring. And never a
+        ``$set`` of the new fields either: that keeps every field the new
+        record no longer has, which is how 99 documents still carried 2.1's
+        ``discarded`` list (and 40 the ``dropped_events`` and ``truncated``
+        of 1.x) after their 3.2.0 re-extraction. The document is the record
+        and nothing else — plus ``first_extracted_at``, carried over from
+        the document it replaces. A success also clears the unit's
+        dead-letter record, which is what makes `event_failures` hold only
+        currently-unresolved failures.
         """
-        from pymongo import UpdateOne
+        from pymongo import ReplaceOne
 
-        ops: list[Any] = []
         resolved: list[str] = []
         units = events = 0
         now = now_utc()
+        batch: list[dict] = []
 
         def flush() -> None:
-            if ops:
-                self.events.bulk_write(ops, ordered=False)
-                ops.clear()
+            if not batch:
+                return
+            first = {d["_id"]: d.get("first_extracted_at") for d in self.events.find(
+                {"_id": {"$in": [doc["_id"] for doc in batch]}},
+                {"first_extracted_at": 1})}
+            ops = [ReplaceOne({"_id": doc["_id"]},
+                              {**doc, "first_extracted_at": first.get(doc["_id"]) or now},
+                              upsert=True)
+                   for doc in batch]
+            self.events.bulk_write(ops, ordered=False)
+            batch.clear()
 
         for record in records:
             doc = dict(record)
             unit_id = doc.pop("unit_id")
+            doc["_id"] = unit_id
             doc["extracted_at"] = _as_datetime(doc.get("extracted_at")) or now
             doc["event_count"] = len(doc.get("events") or [])
-            ops.append(UpdateOne({"_id": unit_id},
-                                 {"$set": doc,
-                                  "$setOnInsert": {"first_extracted_at": now}},
-                                 upsert=True))
+            doc.pop("first_extracted_at", None)
+            batch.append(doc)
             resolved.append(unit_id)
             units += 1
             events += doc["event_count"]
-            if len(ops) >= BULK_BATCH:
+            if len(batch) >= BULK_BATCH:
                 flush()
         flush()
 
