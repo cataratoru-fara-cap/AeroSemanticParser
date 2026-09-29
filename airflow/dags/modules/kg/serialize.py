@@ -55,7 +55,7 @@ from modules.kg.taxonomy import CONCEPT_EDGE_TYPES
 
 __all__ = [
     "EDGE_TYPE_TO_RML_FILE", "RML_NODE_FILES", "RML_LIST_FILES", "RESERVED_COLUMNS",
-    "RML_EVENT_LIST_FILES",
+    "RML_EVENT_LIST_FILES", "RML_TEMPLATE_LIST_FILES",
     "OCCURRENCE_RML_FILES",
     "RML_CONCEPT_FILES", "PG_NODES_HEADER", "PG_EDGES_HEADER", "RML_DIR",
     "all_rml_files", "write_build", "load_manifest",
@@ -98,6 +98,13 @@ RML_NODE_FILES: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
     # rdf.node_iri to http://www.wikidata.org/entity/Q….
     "wikidata_entities.csv": ("wikidata_entity", (
         ("iri", "id"), ("label", "label"))),
+    # 6.4.0. "iri" is mk:template/<id>; "template_id" is all digits, which
+    # pandas reads as an integer — safe only because no row lacks one (an
+    # empty cell would make the column float and the literal "123.0"),
+    # which kym_kg_validate's diff would catch.
+    "templates.csv": ("template", (
+        ("iri", "id"), ("label", "label"), ("template_id", "template_id"),
+        ("file_format", "file_format"))),
 }
 
 # file -> (frame list property, value column). "badges" left 5.0.0: it is
@@ -116,6 +123,11 @@ RML_EVENT_LIST_FILES: dict[str, tuple[str, str]] = {
     "event_actors.csv": ("actors", "actor"),
     # 6.2.0: an event's places, one row each — platform and venue on it.
     "event_locations.csv": ("locations", "location"),
+}
+
+# 6.4.0: the same shape again, for templates (rows keyed by the template IRI).
+RML_TEMPLATE_LIST_FILES: dict[str, tuple[str, str]] = {
+    "template_alt_names.csv": ("alt_names", "alt_name"),
 }
 
 # Concept/scheme sources with their own shape. "scheme.csv" holds one row
@@ -158,6 +170,12 @@ EDGE_TYPE_TO_RML_FILE: dict[str, tuple[str, tuple[str, str]]] = {
     "fromTitle":     ("entity_title_edges.csv", ("url", "qid")),
     "fromTags":      ("entity_tag_edges.csv",   ("url", "qid")),
     "fromAbout":     ("entity_about_edges.csv", ("url", "qid")),
+    # 6.4.0. "template" is the bare imgflip id (_rml_id strips "template:");
+    # the mapping builds mk:template/<id> from it.
+    "hasTemplate":   ("template_edges.csv",       ("url", "template")),
+    "templateImage": ("template_image_edges.csv", ("template", "image")),
+    "imgflipPage":   ("template_page_edges.csv",  ("template", "page_url")),
+    "fromImage":     ("entity_image_edges.csv",   ("template", "qid")),
 }
 
 # edge type -> (occurrence csv, header): one row per occurrence, every
@@ -170,6 +188,8 @@ OCCURRENCE_RML_FILES: dict[str, tuple[str, tuple[str, ...]]] = {
     "fromTitle": ("entity_title_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
     "fromTags": ("entity_tag_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
     "fromAbout": ("entity_about_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
+    "hasTemplate": ("template_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
+    "fromImage": ("entity_image_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
 }
 # Column names are also morph-kgc dataframe columns once read, and morph-kgc
 # uses some names itself: a CSV column called "subject" is silently
@@ -204,14 +224,14 @@ assert set(OCCURRENCE_RML_FILES) == set(OCCURRENCE_EDGE_TYPES), (
 def all_rml_files() -> set[str]:
     """Every file under rml_data/ a build writes."""
     return (set(RML_NODE_FILES) | set(RML_LIST_FILES) | set(RML_CONCEPT_FILES)
-            | set(RML_EVENT_LIST_FILES)
+            | set(RML_EVENT_LIST_FILES) | set(RML_TEMPLATE_LIST_FILES)
             | {name for name, _ in EDGE_TYPE_TO_RML_FILE.values()}
             | {name for name, _ in OCCURRENCE_RML_FILES.values()}
             | {ORIGIN_SUBTYPE_RML_FILE[0]})
 
 
 _ID_PREFIXES = ("type:", "tag:", "region:", "origin:", "badge:", "image:",
-                "event:", "wd:")
+                "event:", "wd:", "template:")
 
 
 def _rml_id(value: str) -> str:
@@ -313,6 +333,9 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
         event_list_writers = {
             prop: (name, files.open_csv(name, os.path.join(rml, name), ("iri", column)))
             for name, (prop, column) in RML_EVENT_LIST_FILES.items()}
+        template_list_writers = {
+            prop: (name, files.open_csv(name, os.path.join(rml, name), ("iri", column)))
+            for name, (prop, column) in RML_TEMPLATE_LIST_FILES.items()}
         types_w = files.open_csv("types.csv", os.path.join(rml, "types.csv"),
                                  RML_CONCEPT_FILES["types.csv"])
         origins_w = files.open_csv("origin_concepts.csv",
@@ -355,9 +378,10 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
                         if value not in (None, ""):
                             writer.writerow([url, value])
                             rows[name] += 1
-            elif kind == "event":
+            elif kind in ("event", "template"):
                 iri = rdf.node_iri(node["id"])
-                for prop, (name, writer) in event_list_writers.items():
+                list_tables = event_list_writers if kind == "event" else template_list_writers
+                for prop, (name, writer) in list_tables.items():
                     for value in node.get(prop) or []:
                         if value not in (None, ""):
                             writer.writerow([iri, value])

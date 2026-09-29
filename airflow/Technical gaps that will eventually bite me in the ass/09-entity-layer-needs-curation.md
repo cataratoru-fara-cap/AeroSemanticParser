@@ -1,7 +1,27 @@
 # The entity layer links everything it recognises, relevant or not
 
-**Status:** open (2026-09-22) — this is the planned NEXT TASK on the entity
-layer, not a defect found in passing.
+**Status:** in progress (2026-09-29). The fix is built and running; the
+gap closes when a holdout review meets Gabi's bar: of the links kept,
+≥ 0.85 relevant, and of those dropped, ≤ 0.15 relevant.
+
+- **Wrong senses:** linker 1.2.0 applies a curated sense list,
+  `kg_config/entity_senses.yaml`. The corpus is re-linked: the maths
+  "series" is gone, "a series of" links nothing, and "game" is a video
+  game.
+- **Relevance:** curation 1.1.0 (`kg/curation.py`, stage
+  `kym_entity_curation`) sorts About and tag links:
+  - local rules and curated lists (`kg_config/entity_curation.yaml`)
+    decide first;
+  - ministral-3:14b, asked with two differently worded prompts, judges
+    the rest.
+  - Only kept links reach the graph, each with `mk:relevanceBasis`
+    (KG 6.5.0). Dropped links stay in Mongo.
+- **Measured so far:**
+  - a first review of the live run (200 links, `kg/entity_review.py`)
+    failed on dropped links (0.25 relevant), which led to curation 1.1.0;
+  - projected over the corpus from 353 labelled items, the current setup
+    keeps 0.875 relevant and drops 0.126 relevant.
+  - The holdout review follows the full judge run.
 
 ## What it is
 

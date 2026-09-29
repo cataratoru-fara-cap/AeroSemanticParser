@@ -114,6 +114,9 @@ class MappingCrosswalkTests(unittest.TestCase):
         # Event list files are keyed by the event IRI, not by a frame url.
         headers.update({name: ("iri", col)
                         for name, (_, col) in serialize.RML_EVENT_LIST_FILES.items()})
+        # ...and so are template list files (6.4.0), by the template IRI.
+        headers.update({name: ("iri", col)
+                        for name, (_, col) in serialize.RML_TEMPLATE_LIST_FILES.items()})
         headers.update(serialize.RML_CONCEPT_FILES)
         headers.update({name: header for name, header
                         in serialize.EDGE_TYPE_TO_RML_FILE.values()})
@@ -133,6 +136,7 @@ class MappingCrosswalkTests(unittest.TestCase):
         columns = {c for _, cols in serialize.RML_NODE_FILES.values() for c, _ in cols}
         columns |= {c for _, c in serialize.RML_LIST_FILES.values()}
         columns |= {c for _, c in serialize.RML_EVENT_LIST_FILES.values()}
+        columns |= {c for _, c in serialize.RML_TEMPLATE_LIST_FILES.values()}
         columns |= {c for cols in serialize.RML_CONCEPT_FILES.values() for c in cols}
         columns |= {c for _, cols in serialize.EDGE_TYPE_TO_RML_FILE.values() for c in cols}
         columns |= {c for _, cols in serialize.OCCURRENCE_RML_FILES.values() for c in cols}
@@ -234,9 +238,13 @@ class ImkgAlignmentTests(unittest.TestCase):
         # "fromAbout"/"fromTags" joined in 6.1.0: IMKG's own textual-
         # enrichment predicates (frame -> Wikidata item), reused verbatim
         # rather than re-minted under mk:.
+        # "templateOf"/"fromImage" joined in 6.4.0: IMKG's template -> frame
+        # link (its mapping; its data used m4s:sameAs, which MemeAtlas does
+        # not follow) and its image -> Wikidata enrichment, now for imgflip
+        # templates.
         for local in ("title", "status", "year", "from", "about", "origin",
                       "spread", "added", "last_update_source", "tag",
-                      "fromAbout", "fromTags"):
+                      "fromAbout", "fromTags", "templateOf", "fromImage"):
             self.assertIn(self.M4S + local, preds, local)
         self.assertIn(self.M4S + "MediaFrame", rdf.constant_classes())
 
@@ -250,8 +258,17 @@ class ImkgAlignmentTests(unittest.TestCase):
         mk_locals = {t[len(rdf.PREFIXES["mk"]):] for t in declared_mk_terms()}
         imkg = {"MediaFrame", "title", "status", "year", "from", "about",
                 "added", "last_update_source", "tag", "origin", "spread",
-                "fromAbout", "fromTags", "fromImage", "fromCaption"}
+                "fromAbout", "fromTags", "fromImage", "fromCaption", "templateOf"}
         self.assertEqual(mk_locals & imkg, set())
+
+    def test_templates_link_both_ways_with_imkgs_term(self):
+        """6.4.0: one property-graph edge, both RDF directions — IMKG's
+        m4s:templateOf (template -> frame) and MemeAtlas's mk:hasTemplate."""
+        self.assertEqual(rdf.EDGE_PREDICATES["hasTemplate"],
+                         (rdf.PREFIXES["mk"] + "hasTemplate", False, self.M4S + "templateOf"))
+        self.assertEqual(rdf.EDGE_PREDICATES["fromImage"][0], self.M4S + "fromImage")
+        self.assertEqual(rdf.node_iri("template:112126428"),
+                         rdf.PREFIXES["mk"] + "template/112126428")
 
 
 class OntologyDeclarationTests(unittest.TestCase):

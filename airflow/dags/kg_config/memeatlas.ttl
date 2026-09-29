@@ -63,7 +63,7 @@
 MemeAtlas describes the full parsed record of each Know Your Meme entry —
 its section text, links, references, images, regions and corpus grading —
 on top of IMKG's model of media frames, which it reuses unchanged.""" ;
-    owl:versionInfo "6.3.0" ;
+    owl:versionInfo "6.5.0" ;
     rdfs:seeAlso <https://doi.org/10.1007/978-3-031-33455-9_21> ,
                  <https://github.com/riccardotommasini/imkg> ;
     prov:wasDerivedFrom <https://doi.org/10.5281/zenodo.7457166> .
@@ -403,6 +403,82 @@ mk:linkMethod a rdf:Property ;
 mk:nerLabel a rdf:Property ;
     rdfs:label "NER label" ;
     rdfs:comment "The named-entity type the NLP model gave the mention (PERSON, ORG, GPE, ...), when it gave one. A hint the linker used, never a filter: the model is often wrong about internet names." .
+
+mk:relevanceBasis a rdf:Property ;
+    rdfs:label "relevance basis" ;
+    rdfs:comment "Why a linked item was judged relevant to the meme, and so emitted (6.5.0; links judged irrelevant are not in the graph): title (named by the title), own_item (the item is this meme: its Know Your Meme slug, or Wikidata's item for the entry), platform (a website, platform or online community), format (the kind of meme it is: image macro, copypasta ...), title_agrees (also named by the title), tag_and_text (named by both a tag and the About), tag_named (a whole tag that names something), judge (an LLM read the entry and judged the item part of what the meme is: its subject, people or characters, a source work or franchise, its format, or where it spread)." .
+
+# ---------------------------------------------------------------------------
+# imgflip meme templates (6.4.0)
+#
+# The blank images a meme is made from, found on imgflip for each frame
+# (kym_templates), with near-identical uploads merged into one. IMKG linked
+# imgflip templates to frames with m4s:templateOf (template -> frame, in its
+# mapping); MemeAtlas emits that AND its inverse mk:hasTemplate, and lets a
+# template belong to several frames. What a template's image shows is linked
+# to Wikidata with IMKG's m4s:fromImage, annotated per region:
+#
+#   <frame> mk:hasTemplate mk:template/112126428 .
+#   mk:template/112126428 m4s:templateOf <frame> ;
+#       imgflip:templateId "112126428" ;
+#       m4s:fromImage <http://www.wikidata.org/entity/Q…> .
+#   << mk:template/112126428 m4s:fromImage wd:Q… >>
+#       mk:depictionKind "person" ;
+#       mk:boundingBox "xywh=percent:10.0,5.0,50.0,85.0" ;
+#       mk:detectedBy "qwen3-vl:32b" .
+# ---------------------------------------------------------------------------
+
+mk:MemeTemplate a owl:Class ;
+    rdfs:subClassOf schema:CreativeWork ;
+    rdfs:label "Meme template" ;
+    rdfs:comment "A blank image memes are made from, as published on imgflip (identified as mk:template/<imgflip id>, with IMKG's imgflip:templateId). Uploads of the same picture — resized, re-encoded or mirrored — are one template, represented by the most canonical upload." .
+
+mk:hasTemplate a owl:ObjectProperty ;
+    owl:inverseOf m4s:templateOf ;
+    rdfs:domain m4s:MediaFrame ;
+    rdfs:range mk:MemeTemplate ;
+    rdfs:label "has template" ;
+    rdfs:comment "A meme template the entry's meme is made with. Chosen per entry: 0 when no imgflip template fits, else 1 to 10, the most varied first. Annotated with mk:templateScore and mk:templateMatch." .
+
+mk:templateImage a owl:ObjectProperty ;
+    rdfs:subPropertyOf schema:image ;
+    rdfs:domain mk:MemeTemplate ;
+    rdfs:range mk:Image ;
+    rdfs:label "template image" ;
+    rdfs:comment "The template's blank image file (still templates only; an animated one's blank is a video)." .
+
+mk:imgflipPage a owl:ObjectProperty ;
+    rdfs:subPropertyOf rdfs:seeAlso ;
+    rdfs:domain mk:MemeTemplate ;
+    rdfs:label "imgflip page" ;
+    rdfs:comment "The template's page on imgflip — the same IRI IMKG's imgflip memes point to with imgflip:template." .
+
+mk:fileFormat a owl:DatatypeProperty ;
+    rdfs:domain mk:MemeTemplate ;
+    rdfs:label "file format" ;
+    rdfs:comment "The blank's file type as imgflip states it (jpg, png, or mp4 for an animated template)." .
+
+mk:templateScore a rdf:Property ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "template score" ;
+    rdfs:comment "How well the template fits the entry, 0 to 1 (annotates a quoted mk:hasTemplate triple): its name against the entry's title, its picture against the entry's own images, its search rank and whether imgflip features it; 1.0 when the entry itself links to it. Not a probability." .
+
+mk:templateMatch a rdf:Property ;
+    rdfs:label "template match" ;
+    rdfs:comment "Why the template was kept for the entry: kym_reference (the entry's own Know Your Meme page links to it) or search (found by searching imgflip for the entry's title)." .
+
+mk:depictionKind a rdf:Property ;
+    rdfs:label "depiction kind" ;
+    rdfs:comment "What the image region a Wikidata item was read from shows: person, character, animal, object, text, logo, artwork or other (annotates a quoted m4s:fromImage triple)." .
+
+mk:boundingBox a rdf:Property ;
+    rdfs:label "bounding box" ;
+    rdfs:comment "Where in the template image the item was seen, as a W3C Media Fragments spatial fragment in percent: xywh=percent:x,y,width,height." .
+
+mk:detectedBy a rdf:Property ;
+    rdfs:subPropertyOf prov:wasGeneratedBy ;
+    rdfs:label "detected by" ;
+    rdfs:comment "The vision model that read the image region. Image entities are a model's reading, not a scraped fact." .
 
 # ---------------------------------------------------------------------------
 # Build provenance (describes the published graph, not the corpus)

@@ -266,7 +266,7 @@ class AuditTests(unittest.TestCase):
         m.update(mention_over)
         return {"mentions": [m], "mention_count": 1, "entity_count": 1,
                 "source_sha256": self.UNIT["source_sha256"], "linker_version": "1",
-                "lexicon_version": "v", "nlp_model": "m"}
+                "lexicon_version": "v", "nlp_model": "m", "senses_version": "none"}
 
     def test_a_faithful_record_is_clean(self):
         self.assertEqual(E.audit(self.record(), self.UNIT), [])
@@ -304,6 +304,106 @@ class AuditTests(unittest.TestCase):
     def test_an_unknown_field_or_method(self):
         self.assertTrue(E.audit(self.record(field="spread"), self.UNIT))
         self.assertTrue(E.audit(self.record(method="guess"), self.UNIT))
+
+
+SENSES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                      "kg_config", "entity_senses.yaml")
+
+
+class SenseFileTests(unittest.TestCase):
+    """The shipped kg_config/entity_senses.yaml loads, and says what it means."""
+
+    def test_the_shipped_file(self):
+        senses = E.load_senses(SENSES)
+        self.assertNotEqual(senses.version, "none")
+        self.assertEqual(senses.by_key["series"].instead, 7725310)
+        self.assertIn(170198, senses.by_key["series"].never)
+        self.assertIs(senses.by_key["games"], senses.by_key["game"])      # `also`
+        self.assertFalse(senses.by_key["sound"].link)
+
+    def test_absent_file_is_no_senses(self):
+        self.assertIs(E.load_senses(None), E.NO_SENSES)
+        self.assertIs(E.load_senses("/nonexistent.yaml"), E.NO_SENSES)
+
+    def test_guards(self):
+        s = E.Sense(unless_next=("of",))
+        text = "a series of videos. The series ended."
+        self.assertTrue(E.sense_blocks(s, text, 2, 8))
+        self.assertFalse(E.sense_blocks(s, text, 24, 30))
+        x = E.Sense(only_if_prev=("on", "twitter /"), only_if_next=("(formerly",))
+        for t, (a, b), blocked in [("viral on X today", (9, 10), False),
+                                   ("Twitter / X", (10, 11), False),
+                                   ("X (formerly Twitter)", (0, 1), False),
+                                   ("I Hate X", (7, 8), True),
+                                   ("Thanks for Not Saying X", (22, 23), True)]:
+            self.assertEqual(E.sense_blocks(x, t, a, b), blocked, t)
+
+    def test_a_malformed_qid_is_refused(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
+            fh.write("senses:\n  game:\n    never: [game]\n")
+        try:
+            with self.assertRaises(ValueError):
+                E.load_senses(fh.name)
+        finally:
+            os.unlink(fh.name)
+
+
+@unittest.skipUnless(MODEL, "spaCy / en_core_web_sm not installed")
+class SenseLinkingTests(unittest.TestCase):
+    """Linker 1.2.0 on the fixture lexicon with the shipped sense list."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        dump = write_dump(os.path.join(cls._tmp.name, "dump.json.gz"))
+        path = os.path.join(cls._tmp.name, "lexicon.sqlite")
+        wd.build_lexicon(dump, path, workers=0, progress=lambda _l: None)
+        cls.lexicon = wd.Lexicon(path)
+        cls.nlp = E.load_nlp()
+        cls.linker = E.Linker(cls.lexicon, cls.nlp, senses=E.load_senses(SENSES))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.lexicon.close()
+        cls._tmp.cleanup()
+
+    def link(self, about="", title="", tags=()):
+        unit = E.frame_unit({"url": "https://knowyourmeme.com/memes/zz-sense-test",
+                             "title": title, "tags": list(tags),
+                             "sections": [{"kind": "about", "text": [about]}]})
+        return {(m["field"], m["text"]): m["qid"] for m in self.linker.link(unit)["mentions"]}
+
+    def test_the_senses_stamp(self):
+        self.assertEqual(self.linker.stamps["senses_version"],
+                         E.load_senses(SENSES).version)
+
+    def test_a_series_of_links_nothing_and_the_series_is_the_works(self):
+        got = self.link("It is a series of videos. The series is popular.")
+        self.assertEqual(list(got.values()).count("Q7725310"), 1)
+        self.assertNotIn("Q170198", got.values())
+
+    def test_game_is_a_video_game(self):
+        self.assertEqual(self.link("The game was released in the spring.")[("about", "game")],
+                         "Q7889")
+        self.assertEqual(self.link(tags=["games"])[("tag", "games")], "Q7889")
+
+    def test_a_rejected_literal_key_no_longer_hides_the_lemma(self):
+        got = self.link("Graphics in video games improved.")
+        self.assertEqual(got.get(("about", "video games")), "Q7889")
+        self.assertNotIn(("about", "games"), got)
+
+    def test_x_only_where_it_is_the_platform(self):
+        got = self.link("The post went viral on X, formerly Twitter.", title="I Hate X")
+        self.assertEqual(got.get(("about", "X")), "Q918")
+        self.assertNotIn(("title", "X"), got)
+
+    def test_without_senses_the_old_behaviour(self):
+        plain = E.Linker(self.lexicon, self.nlp)
+        unit = E.frame_unit({"url": "https://knowyourmeme.com/memes/zz-sense-test",
+                             "title": "", "tags": [],
+                             "sections": [{"kind": "about", "text": ["The series is long."]}]})
+        self.assertIn("Q170198", {m["qid"] for m in plain.link(unit)["mentions"]})
+        self.assertEqual(plain.stamps["senses_version"], "none")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "The entity-curation judge's answer",
+  "description": "One ROLE per numbered candidate item of ONE frame (modules/kg/curation.py): subject, source, format and platform are kept; incidental and wrong_sense are dropped. The judge may only classify the items it was shown — it can add nothing. Handed to Ollama as the format= grammar (with `n` narrowed to that call's numbers) and checked again with jsonschema. Editing this file re-asks every frame.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "items"
+  ],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "n",
+          "role"
+        ],
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "role": {
+            "enum": [
+              "subject",
+              "source",
+              "format",
+              "platform",
+              "incidental",
+              "wrong_sense"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

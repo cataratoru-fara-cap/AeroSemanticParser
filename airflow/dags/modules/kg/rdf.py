@@ -118,9 +118,14 @@ PREFIXES: dict[str, str] = {
     # 6.1.0: the linked entities' own IRIs (kg/wikidata.WD_ENTITY). Objects
     # only — MemeAtlas never uses a wd: term as a predicate or a class.
     "wd": "http://www.wikidata.org/entity/",
+    # 6.4.0: IMKG's imgflip vocabulary (imgflip/mappings/imgflip.yaml in its
+    # repository), for imgflip:templateId — the key IMKG's 1.3M imgflip memes
+    # carry, so the two graphs join on it.
+    "imgflip": "https://imgflip.com/",
 }
 M4S, MK, KYM, KYMT = (PREFIXES[p] for p in ("m4s", "mk", "kym", "kymt"))
 WD = PREFIXES["wd"]
+IMGFLIP = PREFIXES["imgflip"]
 SKOS, RDFS, RDF, XSD = (PREFIXES[p] for p in ("skos", "rdfs", "rdf", "xsd"))
 
 TYPES_BASE = KYMT
@@ -177,6 +182,9 @@ NODE_CLASSES: dict[str, tuple[str, ...]] = {
     # 6.1.0. Deliberately EMPTY, not absent: the node still gets its label
     # (NODE_LITERALS below), but no rdf:type — see the module docstring.
     "wikidata_entity": (),
+    # 6.4.0. IMKG types no template; MemeAtlas mints the class (aligned to
+    # schema:CreativeWork in memeatlas.ttl, not emitted — mk:Image's rule).
+    "template": (MK + "MemeTemplate",),
 }
 
 # node kind -> (property, predicate, datatype | None). A list-valued
@@ -250,6 +258,14 @@ NODE_LITERALS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
     "wikidata_entity": (
         ("label", RDFS + "label", None),
     ),
+    # 6.4.0. imgflip:templateId is IMKG's term, a plain literal as IMKG
+    # writes it (a typed one would not equal IMKG's in a SPARQL join).
+    "template": (
+        ("label", RDFS + "label", None),
+        ("template_id", IMGFLIP + "templateId", None),
+        ("alt_names", SKOS + "altLabel", None),
+        ("file_format", MK + "fileFormat", None),
+    ),
 }
 
 # edge type -> (predicate, object is a literal?, inverse predicate | None)
@@ -279,6 +295,16 @@ EDGE_PREDICATES: dict[str, tuple[str, bool, str | None]] = {
     "fromTitle": (MK + "fromTitle", False, None),
     "fromTags": (M4S + "fromTags", False, None),
     "fromAbout": (M4S + "fromAbout", False, None),
+    # 6.4.0. frame -> template, and IMKG's m4s:templateOf (declared in its
+    # mapping, template -> frame) as the inverse, both emitted — the
+    # partOfSeries pattern. The occurrences annotate the frame's triple.
+    "hasTemplate": (MK + "hasTemplate", False, M4S + "templateOf"),
+    # From the template: its blank image (not mk:hasImage, whose domain is
+    # m4s:MediaFrame), its imgflip page, and — IMKG's own predicate for an
+    # image's Wikidata entities — what the image shows.
+    "templateImage": (MK + "templateImage", False, None),
+    "imgflipPage": (MK + "imgflipPage", False, None),
+    "fromImage": (M4S + "fromImage", False, None),
     # coOccursWith is NOT here (5.0.1): entry_type's statistical edges were
     # removed (needless alongside its curated subTypeOf hierarchy), and
     # tags — the only remaining source — have no RDF resource to attach a
@@ -304,6 +330,14 @@ OCCURRENCE_PREDICATES: dict[str, tuple[str, str | None]] = {
     "link_score": (MK + "linkScore", XSD_DECIMAL),
     "link_method": (MK + "linkMethod", None),
     "ner_label": (MK + "nerLabel", None),
+    # 6.4.0, on the quoted hasTemplate / fromImage edge.
+    "template_score": (MK + "templateScore", XSD_DECIMAL),
+    "template_match": (MK + "templateMatch", None),
+    "depiction_kind": (MK + "depictionKind", None),
+    "bounding_box": (MK + "boundingBox", None),
+    "detected_by": (MK + "detectedBy", None),
+    # 6.5.0, on the quoted fromTitle / fromTags / fromAbout edge.
+    "relevance_basis": (MK + "relevanceBasis", None),
 }
 
 # Triples describing the build rather than the corpus. The RML path has no
@@ -360,6 +394,8 @@ def node_iri(node_id: str) -> str:
         return node_id[len("image:"):]
     if node_id.startswith("wd:"):
         return WD + node_id[len("wd:"):]
+    if node_id.startswith("template:"):
+        return MK + "template/" + node_id[len("template:"):]
     return node_id
 
 

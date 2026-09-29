@@ -640,6 +640,14 @@ class Lexicon:
             out |= self.ancestors(t)
         return frozenset(out)
 
+    def parents(self, qid: int) -> frozenset[int]:
+        """The classes ``qid`` is DIRECTLY a subclass of (P279, one hop) —
+        for rules that must not trust the whole closure: Wikidata's upper
+        ontology is tangled enough that "image macro" and "catchphrase"
+        reach "mathematical concept" (kg/curation.py, 2026-09-29)."""
+        return frozenset(p for (p,) in self._db.execute(
+            "SELECT parent FROM subclass WHERE qid = ?", (qid,)))
+
 
 def prior(sitelinks: int, saturation: int = 150) -> float:
     """Popularity in [0, 1]: log Wikipedia count, saturating at

@@ -49,6 +49,15 @@ jsonschema>=4.26         # kg/events.py validates model output against the
 spacy>=3.8,<3.9          # kg/entities.py: tokenizer, tagger, parser, NER
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 
+# Template layer (kym_templates / kym_template_entities, 6.4.0): Pillow
+# decodes imgflip thumbnails and KYM images for the perceptual hashes that
+# find near-duplicate templates (kg/visual.py — the pHash/dHash are written
+# there on numpy + scipy, so no imagehash package), and prepares images for
+# the vision model. Pinned EXACTLY: Pillow's resampling filters feed every
+# hash, and kg/visual.VISUAL_VERSION carries Pillow's version, so an upgrade
+# re-hashes everything (from the thumbnails kept on disk, not re-fetched).
+Pillow==12.3.0
+
 # RML validation path only (kym_kg_validate). The product RDF is serialized
 # in-process by kg/rdf.py with no dependency at all; these two exist to
 # re-derive the same graph independently through the YARRRML mapping and

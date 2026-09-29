@@ -61,6 +61,9 @@ Neo4j and Mongo) to its RDF term.
 | edge `partOfSeries` | `skos:broader` plus the inverse `skos:narrower` | `series_parent` |
 | edge `fromAbout` (6.1.0) | `m4s:fromAbout` → a Wikidata item | entities recognised in the About section (see [Entities](#entities-linked-to-wikidata-as-imkg-did-61)) |
 | edge `fromTags` (6.1.0) | `m4s:fromTags` → a Wikidata item | `tags`, each looked up whole |
+| edge `hasTemplate`, inverse (6.4.0) | `m4s:templateOf` (template → frame; IMKG's mapping) | `frame_templates.selected` (see [Templates](#templates-imgflip-beyond-imkg-640)) |
+| `template.template_id` (6.4.0) | `imgflip:templateId` (a plain literal, as IMKG writes it) | imgflip's id |
+| edge `fromImage` (6.4.0) | `m4s:fromImage` → a Wikidata item | what a template's image shows (`template_entities`) |
 
 ### MemeAtlas extensions
 
@@ -102,6 +105,10 @@ Neo4j and Mongo) to its RDF term.
 | edge `eventImage` (6.0.0) | `mk:eventImage` | ⊑ `schema:image` | a photo shown right after a paragraph narrating the event |
 | node `wikidata_entity` (6.1.0) | `<http://www.wikidata.org/entity/Q…>` with its `rdfs:label`; **no class** | | the `entities` collection (see [Entities](#entities-linked-to-wikidata-as-imkg-did-61)) |
 | edge `fromTitle` (6.1.0) | `mk:fromTitle` → a Wikidata item | | entities recognised in the title, or the item whose KYM slug (P13484) is this page |
+| node `template` (6.4.0) | `mk:template/<imgflip id> a mk:MemeTemplate`; `rdfs:label`; `skos:altLabel`; `mk:fileFormat` | `mk:MemeTemplate` ⊑ `schema:CreativeWork` | `imgflip_templates` (name, "also called" names, format) |
+| edge `hasTemplate` (6.4.0) | `mk:hasTemplate` (frame → template), emitted with IMKG's `m4s:templateOf` back | `owl:inverseOf m4s:templateOf` | `frame_templates.selected` |
+| edge `templateImage` (6.4.0) | `mk:templateImage` → `mk:Image` | ⊑ `schema:image` | the blank image (still templates only) |
+| edge `imgflipPage` (6.4.0) | `mk:imgflipPage` → the imgflip page | ⊑ `rdfs:seeAlso` | the `/meme/` URL IMKG's imgflip memes point to |
 
 
 ### `category` (5.0.0): no further work
@@ -156,6 +163,13 @@ annotation on the quoted edge:
 | `link_score` (6.1.0) | `mk:linkScore` (`xsd:decimal`) | `link_scores` (`-1.0` = absent) | `fromTitle`, `fromTags`, `fromAbout` | the linker's score, 0–1 |
 | `link_method` (6.1.0) | `mk:linkMethod` | `link_methods` | `fromTitle`, `fromTags`, `fromAbout` | how the span was found (`kym_id`, `title`, `tag`, `ner`, `propn`, `noun_chunk`) |
 | `ner_label` (6.1.0) | `mk:nerLabel` | `ner_labels` | `fromTitle`, `fromTags`, `fromAbout` | the spaCy entity type, when there was one |
+| `relevance_basis` (6.5.0) | `mk:relevanceBasis` | `relevance_bases` | `fromTitle`, `fromTags`, `fromAbout` | why curation kept the link: `title`, `own_item`, `platform`, `format`, `title_agrees`, `tag_and_text`, `tag_named`, `judge` |
+| `template_score` (6.4.0) | `mk:templateScore` (`xsd:decimal`) | `template_scores` (`-1.0` = absent) | `hasTemplate` | how well the template fits the frame, 0–1 (1.0 = the frame's own KYM link) |
+| `template_match` (6.4.0) | `mk:templateMatch` | `template_matches` | `hasTemplate` | `kym_reference` or `search` |
+| `mention_text`, `link_score`, `link_method` (6.4.0) | as above | as above | `fromImage` | the region's name (or its printed text), the linker's score, `vlm_named` / `vlm_generic` / `frame_agree` / `ner` / `propn` / `title` |
+| `depiction_kind` (6.4.0) | `mk:depictionKind` | `depiction_kinds` | `fromImage` | person, character, animal, object, text, logo, artwork, other |
+| `bounding_box` (6.4.0) | `mk:boundingBox` | `bounding_boxes` | `fromImage` | the region, `xywh=percent:x,y,w,h` (W3C Media Fragments) |
+| `detected_by` (6.4.0) | `mk:detectedBy` ⊑ `prov:wasGeneratedBy` | `detected_bys` | `fromImage` | the vision model that read it |
 
 - Neo4j lists are aligned by position: entry *i* of every list is the same
   mention. A missing value is `""`, or `-1` for `citation_indexes`, because a
@@ -282,6 +296,19 @@ inside morph-kgc). It is minted once, in `kg/events.py`, and stored.
    no Wikidata dump or query uses. With the entity IRI, a federated
    `SERVICE <https://query.wikidata.org/sparql>` joins with no rewriting.
    The predicates, `m4s:fromAbout` and `m4s:fromTags`, are IMKG's own.
+8. **Frame and template are linked with `m4s:templateOf` and
+   `mk:hasTemplate`, never `m4s:sameAs`** (6.4.0). IMKG's mapping declares
+   `<template> m4s:templateOf <frame>`, but its published `linkage.nt`
+   writes `<frame> m4s:sameAs <template>` — a template is not the same thing
+   as a media frame, so MemeAtlas follows the mapping, and emits the
+   inverse too.
+9. **A template may belong to several frames** (6.4.0; Gabi, 2026-09-28).
+   IMKG gave each template exactly one frame. Here each frame that selects
+   a template has its own edge, with its own `mk:templateScore`.
+10. **Templates get MemeAtlas IRIs** (6.4.0): `mk:template/<imgflip id>`,
+   not the imgflip page URL IMKG's memes point to. The page is linked
+   (`mk:imgflipPage`) and IMKG's `imgflip:templateId` is kept as a plain
+   literal, so both graphs still join — on the id, or in one hop.
 
 ## Events: drawn from EventKG, not copied from it
 
@@ -345,7 +372,14 @@ How a link is made (`kg/entities.py` has the reasoning at length):
   adds its lead over the runner-up. Under `MIN_LINK_SCORE` (0.45) nothing
   is linked; at that line about 82% of links name the right item (hand
   judged per score band, `kg/entities.py`). Whether the item MATTERS to
-  the meme is a separate question, not yet answered (gap 09).
+  the meme is a separate question — [Curation](#curation-only-relevant-links-650).
+- **Senses** (1.2.0). A curated list, `kg_config/entity_senses.yaml`,
+  corrects the hubs the ranker gets wrong: "series" is a series of creative
+  works, never the maths series, and "a series of" links nothing; "game" is
+  a video game; "X" is Twitter only where the text says so ("on X", "X
+  (formerly Twitter)") and never the snowclone placeholder; "sound" and
+  "number" link nothing. The file's hash is a linker stamp, so editing it
+  re-links.
 - **Grounded.** Every mention stores the exact characters it came from;
   `audit()` refuses a record that does not match its page.
 
@@ -356,24 +390,110 @@ else. The node exists in Mongo and Neo4j with its description too.
 
 These links are **derived** — a linker's reading, like events — and
 recall-oriented: a common noun links as readily as a name ("hair",
-"mug"). Which links matter to the meme is the next task, gap 09.
+"mug"). The graph carries only the ones curation keeps.
 
 The pipeline is its own stage, `kym_entities`, between parse and events:
 `kg/entities.py` over the lexicon at `WIKIDATA_LEXICON` → the `entities`
 collection (`modules/entity_store.py`, one doc per frame, with every
-link's features for curation) → `kg/build.py` as data.
+link's features for curation) → `kym_entity_curation` → `kg/build.py` as
+data.
+
+### Curation: only relevant links (6.5.0)
+
+IMKG emitted every Spotlight annotation above its confidence threshold.
+MemeAtlas links more (noun chunks, not only names), and most of what it
+links is incidental — *popularity*, *man*, *face*, *television program*.
+6.5.0 emits a link only when it is **relevant** to the meme: its subject,
+the people, characters or things it shows; a source work, franchise, game
+or event; the kind of meme it is (image macro, copypasta, snowclone…); or
+a platform or community it came from or spread on. The rest stay in Mongo
+with their verdict — never deleted, only not emitted.
+
+Title links are always kept. About and tag links go through two steps
+(`kg/curation.py`, stage `kym_entity_curation`, collection
+`entity_curation`); the basis of each kept link is `mk:relevanceBasis`:
+
+1. **Local rules**, first match wins, over `kg_config/entity_curation.yaml`
+   and the lexicon's P31/P279:
+
+   | Rule | Verdict (basis) |
+   |---|---|
+   | the title field; the item is this meme (KYM slug, or the entry's own item) | keep (`title`, `own_item`) |
+   | a listed non-topic item (popularity, time, word, Wikipedia…) | drop |
+   | a platform: listed, or an instance of a platform class, through the whole class tree | keep (`platform`) |
+   | a meme format (image macro, reaction image, copypasta, snowclone, parody …) | keep (`format`) |
+   | the title also links it | keep (`title_agrees`) |
+   | both a tag and the About link it | keep (`tag_and_text`) |
+   | an About mention of a DIRECT instance/subclass of a denied class (anatomy, measure, mathematical concept) | drop |
+   | a whole tag whose item has a capitalised label — a name, by Wikidata's convention of lower-case common nouns | keep (`tag_named`) |
+   | an About mention of a generic word ("image", "social media", "man", "TikToker", "United States") | drop |
+   | anything else | the judge |
+
+   Denied classes match on direct parents only: Wikidata's upper ontology
+   is tangled enough that *image macro* is, a few hops up, a "measure".
+
+2. **An LLM judge** reads the entry (title, tags, Origin, About) and the
+   numbered undecided items — each with its description and the sentence
+   it was read from — and gives each a ROLE: `subject`, `source`,
+   `format`, `platform` (kept) or `incidental`, `wrong_sense` (dropped),
+   under a JSON schema that requires every number exactly once
+   (`kg_config/entity_curation_schema.json`). The judge is
+   ministral-3:14b; an item read only from the About that it keeps is
+   kept only if the same model, asked again with a differently worded
+   prompt, keeps it too — two readings agreeing drop most of what one
+   keeps by chance. Chosen by two bake-offs and a review of the live run
+   (`kg/curation.py` has the tables): projected over the corpus, kept
+   0.875 relevant, dropped 0.126 relevant. Verdicts and roles are
+   stored per item with the models, digests and prompt version; a rule
+   edit never re-asks.
+
+Until a frame's judge has answered, only its rule-kept links reach the
+graph. A frame whose links changed since it was curated (a re-link)
+falls back to its title links until the rules run again.
+
+## Templates: imgflip, beyond IMKG (6.4.0)
+
+IMKG's imgflip layer is **meme instances**: it scraped the memes users made
+from imgflip's 1,765 most-used templates (1.3M memes, each with
+`imgflip:templateId` and `imgflip:template` → the template's `/meme/` page),
+and linked templates to KYM frames mostly by hand — Wikidata's P6760 for
+276 seeds, 326 KYM → imgflip links filtered by hand, difflib title matches
+at ≥ 0.85, and manual mapping: 96 frames ↔ 241 templates. It never
+described the templates themselves, and never read their images.
+
+| IMKG | MemeAtlas 6.4.0 |
+|---|---|
+| Meme instances, top templates only | **Blank templates**, found per frame by searching imgflip with its title (`kym_templates`) |
+| Frame ↔ template by hand and difflib ≥ 0.85 | **Scored**: name (difflib and ordered word containment), the template's picture against the frame's own KYM images, search rank, imgflip's featured flag; the frame's own KYM "Meme Generator" link is ground truth. Tuned and measured on contact sheets (`kg/templates.py`) |
+| — | **Near-identical uploads are one template** (perceptual hashes, `kg/visual.py`); the representative is imgflip's featured upload, else the oldest |
+| — | **0, or 1 to 10 per frame, most varied first** — Gabi's minimum and maximum; "nothing fits" is recorded with its reason |
+| `m4s:templateOf` (mapping) / `m4s:sameAs` (data) | `m4s:templateOf` and `mk:hasTemplate` — Deliberate difference 8 |
+| One frame per template | Several — Deliberate difference 9 |
+| Template IRI = its imgflip page | `mk:template/<id>` + `imgflip:templateId` + `mk:imgflipPage` — Deliberate difference 10 |
+| Google Vision on the KYM frame image → `m4s:fromImage` | The lab's vision model (qwen3-vl:32b) on the **template** image → `m4s:fromImage`, each region annotated with what it depicts, where (`mk:boundingBox`) and which model read it (`mk:detectedBy`) |
+
+Like events and entity links, `m4s:fromImage` here is **derived** — a
+model's reading. Only every named entity, printed text, and the three
+largest generic regions per template reach the graph; the rest stays in
+`template_entities` for curation (gap 09's problem, for images). What is
+**never** emitted: the dropped near-duplicate uploads, candidates that were
+not kept, imgflip popularity, and the featured flag (property graph only).
+
+`mk:template/<id>` is the graph's second minted IRI for derived content,
+after `mk:event/<id>`, and falls under gap 01 (the `mk:` namespace needs
+IMKG's authors' agreement) like every other `mk:` term.
 
 ## Not yet modelled
 
-- **Curation of the entity layer** (gap 09). Every recognised entity is
-  linked; incidental common nouns dominate the About links.
+- **The frame's own image entities** (IMKG's actual `m4s:fromImage` use:
+  Google Vision on the KYM frame image). 6.4.0 reads imgflip templates; the
+  same extractor could read each frame's og:image — about 18k more calls.
 - **Wikidata statements between linked items.** IMKG added the Wikidata
   edges between the items in its graph (KGTK over dumps). The lexicon has
   P31/P279 already; the rest would need the claims table from the same
   dump, and a decision about which properties are worth importing.
 - **Entities from Origin/Spread, and event actors as items.** Only title,
   tags and About are linked; `mk:eventActor` stays a literal.
-- **Image entities** (IMKG's `m4s:fromImage`, from Google Vision).
 
 - **Cross-frame event identity.** Two entries narrating the same real
   happening get two `mk:Event` IRIs. See the EventKG table above for why,
@@ -429,3 +549,7 @@ link's features for curation) → `kg/build.py` as data.
 | Every entity mention is the page's own words at its offsets; the KYM-slug item wins; context separates senses; an NER label never vetoes | `tests/test_kg_entities.py` |
 | A Wikidata item is an object only — never typed, never a predicate — and `fromAbout`/`fromTags` are IMKG's own | `tests/test_kg_vocabulary.py` |
 | A re-link replaces a frame's mentions; every staleness stamp re-queues on its own | `tests/test_entity_store.py` |
+| A template's two directions and IMKG's terms; the template IRI | `tests/test_kg_vocabulary.py` |
+| Template nodes, edges and annotations; a template two frames chose is emitted identically; the build reads at its snapshot | `tests/test_kg_template_graph.py` |
+| Duplicates: resize, re-encode, mirror and letterboxing are one picture, no chaining; selection is 0 or 1–10 | `tests/test_kg_visual.py`, `tests/test_kg_templates.py` |
+| Every image region stored is a real box with a real name; the blind audit's arithmetic; what reaches the graph | `tests/test_kg_template_entities.py` |

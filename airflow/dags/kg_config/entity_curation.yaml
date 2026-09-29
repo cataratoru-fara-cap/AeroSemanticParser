@@ -1,0 +1,141 @@
+# Curation rules for the entity layer (modules/kg/curation.py; gap 09).
+#
+# Every Wikidata item linked from a frame's About or tags is either KEPT or
+# DROPPED for the knowledge graph (everything stays in Mongo). Rules decide
+# the clear cases, in this order, first match wins:
+#    1. linked from the title, or the frame's own item        -> keep
+#    2. deny_items                                            -> drop
+#    3. platform_items, or a class in platform_classes        -> keep
+#    4. format_items                                          -> keep
+#    5. also linked from the title                            -> keep
+#    6. linked from both a tag AND the About                  -> keep
+#    7. an About mention of a DIRECT class in deny_classes    -> drop
+#    8. a whole tag whose item's label is capitalised         -> keep
+#    9. an About mention of a generic_items item              -> drop
+#   10. anything else                                         -> the LLM judge
+# Platform classes match through the whole class tree (the P279 closure of
+# the item's P31 types, plus its own P279 closure: t-shirt has no P31);
+# deny classes match on direct classes only (curation.ClassIndex says why).
+#
+# Gabi (2026-09-28): platforms and communities are relevant and are kept by
+# rule, without asking the judge. Umbrella concepts like "internet meme" go
+# to the judge. Class labels are written here because many class items are
+# not in the lexicon (no Wikipedia article).
+#
+# 2026-09-29 (curation 1.1.0), from the first review (200 links read) and
+# the judge's first 6,260 frames: the judge kept generic words used in
+# passing ("image", "social media", "man") about a third of the time and
+# dropped relevant ones, and the anatomy class dropped tags ("muscles") and
+# body parts the title names. So: meme formats are kept by rule, generic
+# words met only in the About are dropped by rule (the title and tags still
+# keep them, rules 5, 6, 8), and denied classes apply to the About only,
+# after the title and tags have had their say.
+#
+# This file's sha256 is a curation stamp: editing it re-curates every frame
+# (rules only — the judge's verdicts are kept per item and not re-asked).
+
+platform_classes:
+  - {qid: Q6576792,   label: online community}
+  - {qid: Q3220391,   label: social networking service}
+  - {qid: Q559856,    label: online video platform}
+  - {qid: Q984179,    label: imageboard}
+  - {qid: Q2721136,   label: image hosting service}
+  - {qid: Q3963243,   label: social news website}
+  - {qid: Q122759350, label: user-generated content platform}
+  - {qid: Q92438,     label: microblogging}
+  - {qid: Q102336293, label: live streaming service}
+  - {qid: Q59152282,  label: video streaming service}
+  # NOT "website" (Q35127): it covers BuzzFeed, Kotaku and The Verge, cited
+  # as sources. NOT "very large online platform": it covers Wikipedia.
+
+platform_items:
+  # platforms whose Wikidata classes miss every class above
+  - {qid: Q15718485,  label: Twitter, rationale: "P31 is 'overview' and 'management' (2026-09 dump)"}
+  - {qid: Q4555537,   label: Twitch}
+  - {qid: Q22907849,  label: Discord}
+  - {qid: Q3700238,   label: Vine}
+  - {qid: Q117084855, label: Kick}
+  - {qid: Q97573363,  label: iFunny}
+  - {qid: Q99438379,  label: YouTube Shorts}
+
+deny_classes:
+  # classes whose members are never what a meme is about — kept short on
+  # purpose; everything uncertain goes to the judge
+  - {qid: Q112826905, label: class of anatomical entity, rationale: "face, hand, eye, hair, vein: the picture being described"}
+  - {qid: Q39875001,  label: measure, rationale: "popularity"}
+  - {qid: Q24034552,  label: mathematical concept, rationale: "number, shape, the maths senses of series/image"}
+
+deny_items:
+  - {qid: Q1357284, label: popularity, rationale: "'rose in popularity': 1,153 mentions, all incidental"}
+  - {qid: Q11471,   label: time, rationale: "'at the time', 'over time'"}
+  - {qid: Q8171,    label: word, rationale: "'the word X': the word itself is the frame's own item"}
+  - {qid: Q1969448, label: term, rationale: "'the term X refers to'"}
+  - {qid: Q170198,  label: series (mathematics), rationale: "belt and braces over entity_senses.yaml"}
+  - {qid: Q52,      label: Wikipedia, rationale: "cited as a source, not a platform memes spread on"}
+
+format_items:
+  # the kind of meme a thing is — Gabi's "format / genre concepts"; the
+  # judge kept these nearly always (image macro 497:2, reaction image 234:0)
+  - {qid: Q6002242,  label: image macro}
+  - {qid: Q96754318, label: reaction image}
+  - {qid: Q1030329,  label: viral video}
+  - {qid: Q2338287,  label: snowclone}
+  - {qid: Q60738916, label: copypasta}
+  - {qid: Q2708515,  label: catchphrase}
+  - {qid: Q170539,   label: parody}
+  - {qid: Q1053619,  label: fan art}
+  - {qid: Q214272,   label: remix}
+  - {qid: Q3002431,  label: creepypasta}
+  - {qid: Q1572966,  label: rage comic}
+  - {qid: Q28135014, label: shitposting}
+  - {qid: Q48445,    label: mashup}
+
+generic_items:
+  # words for media, people and discourse that the About uses in passing
+  # ("a series of images", "a TikToker posted", "the man in the video").
+  # Dropped ONLY for About mentions the title, the tags and the other rules
+  # did not keep; a tag naming one still goes to the judge.
+  # media and content
+  - {qid: Q478798,   label: image}
+  - {qid: Q125191,   label: photograph}
+  - {qid: Q34508,    label: video recording}
+  - {qid: Q208594,   label: screenshot}
+  - {qid: Q35127,    label: website}
+  - {qid: Q202833,   label: social media}
+  - {qid: Q7725310,  label: series of creative works}
+  - {qid: Q95074,    label: character}
+  - {qid: Q1185607,  label: scene}
+  - {qid: Q1192650,  label: footage}
+  - {qid: Q12303449, label: caption}
+  - {qid: Q1260632,  label: content}
+  - {qid: Q2183753,  label: post}
+  - {qid: Q15328,    label: camera}
+  - {qid: Q289,      label: television}
+  # people and roles
+  - {qid: Q8441,     label: man}
+  - {qid: Q467,      label: woman}
+  - {qid: Q3031,     label: girl}
+  - {qid: Q3010,     label: boy}
+  - {qid: Q7569,     label: child}
+  - {qid: Q2472587,  label: people}
+  - {qid: Q215627,   label: person}
+  - {qid: Q94791573, label: TikToker}
+  - {qid: Q17125263, label: YouTuber}
+  - {qid: Q278368,   label: user}
+  - {qid: Q5276395,  label: gamer}
+  - {qid: Q33999,    label: actor}
+  - {qid: Q2906862,  label: influencer}
+  - {qid: Q193432,   label: fan}
+  - {qid: Q211198,   label: audience}
+  # places, nations, languages
+  - {qid: Q846570,   label: Americans}
+  - {qid: Q30,       label: United States}
+  - {qid: Q161652,   label: Japanese people}
+  - {qid: Q1860,     label: English}
+  # discourse
+  - {qid: Q177634,   label: community}
+  - {qid: Q22855,    label: consumer}
+  - {qid: Q3030248,  label: discussion}
+  - {qid: Q179875,   label: debate}
+  - {qid: Q1318295,  label: narrative}
+  - {qid: Q1433373,  label: other}

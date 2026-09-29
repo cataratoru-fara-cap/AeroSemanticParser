@@ -192,6 +192,14 @@ _OCCURRENCE_LISTS: dict[str, tuple[str, Any]] = {
     "link_score": ("link_scores", -1.0),
     "link_method": ("link_methods", ""),
     "ner_label": ("ner_labels", ""),
+    # 6.4.0, on hasTemplate / fromImage.
+    "template_score": ("template_scores", -1.0),
+    "template_match": ("template_matches", ""),
+    "depiction_kind": ("depiction_kinds", ""),
+    "bounding_box": ("bounding_boxes", ""),
+    "detected_by": ("detected_bys", ""),
+    # 6.5.0, on the entity edges.
+    "relevance_basis": ("relevance_bases", ""),
 }
 assert set(_OCCURRENCE_LISTS) == set(OCCURRENCE_FIELDS), (
     "loaders.py's occurrence list table drifted from build.OCCURRENCE_FIELDS")

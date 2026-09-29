@@ -72,7 +72,10 @@ x-airflow-common:
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
     AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
     AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
-    AIRFLOW__CELERY__WORKER_CONCURRENCY: '4'
+    # 8 since 2026-09-29 (was 4): the curation judge, the template search,
+    # the template reader and the event extraction run side by side, each
+    # one or two tasks at a time and all waiting on the network or a model.
+    AIRFLOW__CELERY__WORKER_CONCURRENCY: '8'
     AIRFLOW__CELERY__WORKER_PREFETCH_MULTIPLIER: '1'
     # yamllint disable rule:line-length
     # Use simple http server on scheduler for health checks
@@ -105,6 +108,25 @@ x-airflow-common:
     # Absent lexicon = kym_entities links nothing and says so.
     WIKIDATA_LEXICON: ${WIKIDATA_LEXICON:-/opt/airflow/data/wikidata/lexicon.sqlite}
     KG_ENTITIES_SPACY_MODEL: ${KG_ENTITIES_SPACY_MODEL:-en_core_web_sm}
+    # --- Template stages (kym_templates, kym_template_entities; KG 6.4.0) ---
+    MONGODB_IMGFLIP_PAGES_COLLECTION: ${MONGODB_IMGFLIP_PAGES_COLLECTION:-imgflip_pages}
+    MONGODB_IMGFLIP_TEMPLATES_COLLECTION: ${MONGODB_IMGFLIP_TEMPLATES_COLLECTION:-imgflip_templates}
+    MONGODB_FRAME_TEMPLATES_COLLECTION: ${MONGODB_FRAME_TEMPLATES_COLLECTION:-frame_templates}
+    MONGODB_TEMPLATE_ASSIGNMENTS_COLLECTION: ${MONGODB_TEMPLATE_ASSIGNMENTS_COLLECTION:-template_assignments}
+    MONGODB_TEMPLATE_ENTITIES_COLLECTION: ${MONGODB_TEMPLATE_ENTITIES_COLLECTION:-template_entities}
+    MONGODB_TEMPLATE_ENTITY_FAILURES_COLLECTION: ${MONGODB_TEMPLATE_ENTITY_FAILURES_COLLECTION:-template_entity_failures}
+    MONGODB_ENTITY_CURATION_COLLECTION: ${MONGODB_ENTITY_CURATION_COLLECTION:-entity_curation}
+    MONGODB_ENTITY_CURATION_FAILURES_COLLECTION: ${MONGODB_ENTITY_CURATION_FAILURES_COLLECTION:-entity_curation_failures}
+    # Thumbnails and blank images (content-addressed; kept so a new hash
+    # re-runs offline).
+    TEMPLATE_DATA_DIR: /opt/airflow/data/templates
+    # imgflip is fetched directly, politely; ScrapingAnt only once imgflip
+    # refuses us (auto), at most this many credits per task. See
+    # modules/imgflip_client.py. IMGFLIP_CONTACT is appended to the user agent.
+    IMGFLIP_CONTACT: ${IMGFLIP_CONTACT:-}
+    IMGFLIP_TRANSPORT: ${IMGFLIP_TRANSPORT:-auto}
+    IMGFLIP_HTML_DELAY_S: ${IMGFLIP_HTML_DELAY_S:-}
+    IMGFLIP_SCRAPINGANT_MAX_CREDITS: ${IMGFLIP_SCRAPINGANT_MAX_CREDITS:-}
     # Build directories (data/ is bind-mounted) and the tracked curated inputs.
     KG_DATA_DIR: /opt/airflow/data/kg
     KG_CONFIG_DIR: /opt/airflow/dags/kg_config
@@ -137,6 +159,24 @@ x-airflow-common:
     KG_EVENTS_MODEL: ${KG_EVENTS_MODEL:-}
     KG_EVENTS_TIER: ${KG_EVENTS_TIER:-}
     KG_EVENTS_SPECIALIZATION: ${KG_EVENTS_SPECIALIZATION:-}
+    # What kg/template_entities.py reads template images with (default
+    # qwen3-vl:32b; Gabi's choice, 2026-09-28).
+    KG_TEMPLATES_VLM_MODEL: ${KG_TEMPLATES_VLM_MODEL:-}
+    KG_TEMPLATES_VLM_TIER: ${KG_TEMPLATES_VLM_TIER:-}
+    KG_TEMPLATES_VLM_SPECIALIZATION: ${KG_TEMPLATES_VLM_SPECIALIZATION:-}
+    # Template readers at a time: one per host serving the model (1 while only
+    # ollama-ccdd has qwen3-vl:32b; 2 once ollama-ui has it too).
+    KG_TEMPLATES_VLM_PARALLEL: ${KG_TEMPLATES_VLM_PARALLEL:-1}
+    # The entity-curation judge (kg/curation.py; defaults chosen by the
+    # bake-offs, gap 09: ministral-3:14b, and ministral-3:14b again with the
+    # confirming prompt).
+    KG_CURATION_MODEL: ${KG_CURATION_MODEL:-}
+    KG_CURATION_TIER: ${KG_CURATION_TIER:-}
+    KG_CURATION_SPECIALIZATION: ${KG_CURATION_SPECIALIZATION:-}
+    # ...and the second model that must agree before an About-only link is kept.
+    KG_CURATION_CONFIRM_MODEL: ${KG_CURATION_CONFIRM_MODEL:-}
+    KG_CURATION_CONFIRM_TIER: ${KG_CURATION_CONFIRM_TIER:-}
+    KG_CURATION_CONFIRM_SPECIALIZATION: ${KG_CURATION_CONFIRM_SPECIALIZATION:-}
 
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
@@ -319,7 +359,10 @@ services:
     # stalled at the limit; kym_kg_validate now caps it at 4 processes
     # (1.21 GiB), and this is the headroom on top of that — the same worker
     # also runs compute_metrics (~0.6 GiB) and the extraction tasks.
-    mem_limit: 3072m
+    #
+    # 6 GiB since 2026-09-29, with 8 task slots (was 4): ~300 MB a task,
+    # up to ~600 MB for a linking task (spaCy + the Wikidata lexicon).
+    mem_limit: 6144m
     mem_reservation: 1024m
     networks:
       - Practice

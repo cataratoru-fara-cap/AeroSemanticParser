@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "What a meme template image shows",
+  "description": "The vision model's answer for ONE blank template image (kg/template_entities.py). Handed to Ollama as the format= grammar and checked again with jsonschema; the pipeline then grounds every box and name before anything is stored. Editing this file re-queues every template (its sha is a staleness stamp).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "entities"
+  ],
+  "properties": {
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "kind",
+          "named",
+          "box",
+          "text",
+          "confidence"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Who or what it is: a proper name when recognised ('Drake', 'Kermit the Frog'), else a plain noun ('man', 'cat', 'phone')."
+          },
+          "kind": {
+            "enum": [
+              "person",
+              "character",
+              "animal",
+              "object",
+              "text",
+              "logo",
+              "artwork",
+              "other"
+            ]
+          },
+          "named": {
+            "type": "boolean",
+            "description": "true ONLY for the proper name of one specific real person, fictional character, brand, work or place; a kind of thing ('cat', 'door') is false."
+          },
+          "box": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "description": "[x0, y0, x1, y1] on a 0-1000 grid of the whole image."
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300,
+            "description": "For kind 'text': the words printed in the image, exactly. Otherwise null."
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

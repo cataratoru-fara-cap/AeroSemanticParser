@@ -39,5 +39,14 @@ and each one gets worse the longer it sits.
   links are incidental common nouns; find a method to keep only the ones
   relevant to the media frame. Everything curation needs is already stored.
 
+- [10-imgflip-template-layer.md](10-imgflip-template-layer.md) — the 6.4.0
+  template layer reads an outside site (imgflip, politely, never its
+  internal API), decides "same picture" with a thumbnail hash that still
+  lets crops through as separate templates, and relies on a vision model's
+  reading for what a template shows. Measured at ~0.95 precision on 100
+  frames and 0.787 gold recall@10; the vision model's spike and 200-template
+  pilot were read and fixed; no pool cap (Gabi). Throughput and its
+  mitigations are in the note.
+
 Update the status line at the top of a file when a gap is closed; leave the
 file (don't delete it) so the decision trail survives.

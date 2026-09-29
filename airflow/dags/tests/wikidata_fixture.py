@@ -105,6 +105,30 @@ ITEMS = [
     item("Q9999904", fr="Chien de garde", sitelinks=3),
     # DROPPED as an entity, but its P279 edge must survive for the type walk
     item("Q9999906", "obscure subclass of person", p279=["Q215627"]),
+    # -- linker 1.2.0 senses and gap-09 curation (2026-09-28) --------------
+    # "series": the maths item wins the label; the meant sense is unlabelled.
+    item("Q24034552", "mathematical concept", sitelinks=5),
+    item("Q170198", "series", desc="infinite sum", p31=["Q24034552"], sitelinks=84),
+    item("Q7725310", "series of creative works", desc="ordered set of creative works",
+         sitelinks=12),
+    # "game" is games in general; KYM means video games. "Video Games" the
+    # song is what the literal plural key finds first.
+    item("Q11410", "game", desc="structured form of play", sitelinks=157),
+    item("Q7889", "video game", desc="electronic game with user interface",
+         sitelinks=150),
+    item("Q771253", "Video Games", desc="song by Lana Del Rey", sitelinks=23),
+    # a platform, through its class chain
+    item("Q3220391", "social networking service", p279=["Q35127"], sitelinks=60),
+    item("Q918", "X", desc="social networking service founded in 2006",
+         p31=["Q3220391"], sitelinks=171),
+    # a body part (its class is not itself kept: no sitelinks) and a garment
+    # with P279 but NO P31 — what the class walk must still see
+    item("Q112826905", "class of anatomical entity"),
+    item("Q37017", "face", desc="front part of the head", p31=["Q112826905"],
+         sitelinks=120),
+    item("Q11460", "clothing", desc="covering worn on the body", sitelinks=150),
+    item("Q131151", "t-shirt", desc="style of shirt", p279=["Q11460"], sitelinks=60),
+    item("Q1357284", "popularity", desc="how much a concept is liked", sitelinks=21),
 ]
 
 PROPERTY = {"type": "property", "id": "P31", "labels": {
@@ -113,7 +137,10 @@ PROPERTY = {"type": "property", "id": "P31", "labels": {
 
 KEPT = {"Q5", "Q215627", "Q6256", "Q56061", "Q35127", "Q2927074", "Q144",
         "Q39315", "Q17", "Q1136", "Q531", "Q28472", "Q15894956", "Q219",
-        "Q308", "Q925", "Q9999903", "Q9999905", "Q9999907", "Q4167410"}
+        "Q308", "Q925", "Q9999903", "Q9999905", "Q9999907", "Q4167410",
+        # 2026-09-28 (linker 1.2.0 / curation); Q112826905 has no sitelinks
+        "Q24034552", "Q170198", "Q7725310", "Q11410", "Q7889", "Q771253",
+        "Q3220391", "Q918", "Q37017", "Q11460", "Q131151", "Q1357284"}
 
 
 def dump_lines(items=None, prop: bool = True) -> list[str]:

@@ -1,0 +1,62 @@
+# Curated word senses for the entity linker (modules/kg/entities.py, 1.2.0).
+#
+# The linker ranks the lexicon's candidates for a word; for a few very common
+# words the ranking is WRONG in a way no threshold fixes, because the sense
+# Know Your Meme means is not labelled with that word in Wikidata, or the
+# word is not naming anything at all. Found by reading the corpus's biggest
+# hubs (gap 09, 2026-09-28: counts are About mentions on 23,882 frames).
+#
+# Keys are lookup keys (lower-case, as kg/wikidata.norm writes them); `also`
+# lists more keys sharing the entry. Per key:
+#   link: false          the word links nothing
+#   never: [Q…]          items it must never be linked to
+#   instead: Q…          the item it names (linked at no less than the threshold)
+#   unless_next: [w…]    no link when the next word is one of these
+#   only_if_prev: [w…]   link only when preceded by one of these...
+#   only_if_next: [w…]   ...or followed by one of these
+# The guards apply to text (titles, About); a tag is a bare keyword and has
+# no context, so only link/never/instead apply to tags.
+#
+# This file's sha256 is a linker stamp: editing it re-links every frame.
+
+senses:
+  series:
+    # 5,531: Q170198 is the maths series ("infinite sum"). 56% are "a series
+    # of <things>", a quantifier that names nothing; the rest mean a series of
+    # works (an anime series, a video series), which Wikidata does not label
+    # "series".
+    unless_next: [of]
+    instead: Q7725310        # series of creative works
+    never: [Q170198, Q3025161, Q13928914]
+
+  game:
+    # 1,763: Q11410 is games in general ("structured form of play"); KYM
+    # almost always means a video game ("the game was released on Steam").
+    also: [games]
+    instead: Q7889           # video game
+    never: [Q11410]
+
+  x:
+    # 1,726 About, 181 title, 210 tag: X (Q918, formerly Twitter) — but also
+    # the phrasal-template placeholder ("I Hate X", "Thanks for Not Saying X").
+    # Linked only where the text says it is the platform.
+    only_if_prev: ["on", "via", "to", "from", "twitter /", "twitter/", "twitter or",
+                   "twitter (now", "(now", "formerly twitter,", "twitter, now"]
+    only_if_next: ["(formerly", ", formerly", "/ twitter", "(twitter)"]
+
+  sound:
+    # 510: Q11461 is the acoustic wave; on TikTok a "sound" is the audio clip,
+    # which Wikidata has no item for. The next candidates are villages.
+    also: [sounds]
+    link: false
+
+  number:
+    # 316: Q11563, the mathematical object; "a number of", "phone number".
+    also: [numbers]
+    link: false
+
+  image:
+    # 92: Q860623 is the image of a function; the everyday sense (Q478798)
+    # stays available.
+    also: [images]
+    never: [Q860623]

@@ -85,12 +85,14 @@ UNIT_PROJECTION = {"_id": 1, "url": 1, "title": 1, "tags": 1,
 # The stamps that make a linking reproducible. All must match for a stored
 # frame to count as up to date.
 STALENESS_KEYS = ("source_sha256", "linker_version", "lexicon_version",
-                  "nlp_model")
+                  "nlp_model", "senses_version")
 
 # What the KG build needs from each mention — the rest (features, margin,
 # offsets) is for review and curation, and stays here.
 LINK_PROJECTION_FIELDS = ("field", "text", "qid", "label", "description",
-                          "score", "method", "ner_label")
+                          "score", "method", "ner_label",
+                          # gap 09: what a curation decision is keyed on
+                          "start", "end", "tag_index")
 
 LOOKUP_BATCH = 2000
 BULK_BATCH = 500
@@ -256,7 +258,8 @@ class EntityStore(MongoStoreBase):
                         "max_linked_at": {"$max": "$linked_at"},
                         "linker_versions": {"$addToSet": "$linker_version"},
                         "lexicon_versions": {"$addToSet": "$lexicon_version"},
-                        "nlp_models": {"$addToSet": "$nlp_model"}}},
+                        "nlp_models": {"$addToSet": "$nlp_model"},
+                        "senses_versions": {"$addToSet": "$senses_version"}}},
         ]))
         row = agg[0] if agg else {}
         latest = as_utc(row.get("max_linked_at"))
@@ -266,6 +269,7 @@ class EntityStore(MongoStoreBase):
             "entities_linker_versions": sorted(row.get("linker_versions") or []),
             "entities_lexicon_versions": sorted(row.get("lexicon_versions") or []),
             "entities_nlp_models": sorted(row.get("nlp_models") or []),
+            "entities_senses_versions": sorted(v for v in row.get("senses_versions") or [] if v),
             "entities_max_linked_at": latest.isoformat() if latest else None,
         }
 

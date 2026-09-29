@@ -268,6 +268,9 @@ def kym_kg_dag():
             # 6.1.0: likewise for the entity stage — a re-link (new text, a
             # new lexicon, a new linker) moves these.
             **store.linking_stamps(snap["snapshot_at"]),
+            # 6.4.0: and for the template stages — a re-selection, new
+            # details, or a new reading of a template's image.
+            **store.template_stamps(snap["snapshot_at"]),
         }
         stale, reason = store.KGStore.is_stale(
             stamps, store.published_stamps(), force=p.get("force_rebuild", False))
@@ -356,7 +359,7 @@ def kym_kg_dag():
         if not chunk:
             return {"entries": 0, "nodes_written": 0, "edges_written": 0,
                     "stubs_deferred": 0, "frames_with_events": 0,
-                    "frames_with_entities": 0}
+                    "frames_with_entities": 0, "frames_with_templates": 0}
         import functools
         from modules.kg import origin, tag_normalize
         snapshot_at = datetime.fromisoformat(proceed["snapshot_at"])
@@ -377,6 +380,8 @@ def kym_kg_dag():
         # 6.1.0: and its Wikidata links, the same way — one query, keyed by
         # url, only the fields build.py uses.
         entities_by_url = store.entity_links_for(chunk, snapshot_at)
+        # 6.4.0: its selected imgflip templates, with their image entities.
+        templates_by_url = store.template_links_for(chunk, snapshot_at)
         nodes: list[dict] = []
         edges: list[dict] = []
         seen = 0
@@ -385,13 +390,15 @@ def kym_kg_dag():
             n, e = kg_build.build_nodes_and_edges(
                 entry, origin_resolver=origin_resolver, tag_denylist=tag_denylist,
                 events=events_by_url.get(entry.get("url"), ()),
-                entities=entities_by_url.get(entry.get("url"), ()))
+                entities=entities_by_url.get(entry.get("url"), ()),
+                templates=templates_by_url.get(entry.get("url"), ()))
             nodes.extend(n)
             edges.extend(e)
         written = store.save_graph(proceed["build_id"], nodes, edges)
         written["entries"] = seen
         written["frames_with_events"] = len(events_by_url)
         written["frames_with_entities"] = len(entities_by_url)
+        written["frames_with_templates"] = len(templates_by_url)
         log.info("Chunk done — %s", written)
         return written
 

@@ -77,18 +77,19 @@ class VocabularyTests(unittest.TestCase):
                          {"frame", "frame_stub", "entry_type_concept",
                           "tag_concept", "region_concept", "origin_concept",
                           "badge_concept", "external_ref", "image", "event",
-                          "wikidata_entity"})
+                          "wikidata_entity", "template"})
         self.assertEqual(set(build.EDGE_TYPES),
                          {"hasEntryType", "hasTag", "hasRegion", "hasOrigin",
                           "hasBadge", "partOfSeries", "relatesToMeme",
                           "citesExternal", "hasImage", "hasEvent",
                           "eventLink", "eventCitation", "eventEmbed",
                           "eventImage", "eventDateAnchor", "nextInStory",
-                          "fromTitle", "fromTags", "fromAbout"})
+                          "fromTitle", "fromTags", "fromAbout",
+                          "hasTemplate", "templateImage", "imgflipPage", "fromImage"})
         self.assertLessEqual(set(build.OCCURRENCE_EDGE_TYPES), set(build.EDGE_TYPES))
 
     def test_version_is_stamped(self):
-        self.assertEqual(build.KG_BUILD_VERSION, "6.3.0")
+        self.assertEqual(build.KG_BUILD_VERSION, "6.5.0")
 
     def test_emitted_kinds_types_and_occurrence_fields_stay_in_the_vocabulary(self):
         nodes, edges = build.build_nodes_and_edges(entry(
@@ -686,6 +687,12 @@ class EntityTests(unittest.TestCase):
         self.assertEqual(e["occurrences"], [{
             "mention_text": "Shiba Inus", "link_score": 0.83,
             "link_method": "ner", "ner_label": "ORG"}])
+
+    def test_a_kept_link_says_why_it_was_kept(self):
+        # 6.5.0: kg_store hands in only curated links, each with its basis
+        _, edges = self.build([dict(self.SHIBA, relevance_basis="judge")])
+        e = the_edge(edges, "fromAbout", "wd:Q39315")
+        self.assertEqual(e["occurrences"][0]["relevance_basis"], "judge")
 
     def test_each_field_has_its_own_edge_type(self):
         tag = dict(self.SHIBA, field="tag", text="shiba inu", method="tag",

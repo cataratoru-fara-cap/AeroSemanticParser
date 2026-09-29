@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+
+<head>
+
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<script>
+a=new XMLHttpRequest();
+a.onload=function(){I=JSON.parse(this.responseText);if(window.initData)initData();};
+a.open('get','/ajax_get_le_data',true);
+a.send();
+</script>
+
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-DCRTFFEBRL"></script>
+<script>
+	window.dataLayer = window.dataLayer || [];
+	function gtag(){dataLayer.push(arguments);}
+	gtag('js', new Date());
+	gtag('config', 'G-DCRTFFEBRL');
+	gtag('set', 'user_properties', {
+		app_type: (typeof window.matchMedia !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches) ? 'standalone' : 'web'
+	});
+	gtag('config', 'G-X8YQQMPY4Q', {send_page_view: false});
+	window._pwGA4PageviewId = ''.concat(Date.now());
+	gtag('event', 'ramp_js', {
+		send_to: 'G-X8YQQMPY4Q',
+		pageview_id: window._pwGA4PageviewId
+	});
+</script>
+<script>
+version=1551;
+spriteNum=5223;
+IMAGE_DOMAIN='//i.imgflip.com/';
+mm=0;
+</script>
+
+<style>
+.i-banner{width:320px;height:50px;display:block;margin:0 auto;overflow:hidden;}
+@media(min-width:500px){.i-banner{width:468px;height:60px;}}
+@media(min-width:760px){.i-banner{width:728px;height:90px;}}
+</style>
+<link rel="icon" href="/favicon.ico?b"/>
+<link rel="icon" sizes="96x96" href="/imgflip-icon-96.png"/>
+<link rel="icon" sizes="180x180" href="/apple-touch-icon.png?c"/>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?c"/>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Imgflip">
+<meta name="theme-color" content="#333"/>
+<link rel="manifest" href="/manifest.json">
+<link rel='stylesheet' href='//s.imgflip.com/v1551/style.css' media='screen'/>
+<title>"doge" Meme Templates - Imgflip</title>
+<meta name="description" content="Search the Imgflip meme database for popular memes and blank meme templates"/>
+
+<link rel='stylesheet' href='//s.imgflip.com/v1551/memetemplates.css' media='screen'/>
+
+</head>
+
+<body class="page-full-width fixed-header">
+<script>
+	var dm = document.cookie.match(/(^|;\s?)dm=([^;]+)/);
+	dm = dm ? dm[2] : '';
+	if (dm === '1' || (dm === '' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+		document.body.className += ' darkmode';
+	}
+</script>
+
+<div id="panel-back">
+
+	<div id="panel">
+		<div id="nt-nots-mini" class="darkmode"></div>
+		<a class="nav" href="/">
+			<img id="logo" alt="Imgflip Logo" src="/imgflip_white_96.png">
+			<img id="logo-icon" alt="Imgflip Logo Icon" src="/imgflip-icon-transparent-192.svg">
+		</a>
+
+		<div class="nav menu-wrap" id="nav-make">
+			<div id="nav-make-inner" class="menu-btn nosel down-arrow">Create</div>
+			<div id="make-list" class="menu">
+				<a class="make-item" href="/memegenerator" title="Meme Generator">
+					<svg width=30 height=30 class="make-icon make-icon-meme">
+						<g transform="scale(.3)">
+							<path d="M 20 0 l 30 50 l -50 -10 l 0 -40 z"/>
+							<path d="M 60 0 l 40 0 l -50 50 z"/>
+							<path d="M 100 60 l 0 40 l -20 0 l -30 -50 z"/>
+							<path d="M 40 100 l -40 0 l 50 -50 z"/>
+						</g>
+					</svg>
+					Make a Meme
+				</a>
+				<a class="make-item" href="/gif-maker" title="Animated GIF Maker (from video, youtube, images, etc.)">
+					<svg class="make-icon make-icon-gif">
+						<g transform="scale(.3)">
+							<rect width=66 height=66 x=31 y=3 />
+							<rect width=66 height=66 x=17 y=17 />
+							<rect width=66 height=66 x=3 y=31 />
+							<path d="M 24 50 l 25 14 l -25 14 z"/>
+						</g>
+					</svg>
+					Make a GIF or Short Video
+				</a>
+				<a class="make-item" href="/memetemplates" title="Popular Blank Meme Templates">
+					<div class="make-icon make-icon-meme-templates"></div>
+					Meme Templates
+				</a>
+				<a class="make-item" href="/gif-templates" title="Popular Blank GIF Templates">
+					<svg class="make-icon make-icon-gif-templates" viewBox="0 0 30 30">
+						<g transform="scale(.3)">
+							<path d="M 35 30 l 34 20 l -34 20 z"/>
+						</g>
+					</svg>
+					GIF Templates
+				</a>
+			</div>
+		</div>
+
+		<div class="nav menu-wrap" id="u-menu-wrap">
+			<div id="u-menu-btn" class="menu-btn nosel down-arrow">
+				<span id="u-long"></span>
+			</div>
+			<div id="u-menu" class="menu"></div>
+		</div>
+
+		<div id="nt-count" class="display-none"></div>
+
+		<svg width=30 height=30 id="panel-search-icon" class="s-icon" viewBox="0 0 100 100">
+			<path d="M 20 80 l 25 -25"/>
+			<circle r=20 cx=59 cy=41 />
+		</svg>
+
+		<div class="clear"></div>
+	</div>
+
+	<div id="panel-search-back" class="hidden">
+		<div id="panel-search">
+			<form class="s-form" action="/search" method="get">
+				<input id="panel-search-input" name="q" type="text" placeholder="Search memes, gifs, tags, users" autocomplete="off" autocapitalize="off" autocorrect="off"/>
+			</form>
+			<button type="button" class="s-submit l but">
+				<svg width=26 height=26 class="s-icon" viewBox="0 0 100 100">
+					<path d="M 20 80 l 25 -25"/>
+					<circle r=20 cx=59 cy=41 />
+				</svg>
+			</button>
+		</div>
+	</div>
+
+	<div id="panel-offline-msg" class="display-none"></div>
+</div>
+
+<div id="page">
+
+	<h1 class="mt-header">doge Meme Templates</h1>
+
+	<form id="mt-search-panel" action="/memesearch">
+		<input id="mt-search-query" type="search" name="q" placeholder="Search all templates..." value="doge" autofocus
+		/><button type="submit" id="mt-search-submit" class="l but">Search</button>
+		<div class="mt-search-opts">
+			<button type="button" class="check-wrap check-red" title="Check this box to allow adult/not-safe-for-work templates in search results" data-name="nsfw"><svg viewBox="0 0 10 10"><path d="M2,5l2,3l4,-6"/></svg><span class="check-text">NSFW</span></button>			<button type="button" class="check-wrap" title="Check this box to only show animated GIF templates" data-name="gifs_only"><svg viewBox="0 0 10 10"><path d="M2,5l2,3l4,-6"/></svg><span class="check-text">GIFs Only</span></button>		</div>
+			</form>
+
+	<div id="mt-boxes-wrap" class="ibox clearfix">
+
+		
+				<div class="mt-boxes"><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Doge speak truth Meme" href="/meme/349674495/Doge-speak-truth">Doge speak truth</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:3.2291666666667px;padding-bottom:3.2291666666667px">
+				<a title="Doge speak truth Meme" href="/meme/349674495/Doge-speak-truth">
+					<img class="shadow" style="width:150px;height:143.54166666667px" alt="Doge speak truth Meme Template" src="//i.imgflip.com/4/5s6qkf.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Doge speak truth Meme Generator" class="mt-caption l but" href="/memegenerator/349674495/Doge-speak-truth">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Doge Internal screaming Meme" href="/meme/355493991/Doge-Internal-screaming">Doge Internal screaming</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:2.85px;padding-bottom:2.85px">
+				<a title="Doge Internal screaming Meme" href="/meme/355493991/Doge-Internal-screaming">
+					<img class="shadow" style="width:150px;height:144.3px" alt="Doge Internal screaming Meme Template" src="//i.imgflip.com/4/5vngx3.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Doge Internal screaming Meme Generator" class="mt-caption l but" href="/memegenerator/355493991/Doge-Internal-screaming">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Tiny Face Doge Meme" href="/meme/355277794/Tiny-Face-Doge">Tiny Face Doge</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:1.6666666666667px;padding-bottom:1.6666666666667px">
+				<a title="Tiny Face Doge Meme" href="/meme/355277794/Tiny-Face-Doge">
+					<img class="shadow" style="width:150px;height:146.66666666667px" alt="Tiny Face Doge Meme Template" src="//i.imgflip.com/4/5viu3m.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Tiny Face Doge Meme Generator" class="mt-caption l but" href="/memegenerator/355277794/Tiny-Face-Doge">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Catecoin Sale Meme" href="/meme/354713774/Catecoin-Sale">Catecoin Sale</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:0px;padding-bottom:0px">
+				<a title="Catecoin Sale Meme" href="/meme/354713774/Catecoin-Sale">
+					<img class="shadow" style="width:150px;height:150px" alt="Catecoin Sale Meme Template" src="//i.imgflip.com/4/5v6qwe.png"/>
+				</a>
+				
+			</div>
+			
+			<a title="Catecoin Sale Meme Generator" class="mt-caption l but" href="/memegenerator/354713774/Catecoin-Sale">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Doge Meme" href="/meme/354639924/Doge">Doge</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:0px;padding-bottom:0px">
+				<a title="Doge Meme" href="/meme/354639924/Doge">
+					<img class="shadow" style="width:150px;height:150px" alt="Doge Meme Template" src="//i.imgflip.com/4/5v55x0.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Doge Meme Generator" class="mt-caption l but" href="/memegenerator/354639924/Doge">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Zero G Snoopy Meme" href="/meme/353257818/Zero-G-Snoopy">Zero G Snoopy</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:0px;padding-bottom:0px">
+				<a title="Zero G Snoopy Meme" href="/meme/353257818/Zero-G-Snoopy">
+					<img class="shadow" style="width:120px;height:150px" alt="Zero G Snoopy Meme Template" src="//i.imgflip.com/4/5ubjh6.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Zero G Snoopy Meme Generator" class="mt-caption l but" href="/memegenerator/353257818/Zero-G-Snoopy">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Average American Meme" href="/meme/352903776/Average-American">Average American</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:18.5px;padding-bottom:18.5px">
+				<a title="Average American Meme" href="/meme/352903776/Average-American">
+					<img class="shadow" style="width:150px;height:113px" alt="Average American Meme Template" src="//i.imgflip.com/4/5u3yao.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Average American Meme Generator" class="mt-caption l but" href="/memegenerator/352903776/Average-American">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="doge Meme" href="/meme/351832427/doge">doge</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:0px;padding-bottom:0px">
+				<a title="doge Meme" href="/meme/351832427/doge">
+					<img class="shadow" style="width:146.24277456647px;height:150px" alt="doge Meme Template" src="//i.imgflip.com/4/5tgzmz.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="doge Meme Generator" class="mt-caption l but" href="/memegenerator/351832427/doge">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Doge Planet Meme" href="/meme/351376139/Doge-Planet">Doge Planet</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:0px;padding-bottom:0px">
+				<a title="Doge Planet Meme" href="/meme/351376139/Doge-Planet">
+					<img class="shadow" style="width:149.21363040629px;height:150px" alt="Doge Planet Meme Template" src="//i.imgflip.com/4/5t77kb.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Doge Planet Meme Generator" class="mt-caption l but" href="/memegenerator/351376139/Doge-Planet">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="doge windows Meme" href="/meme/351314590/doge-windows">doge windows</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:30px;padding-bottom:30px">
+				<a title="doge windows Meme" href="/meme/351314590/doge-windows">
+					<img class="shadow" style="width:150px;height:90px" alt="doge windows Meme Template" src="//i.imgflip.com/4/5t5w2m.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="doge windows Meme Generator" class="mt-caption l but" href="/memegenerator/351314590/doge-windows">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="vvbd Meme" href="/meme/351039673/vvbd">vvbd</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:20.656192236599px;padding-bottom:20.656192236599px">
+				<a title="vvbd Meme" href="/meme/351039673/vvbd">
+					<img class="shadow" style="width:150px;height:108.6876155268px" alt="vvbd Meme Template" src="//i.imgflip.com/4/5szzy1.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="vvbd Meme Generator" class="mt-caption l but" href="/memegenerator/351039673/vvbd">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Envoy doge Meme" href="/meme/350470990/Envoy-doge">Envoy doge</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:34.35px;padding-bottom:34.35px">
+				<a title="Envoy doge Meme" href="/meme/350470990/Envoy-doge">
+					<img class="shadow" style="width:150px;height:81.3px" alt="Envoy doge Meme Template" src="//i.imgflip.com/4/5snt5a.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Envoy doge Meme Generator" class="mt-caption l but" href="/memegenerator/350470990/Envoy-doge">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Russia doge Meme" href="/meme/340803881/Russia-doge">Russia doge</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:32.142857142857px;padding-bottom:32.142857142857px">
+				<a title="Russia doge Meme" href="/meme/340803881/Russia-doge">
+					<img class="shadow" style="width:150px;height:85.714285714286px" alt="Russia doge Meme Template" src="//i.imgflip.com/4/5mwlyh.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Russia doge Meme Generator" class="mt-caption l but" href="/memegenerator/340803881/Russia-doge">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="doge Meme" href="/meme/349518907/doge">doge</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:0px;padding-bottom:0px">
+				<a title="doge Meme" href="/meme/349518907/doge">
+					<img class="shadow" style="width:150px;height:150px" alt="doge Meme Template" src="//i.imgflip.com/5s3eij.png"/>
+				</a>
+				
+			</div>
+			
+			<a title="doge Meme Generator" class="mt-caption l but" href="/memegenerator/349518907/doge">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="This is how I&#039;m going to be when Meme" href="/meme/349411121/This-is-how-Im-going-to-be-when">This is how I&#039;m going to be when</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:0px;padding-bottom:0px">
+				<a title="This is how I&#039;m going to be when Meme" href="/meme/349411121/This-is-how-Im-going-to-be-when">
+					<img class="shadow" style="width:139.94219653179px;height:150px" alt="This is how I&#039;m going to be when Meme Template" src="//i.imgflip.com/4/5s13ch.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="This is how I&#039;m going to be when Meme Generator" class="mt-caption l but" href="/memegenerator/349411121/This-is-how-Im-going-to-be-when">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Bruh dog 2021 Meme" href="/meme/349063032/Bruh-dog-2021">Bruh dog 2021</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:1.8571428571429px;padding-bottom:1.8571428571429px">
+				<a title="Bruh dog 2021 Meme" href="/meme/349063032/Bruh-dog-2021">
+					<img class="shadow" style="width:150px;height:146.28571428571px" alt="Bruh dog 2021 Meme Template" src="//i.imgflip.com/4/5rtmrc.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Bruh dog 2021 Meme Generator" class="mt-caption l but" href="/memegenerator/349063032/Bruh-dog-2021">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Dogecoin Meme" href="/meme/349016287/Dogecoin">Dogecoin</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:0px;padding-bottom:0px">
+				<a title="Dogecoin Meme" href="/meme/349016287/Dogecoin">
+					<img class="shadow" style="width:150px;height:150px" alt="Dogecoin Meme Template" src="//i.imgflip.com/4/5rsmov.png"/>
+				</a>
+				
+			</div>
+			
+			<a title="Dogecoin Meme Generator" class="mt-caption l but" href="/memegenerator/349016287/Dogecoin">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Zero Tax Full Taste Meme" href="/meme/345984158/Zero-Tax-Full-Taste">Zero Tax Full Taste</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:0.375px;padding-bottom:0.375px">
+				<a title="Zero Tax Full Taste Meme" href="/meme/345984158/Zero-Tax-Full-Taste">
+					<img class="shadow" style="width:150px;height:149.25px" alt="Zero Tax Full Taste Meme Template" src="//i.imgflip.com/4/5pzn32.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Zero Tax Full Taste Meme Generator" class="mt-caption l but" href="/memegenerator/345984158/Zero-Tax-Full-Taste">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="doge Meme" href="/meme/344265298/doge">doge</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:18.741542625169px;padding-bottom:18.741542625169px">
+				<a title="doge Meme" href="/meme/344265298/doge">
+					<img class="shadow" style="width:150px;height:112.51691474966px" alt="doge Meme Template" src="//i.imgflip.com/4/5oyssy.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="doge Meme Generator" class="mt-caption l but" href="/memegenerator/344265298/doge">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Doge Face Meme" href="/meme/344093137/Doge-Face">Doge Face</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:0px;padding-bottom:0px">
+				<a title="Doge Face Meme" href="/meme/344093137/Doge-Face">
+					<img class="shadow" style="width:145.17857142857px;height:150px" alt="Doge Face Meme Template" src="//i.imgflip.com/4/5ov3yp.png"/>
+				</a>
+				
+			</div>
+			
+			<a title="Doge Face Meme Generator" class="mt-caption l but" href="/memegenerator/344093137/Doge-Face">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Sea is for Cookie Meme" href="/meme/343528618/Sea-is-for-Cookie">Sea is for Cookie</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:18.741542625169px;padding-bottom:18.741542625169px">
+				<a title="Sea is for Cookie Meme" href="/meme/343528618/Sea-is-for-Cookie">
+					<img class="shadow" style="width:150px;height:112.51691474966px" alt="Sea is for Cookie Meme Template" src="//i.imgflip.com/4/5oj0dm.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Sea is for Cookie Meme Generator" class="mt-caption l but" href="/memegenerator/343528618/Sea-is-for-Cookie">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Buff doge Meme" href="/meme/342881662/Buff-doge">Buff doge</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:32.746478873239px;padding-bottom:32.746478873239px">
+				<a title="Buff doge Meme" href="/meme/342881662/Buff-doge">
+					<img class="shadow" style="width:150px;height:84.507042253521px" alt="Buff doge Meme Template" src="//i.imgflip.com/4/5o556m.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Buff doge Meme Generator" class="mt-caption l but" href="/memegenerator/342881662/Buff-doge">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Catradora Doge Meme" href="/meme/341553971/Catradora-Doge">Catradora Doge</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:0px;padding-bottom:0px">
+				<a title="Catradora Doge Meme" href="/meme/341553971/Catradora-Doge">
+					<img class="shadow" style="width:116.26794258373px;height:150px" alt="Catradora Doge Meme Template" src="//i.imgflip.com/5ncoqb.png"/>
+				</a>
+				
+			</div>
+			
+			<a title="Catradora Doge Meme Generator" class="mt-caption l but" href="/memegenerator/341553971/Catradora-Doge">Add Caption</a>
+		</div><div class="mt-box">
+			<h3 class="mt-title">
+				<a title="Angered Doge Sounds Meme" href="/meme/341479562/Angered-Doge-Sounds">Angered Doge Sounds</a>
+			</h3>
+			<div class="mt-img-wrap" style="padding-top:0.59523809523809px;padding-bottom:0.59523809523809px">
+				<a title="Angered Doge Sounds Meme" href="/meme/341479562/Angered-Doge-Sounds">
+					<img class="shadow" style="width:150px;height:148.80952380952px" alt="Angered Doge Sounds Meme Template" src="//i.imgflip.com/4/5nb3be.jpg"/>
+				</a>
+				
+			</div>
+			
+			<a title="Angered Doge Sounds Meme Generator" class="mt-caption l but" href="/memegenerator/341479562/Angered-Doge-Sounds">Add Caption</a>
+		</div></div>
+		
+		
+		<div class='pager'><a class='pager-first l but' href='/memesearch?q=doge'>First</a><a class='pager-prev l but' href='/memesearch?q=doge&amp;page=50'>&lsaquo; Prev</a><button type='button' disabled class='pager-next l but disabled'>Next &rsaquo;</button></div>
+	</div>
+</div>
+
+<div id="footer">
+	<div id="footer-nav">
+		<a href="/pro?from=footer">Imgflip Pro</a>
+		<a href="/gif-maker">GIF Maker</a>
+		<a href="/memegenerator">Meme Generator</a>
+		<a href="/memetemplates">Blank Meme Templates</a>
+		<a href="/gif-templates">GIF Templates</a>
+		<a href="/chart-maker">Chart Maker</a>
+		<a href="/demotivational-maker">Demotivational Maker</a>
+		<a href="/image-resizer">Image Resizer</a>
+		<a href="/about">About</a>
+		<a href="/privacy">Privacy</a>
+		<a href="/terms">Terms</a>
+		<a href="/api">API</a>
+		<a href="/slack">Slack App</a>
+		<a href="/request_removal">Request Image Removal</a>
+		<a class="feedback-open" href="javascript:void(0)" data-from="footer" title="Submit feedback about Imgflip">Send Feedback</a>
+		<span id="do-not-sell-btn" class="qc-ccpa-persistent-link"></span>
+	</div>
+	<div id="findUs">
+		<a id="on-fb" href="https://www.facebook.com/imgflip">Facebook</a>
+		<a id="on-tw" href="https://twitter.com/imgflip">Twitter</a>
+		<a id="on-android" href="https://play.google.com/store/apps/details?id=com.imgflip.twa">Android App</a>
+		<a id="on-chrome" href="https://chrome.google.com/webstore/detail/imgflip-quick-create/ipdbhnffahpohpdkcelabahpmlheidff">Chrome Extension</a>
+	</div>
+	<div id="footline">
+		Empowering creativity on teh interwebz
+		<br/>Imgflip LLC 2026	</div>
+
+	</div>
+
+<script src="https://s.imgflip.com/jq.js"></script>
+
+<script crossorigin='anonymous' src='//s.imgflip.com/v1551/common.js'></script>
+<script>disableTemplateAds=false;</script>
+
+<script crossorigin='anonymous' src='//s.imgflip.com/v1551/memetemplates.js'></script>
+
+</body>

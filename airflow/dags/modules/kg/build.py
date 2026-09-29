@@ -121,6 +121,7 @@ Node kinds
     badge_concept       "badge:<label>"       (mk:BadgeScheme)
     external_ref        a non-KYM url
     image               "image:<src url>"
+    template            "template:<imgflip id>"  (6.4.0; mk:MemeTemplate)
     event               "event:<id>"          (6.0.0; mk:Event, DERIVED —
                         see kg/events.py and "What becomes a node" below)
     wikidata_entity     "wd:<QID>"            (6.1.0; a Wikidata item, linked
@@ -130,6 +131,8 @@ Edge types
     hasEntryType  hasTag  hasRegion  hasOrigin  hasBadge  partOfSeries
     relatesToMeme  citesExternal  hasImage  hasEvent
     fromTitle  fromTags  fromAbout                      (6.1.0, to a wikidata_entity)
+    hasTemplate                                         (6.4.0, to a template)
+  and, from a template node: templateImage  imgflipPage  fromImage   (6.4.0)
   and, from an event node: eventLink  eventCitation  eventEmbed  eventImage
   eventDateAnchor  nextInStory                         (6.3.0, event -> event)
   plus the concept edges ``subTypeOf`` (kg/taxonomy.py, kg/origin.py) and
@@ -151,7 +154,9 @@ link score, how the span was found, and the NER label if any.
 
 Like events, these are DERIVED — a linker's reading, not a parsed value —
 and the occurrence says how sure it was. Which of them are worth keeping
-is a later curation step (gap 09); this function carries them all.
+is decided upstream (6.5.0, kym_entity_curation): the caller hands in only
+the kept mentions, each with its ``relevance_basis``; this function emits
+whatever it is given.
 
 Images are "image:"-prefixed: a body link may point straight at an image
 file, and without the prefix that url would be both an ``external_ref`` and
@@ -168,6 +173,23 @@ from . import tag_normalize
 
 _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 
+# 6.5.0: the entity layer is CURATED (gap 09). Only the Wikidata links
+# kym_entity_curation keeps reach the graph — by a rule (the title, the
+# frame's own item, a platform, a meme format, the title or both a tag and
+# the About agreeing, a whole tag that names something) or by the LLM
+# judge — and each occurrence says which
+# (`relevance_basis`, mk:relevanceBasis). Until the judge has read a frame
+# only its rule-kept links are in. MINOR: it removes links, adds one
+# annotation, and changes no term.
+# 6.4.0: the template layer. imgflip meme templates a frame is made with
+# (kym_templates: searched, deduplicated, chosen — 0, or 1 to 10, most
+# varied first) become `template` nodes, mk:template/<imgflip id>, with a
+# `hasTemplate` edge from each frame that selected them (RDF: mk:hasTemplate
+# AND IMKG's m4s:templateOf the other way), the blank image as an `image`
+# node (`templateImage`), the imgflip page (`imgflipPage`), and what the
+# image shows as Wikidata items (`fromImage`, IMKG's m4s:fromImage — a
+# vision model's reading, kym_template_entities). MINOR: additive. It mints
+# the graph's second kind of IRI for derived content, after events.
 # 6.3.0: a frame's events form ONE chain, Origin then Spread, in the order
 # the page tells them: mk:nextInStory from each to the next (see
 # story_order). The page narrates a meme's evolution as a sequence — "x
@@ -201,18 +223,19 @@ _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 # and origin promoted from frame literals / a literal string to concepts
 # (badge_concept/hasBadge, origin_concept/hasOrigin); tags plural-folded
 # (kg/tag_normalize.py). Bumping this makes the staleness gate rebuild.
-KG_BUILD_VERSION = "6.3.0"
+KG_BUILD_VERSION = "6.5.0"
 
 NODE_KINDS: tuple[str, ...] = (
     "frame", "frame_stub", "entry_type_concept", "tag_concept",
     "region_concept", "origin_concept", "badge_concept", "external_ref",
-    "image", "event", "wikidata_entity",
+    "image", "event", "wikidata_entity", "template",
 )
 EDGE_TYPES: tuple[str, ...] = (
     "hasEntryType", "hasTag", "hasRegion", "hasOrigin", "hasBadge",
     "partOfSeries", "relatesToMeme", "citesExternal", "hasImage", "hasEvent",
     "eventLink", "eventCitation", "eventEmbed", "eventImage",
     "eventDateAnchor", "nextInStory", "fromTitle", "fromTags", "fromAbout",
+    "hasTemplate", "templateImage", "imgflipPage", "fromImage",
 )
 
 # The three narrative sections IMKG keeps as frame literals, mapped to the
@@ -301,18 +324,37 @@ ENTITY_FIELD_EDGES: dict[str, str] = {
 # a Cypher query can say ``e.qid = 'Q42'``; only ``label`` reaches RDF.
 WIKIDATA_ENTITY_PROPERTIES: tuple[str, ...] = ("qid", "label", "description")
 
+# 6.4.0. A template node's properties. ``template_id`` is imgflip's own id
+# (IMKG's imgflip:templateId, a plain literal as IMKG has it, so the two
+# graphs join on it); ``featured`` is property-graph only — imgflip changes
+# it, and the graph should not.
+TEMPLATE_PROPERTIES: tuple[str, ...] = (
+    "label", "template_id", "alt_names", "file_format", "featured")
+TEMPLATE_LIST_PROPERTIES: frozenset[str] = frozenset({"alt_names"})
+
 # The edges that carry an ``occurrences`` list, and every field an
 # occurrence may hold. kg/rdf.py, kg/serialize.py and kg/loaders.py all
 # render from these two tables.
 OCCURRENCE_EDGE_TYPES: tuple[str, ...] = (
     "relatesToMeme", "citesExternal", "hasImage",
-    "fromTitle", "fromTags", "fromAbout")          # 6.1.0: one per mention
+    "fromTitle", "fromTags", "fromAbout",          # 6.1.0: one per mention
+    "hasTemplate", "fromImage")                    # 6.4.0
 OCCURRENCE_FIELDS: tuple[str, ...] = (
     "anchor_text", "in_section", "citation_text", "citation_index",
     "site_name", "role", "alt_text", "caption",
     # 6.1.0, on the entity edges: the words on the page, the linker's score
     # (0..1), how the span was found (kg/entities.METHODS), the NER label.
     "mention_text", "link_score", "link_method", "ner_label",
+    # 6.4.0. On hasTemplate: how well the template fits the frame (0..1) and
+    # why it was kept (the frame's own KYM link, or the search). On
+    # fromImage, besides mention/score/method: what the region depicts
+    # (kg/template_entities.KINDS), where (a W3C Media Fragments
+    # "xywh=percent:" box), and which model read it.
+    "template_score", "template_match", "depiction_kind", "bounding_box",
+    "detected_by",
+    # 6.5.0, on fromTitle / fromTags / fromAbout: why curation kept the link
+    # (kg/curation.KEEP_BASES).
+    "relevance_basis",
 )
 
 # Coarse URL-path -> category guess for stub nodes we haven't scraped yet.
@@ -446,6 +488,20 @@ def wikidata_node_id(qid: str) -> str:
     return f"wd:{qid}"
 
 
+def template_node_id(template_id: int | str) -> str:
+    """``template:<imgflip id>``; kg/rdf.py mints mk:template/<id> from it."""
+    return f"template:{int(template_id)}"
+
+
+def media_fragment(box: Sequence[float]) -> str:
+    """[x0, y0, x1, y1] as fractions -> W3C Media Fragments ``xywh=percent:``
+    (x, y, width, height in percent), the standard way to name a region of
+    an image in a literal."""
+    x0, y0, x1, y1 = (float(v) for v in box)
+    return (f"xywh=percent:{x0 * 100:.1f},{y0 * 100:.1f},"
+            f"{(x1 - x0) * 100:.1f},{(y1 - y0) * 100:.1f}")
+
+
 def event_node_id(event_id: str) -> str:
     """``event:<id>``. The id itself is minted once, in kg/events.py, and
     stored — so there is exactly one implementation of the recipe."""
@@ -558,6 +614,7 @@ def build_nodes_and_edges(
         tag_denylist: frozenset[str] = frozenset(),
         events: Sequence[dict] = (),
         entities: Sequence[dict] = (),
+        templates: Sequence[dict] = (),
 ) -> tuple[list[dict], list[dict]]:
     """One `entries` doc (as stored by parse_store) -> (nodes, edges).
 
@@ -586,6 +643,13 @@ def build_nodes_and_edges(
 
     ``entities`` (6.1.0) is this entry's linked mentions, as stored by
     modules/entity_store.py — data for the same reason events are.
+
+    ``templates`` (6.4.0) is the imgflip templates this frame selected
+    (modules/template_store.py), each with its details and its in-graph
+    image entities (modules/template_entity_store.py) — see
+    kg_store.template_links_for for the record's shape. A template several
+    frames selected is emitted by each, identically; the store keys nodes
+    and edges by id, so it lands once.
     """
     url = entry.get("url")
     if not url:
@@ -739,7 +803,63 @@ def build_nodes_and_edges(
                                "description": m.get("description")}))
         edge(etype, node_id, _occurrence(
             mention_text=m.get("text"), link_score=m.get("score"),
-            link_method=m.get("method"), ner_label=m.get("ner_label")))
+            link_method=m.get("method"), ner_label=m.get("ner_label"),
+            relevance_basis=m.get("relevance_basis")))
+
+    # -- imgflip templates (6.4.0) ----------------------------------------------
+    # The frame's edge carries how well the template fits it; everything
+    # about the template itself (its image, its page, what it shows) hangs
+    # off the template node, written directly: edge() is the frame's.
+    template_edges: dict[tuple[str, str, str], dict] = {}
+
+    def template_edge(src: str, etype: str, dst: str,
+                      occurrence: dict | None = None) -> None:
+        e = template_edges.get((src, etype, dst))
+        if e is None:
+            e = template_edges[(src, etype, dst)] = {"src": src, "dst": dst, "type": etype}
+            edges.append(e)
+        if occurrence:
+            e.setdefault("occurrences", []).append(occurrence)
+
+    for t in templates:
+        tid = t.get("template_id")
+        if tid in (None, ""):
+            continue
+        t_node = template_node_id(tid)
+        nodes.append(_compact({
+            "id": t_node, "kind": "template", "label": t.get("name"),
+            "template_id": str(int(tid)),
+            "alt_names": list(t.get("alt_names") or []),
+            "file_format": t.get("file_type"),
+            "featured": t.get("featured"),
+        }))
+        edge("hasTemplate", t_node, _occurrence(
+            template_score=t.get("R"), template_match=t.get("method")))
+        if t.get("url"):
+            nodes.append({"id": t["url"], "kind": "external_ref", "label": None})
+            template_edge(t_node, "imgflipPage", t["url"])
+        # The blank as an image — a still one only: an animated template's
+        # blank is an mp4, which is not what mk:Image means.
+        if t.get("blank_url") and not t.get("animated"):
+            img_id = image_node_id(t["blank_url"])
+            nodes.append(_compact({"id": img_id, "kind": "image",
+                                   "width": _int_or_none(t.get("width")),
+                                   "height": _int_or_none(t.get("height"))}))
+            template_edge(t_node, "templateImage", img_id)
+        for m in t.get("mentions") or []:
+            qid = m.get("qid")
+            if not qid:
+                continue
+            node_id = wikidata_node_id(qid)
+            nodes.append(_compact({"id": node_id, "kind": "wikidata_entity",
+                                   "qid": qid, "label": m.get("label"),
+                                   "description": m.get("description")}))
+            region = m.get("region") or {}
+            template_edge(t_node, "fromImage", node_id, _occurrence(
+                mention_text=m.get("text"), link_score=m.get("score"),
+                link_method=m.get("method"), depiction_kind=region.get("kind"),
+                bounding_box=media_fragment(region["box"]) if region.get("box") else None,
+                detected_by=m.get("model")))
 
     # -- images: the page's own, then those shown in its sections ------------
     # template_image_url is currently a copy of og:image in the parser; a

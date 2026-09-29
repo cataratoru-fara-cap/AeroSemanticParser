@@ -275,7 +275,16 @@ class StalenessTests(unittest.TestCase):
               "entities_linker_versions": ["1.0.0"],
               "entities_lexicon_versions": ["5d2737e5595693eb"],
               "entities_nlp_models": ["en_core_web_sm@3.8.0"],
-              "entities_max_linked_at": "2026-09-22T09:00:00+00:00"}
+              "entities_max_linked_at": "2026-09-22T09:00:00+00:00",
+              # 6.5.0: the sense list and curation. A judge run moves
+              # only these — the links it curates are unchanged — and the
+              # graph it builds is different, so each must rebuild.
+              "entities_senses_versions": ["0f3b2c1d4e5a6978"],
+              "entities_curation_frames": 20, "entities_in_graph": 60,
+              "entities_curation_pending": 12,
+              "entities_curation_versions": ["a1b2c3d4e5f60718"],
+              "entities_judge_models": ["mistral-small3.2:24b"],
+              "entities_max_curated_at": "2026-09-29T09:00:00+00:00"}
 
     def test_every_event_stamp_is_compared(self):
         # The fixture above and the store's own list must not drift apart.

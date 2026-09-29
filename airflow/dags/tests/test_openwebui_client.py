@@ -192,6 +192,12 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.specialization_overrides, (("mixtral:8x7b", "coding"),))
         self.assertTrue(cfg.allow_cloud)
 
+    def test_rotated_host_order(self):
+        cfg = config()
+        self.assertEqual(cfg.rotated(0).host_order, (CCDD, UI))
+        self.assertEqual(cfg.rotated(1).host_order, (UI, CCDD))
+        self.assertEqual(cfg.rotated(2).host_order, (CCDD, UI))
+
     def test_keys_never_appear_in_a_repr(self):
         cfg = owc.LLMConfig.from_env({"OPENWEBUI_API_KEY": "sk-very-secret"})
         self.assertNotIn("sk-very-secret", repr(cfg))
@@ -470,6 +476,42 @@ class OutputAndProtocolTests(unittest.TestCase):
         res = c.chat([{"role": "user", "content": "x"}], owc.ModelRequest(model="gpt-oss:120b"),
                      validate=lambda t: json.loads(t)["definition"])
         self.assertEqual((res.content, res.parsed), ('{"definition": "d"}', "d"))
+
+    def test_a_deterministic_rejection_is_retried_once_warmer(self):
+        seen = []
+
+        def route(body):
+            seen.append(body["options"]["temperature"])
+            return chat_ok("prose" if len(seen) == 1 else '{"a": 1}')
+        s = StubSession({("POST", CCDD, owc.CHAT_PATH): route})
+        c, sleeps = client(s)
+        res = c.chat([{"role": "user", "content": "x"}], owc.ModelRequest(model="gpt-oss:120b"),
+                     options={"temperature": 0}, validate=json.loads, retry_temperature=0.4)
+        self.assertEqual((res.ok, res.parsed, res.attempts), (True, {"a": 1}, 2))
+        self.assertEqual((seen, sleeps), ([0, 0.4], []))
+        # rejected twice: give up after the warm retry, not after max_attempts
+        s = StubSession({("POST", CCDD, owc.CHAT_PATH): chat_ok("prose")})
+        c, sleeps = client(s)
+        res = c.chat([{"role": "user", "content": "x"}], owc.ModelRequest(model="gpt-oss:120b"),
+                     options={"temperature": 0}, validate=json.loads, retry_temperature=0.4)
+        self.assertEqual((res.ok, res.error_kind, res.attempts, len(s.posts()), sleeps),
+                         (False, "invalid", 2, 2, []))
+
+    def test_a_grammar_answer_filed_as_thinking_is_the_answer(self):
+        # Ollama 0.34.1 + qwen3-vl:32b with think=false and a format grammar
+        filed = Resp(200, {"message": {"role": "assistant", "content": "",
+                                       "thinking": '{"a": 1}'}, "done": True})
+        for think, fmt, ok in ((False, {"type": "object"}, True),
+                               (None, {"type": "object"}, False),     # thinking allowed:
+                               (False, None, False)):                 # no grammar: prose
+            s = StubSession({("POST", CCDD, owc.CHAT_PATH): filed})
+            c, _ = client(s)
+            res = c.chat([{"role": "user", "content": "x"}],
+                         owc.ModelRequest(model="gpt-oss:120b"), format=fmt, think=think,
+                         validate=json.loads)
+            self.assertEqual(res.ok, ok, (think, fmt))
+            if ok:
+                self.assertEqual(res.parsed, {"a": 1})
 
     def test_bad_request_is_permanent_and_not_retried(self):
         s = StubSession({("POST", CCDD, owc.CHAT_PATH): Resp(400, {"detail": "bad"})})

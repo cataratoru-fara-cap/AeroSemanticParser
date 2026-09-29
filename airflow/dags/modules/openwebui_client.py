@@ -309,6 +309,15 @@ class LLMConfig:
     def host_order(self) -> tuple[str, ...]:
         return tuple(h.base_url for h in self.hosts)
 
+    def rotated(self, k: int) -> "LLMConfig":
+        """The same config with the host priority rotated by ``k``: parallel
+        tasks that each take a different ``k`` start on different hosts.
+        A model only one host serves is still found on that host."""
+        if len(self.hosts) < 2 or k % len(self.hosts) == 0:
+            return self
+        k %= len(self.hosts)
+        return replace(self, hosts=self.hosts[k:] + self.hosts[:k])
+
 
 # ---------------------------------------------------------------------------
 # Inventory: what the servers say about their models
@@ -710,12 +719,19 @@ class OpenWebUIClient:
     def chat(self, messages: Sequence[Mapping[str, Any]], request: ModelRequest, *,
              purpose: str | None = None, format: Any = None,
              options: Mapping[str, Any] | None = None, think: bool | None = None,
-             validate: Callable[[str], Any] | None = None) -> LLMResult:
+             validate: Callable[[str], Any] | None = None,
+             retry_temperature: float | None = None) -> LLMResult:
         """One non-streaming chat completion.
 
         ``validate(content)`` returns the parsed value or raises ValueError;
         a rejection counts as an attempt and sleeps before the next one.
         Messages carrying ``images`` add the ``vision`` requirement.
+
+        ``retry_temperature``: for a caller asking at temperature 0, where
+        the same request gets the same rejected answer every time (a
+        runaway list came back identical 3 times of 3 on 2026-09-29), retry
+        a rejected answer ONCE at this temperature, without backoff, then
+        give up. None (the default) keeps the plain retry loop.
         """
         if request.kind != "generation":
             raise ValueError("chat() needs a generation request")
@@ -740,6 +756,16 @@ class OpenWebUIClient:
                 raise _ProtocolError("chat response has no message.content") from None
             if not isinstance(content, str):
                 raise _ProtocolError("chat message.content is not a string")
+            if not content and think is False and format is not None:
+                # Ollama 0.34.1 + qwen3-vl:32b (a thinking model): asked not
+                # to think and given a grammar, it answers straight away —
+                # the grammar allows nothing else — but the reply is filed
+                # under message.thinking and content comes back empty
+                # (2026-09-29, measured raw). With a grammar, that text IS
+                # the constrained answer; validate() still has the last word.
+                thinking = (body.get("message") or {}).get("thinking")
+                if isinstance(thinking, str) and thinking.strip():
+                    content = thinking
             if validate is None:
                 return content, content
             try:
@@ -748,7 +774,7 @@ class OpenWebUIClient:
                 raise _InvalidOutput(f"{exc.__class__.__name__}: {exc}") from None
 
         return self._call(CHAT_PATH, payload, parse, request,
-                          purpose or "chat")
+                          purpose or "chat", retry_temperature=retry_temperature)
 
     def embed(self, texts: Sequence[str], request: ModelRequest, *,
               purpose: str | None = None, normalize: bool = False) -> LLMResult:
@@ -799,7 +825,7 @@ class OpenWebUIClient:
 
     def _call(self, path: str, payload: Callable[[ModelInfo], dict],
               parse: Callable[[Any], tuple[Any, Any]], request: ModelRequest,
-              purpose: str) -> LLMResult:
+              purpose: str, retry_temperature: float | None = None) -> LLMResult:
         started = self._clock()
         attempts, trail = 0, []
         excluded: set[tuple[str, str]] = set()
@@ -819,7 +845,8 @@ class OpenWebUIClient:
                 raise self._exhausted(request, purpose, pin, trail)
 
             model = candidates[0]
-            outcome = self._attempt(model, path, payload(model), parse)
+            outcome = self._attempt(model, path, payload(model), parse,
+                                    retry_temperature=retry_temperature)
             attempts += outcome.attempts
             where = f"{host_name(model.host)}/{model.name}"
 
@@ -881,9 +908,11 @@ class OpenWebUIClient:
         self._sleep(cap * self._jitter())
 
     def _attempt(self, model: ModelInfo, path: str, body: dict,
-                 parse: Callable[[Any], tuple[Any, Any]]) -> _Attempt:
+                 parse: Callable[[Any], tuple[Any, Any]],
+                 retry_temperature: float | None = None) -> _Attempt:
         """Up to max_attempts on ONE host for ONE model."""
         last = "unknown"
+        warmed = False
         for attempt in range(1, self.cfg.max_attempts + 1):
             try:
                 resp = self.session.post(model.host + path, json=body,
@@ -918,6 +947,13 @@ class OpenWebUIClient:
                 except _InvalidOutput as exc:
                     last = f"output rejected: {exc}"
                     self._log_retry(model, attempt, last)
+                    if retry_temperature is not None:
+                        if warmed:
+                            break
+                        warmed = True
+                        body = {**body, "options": {**(body.get("options") or {}),
+                                                    "temperature": retry_temperature}}
+                        continue
                     if attempt < self.cfg.max_attempts:
                         self._backoff(attempt)
                     continue
@@ -938,7 +974,7 @@ class OpenWebUIClient:
             return _Attempt("permanent", attempt, error=f"{status} {detail}")
 
         kind = "invalid" if last.startswith("output rejected") else "exhausted"
-        return _Attempt(kind, self.cfg.max_attempts, error=last)
+        return _Attempt(kind, attempt, error=last)
 
 
 _CONNECT_FAILURE_MARKERS = ("NewConnectionError", "NameResolutionError",

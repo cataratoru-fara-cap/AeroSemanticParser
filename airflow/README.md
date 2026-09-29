@@ -14,6 +14,15 @@ kym_discovery ─▶ kym_scrape ─▶ kym_parse ─▶ kym_entities ─▶ kym_
                                                                kym_kg_validate ───────┘  (weekly: re-derive
                                                                                          the RDF via RML, diff it)
 
+   kym_templates ─▶ kym_template_entities ─▶ (kym_kg)      manual; neither triggers by default
+   imgflip_pages     template_entities                     (6.4.0: imgflip meme templates
+   imgflip_templates template_entity_failures                per frame, what they show)
+   frame_templates   data/kg/templates/entities/ (JSONL)
+
+   kym_entity_curation ─▶ (kym_kg)                          manual; 6.5.0: which Wikidata links
+   entity_curation        entity_curation_failures            reach the graph (rules + LLM judge)
+   data/kg/entity_curation/ (JSONL)
+
                      run_summaries  ◀── every stage records its run
                             │
                             ▼
@@ -87,11 +96,31 @@ default `data/wikidata/lexicon.sqlite`; download and build steps in
 `dags/modules/kg/wikidata.py`). Local and deterministic: the corpus links
 in minutes, and a frame is re-linked only when its text, the linker, the
 lexicon or the spaCy model changes. Every link is grounded to the
-characters it came from and keeps the features it was scored on, so the
-planned curation step — most links today are incidental nouns like
-"hair" or "mug", gap 09 — needs no re-run. With no lexicon the stage links
+characters it came from and keeps the features it was scored on, so
+curation (below) needs no re-run. A curated sense list,
+`dags/kg_config/entity_senses.yaml`, fixes the words the ranker gets wrong
+("series" is never the maths series; "a series of" links nothing; "X" is
+Twitter only where the text says so). With no lexicon the stage links
 nothing and triggers the next one anyway. MODEL.md's "Entities" section
 has what was taken from IMKG and what was changed.
+
+**`kym_entity_curation`** (manual) — decides which of those links reach
+the graph (6.5.0, gap 09): most of what the linker finds is incidental
+("hair", "mug", "popularity"). Title links are always kept; About and tag
+links go through local rules first (`kg/curation.py`,
+`dags/kg_config/entity_curation.yaml`: platforms kept, body parts and
+measures dropped, links the title or a tag agrees with kept, whole tags
+that name something kept), then an **LLM judge** reads the entry and
+gives each undecided item a role — subject, source, format, platform, or
+incidental / wrong sense (ministral-3:14b; a link read only from the About
+must be kept by it under two differently worded prompts). Meme formats
+("image macro", "copypasta") are kept and generic About words ("image",
+"TikToker") dropped by list, before the judge. Dropped links stay in
+`entity_curation` with their reason; kept ones carry it into the graph
+(`mk:relevanceBasis`). Until a frame is judged only its rule-kept links
+reach the graph. Measured with `python -m modules.kg.entity_review draw`
+/ `score` against the bar: of the kept, ≥ 0.85 relevant; of the dropped,
+≤ 0.15.
 
 **`kym_events`** (triggered by entities) — extracts spatio-temporal events
 from every Origin and Spread section (36,011 of them), one LLM call per
@@ -138,6 +167,43 @@ judgement rather than this code — gap 08 has the numbers and the caveat
 that the reader was Claude, not a person. In the graph (6.3.0) each frame's
 events are one chain, Origin then Spread, in the order the page tells them
 (`mk:nextInStory`) — page order, not time order; time order is in the dates.
+
+**`kym_templates`** (manual) — finds the **imgflip meme templates** each
+frame is made with. Eligible: every `meme`, plus any frame that links to
+imgflip or has a KYM *Template* section (18,479). For each, imgflip's
+public search is queried with the title (`/memesearch`, server-rendered, no
+login; page 1 always, later pages while they stay relevant), directly at
+~1 page/s with a research user agent — ScrapingAnt only if imgflip starts
+refusing us (`modules/imgflip_client.py`; imgflip's internal JSON endpoint
+is never used). Candidates are scored on name (IMKG's difflib ratio and
+ordered word containment), on their picture against the frame's own KYM
+images, on search rank and imgflip's featured flag; a frame's own KYM
+"Meme Generator" link is ground truth (782 frames). **Near-identical
+uploads are one template** — resizes, re-encodes, mirror images (pHash +
+dHash on the thumbnails, borders trimmed, `kg/visual.py`); the others are
+kept in `imgflip_templates` as its duplicates and never reach the graph.
+Each frame keeps **0 templates** (with the reason) **or 1 to 10, most
+varied first**. Selection is one global task over every searched frame, a
+function of what is stored — a new threshold re-selects without a request.
+Kept templates get their `/memetemplate` details and blank image. Measured
+on 50 + 50 random frames (2026-09-28, read by Claude from contact sheets,
+`kg/template_review.py`): ~0.95 of kept templates relevant, ~6.7 s and
+~2 page requests per frame; `kg/templates.py` has the calibration and the
+residual (a crop of the same photo still counts as its own template).
+
+**`kym_template_entities`** (manual) — reads each kept template's image
+with the lab's vision model (**qwen3-vl:32b**, one call at a time, like
+`kym_events`): named people and characters, animals, objects, logos,
+artworks and printed text, each with a box; every box and name is checked
+before anything is stored (`kg/template_entities.py`,
+`kg_config/template_entity_schema.json`). Each region is linked to Wikidata
+through the same local lexicon as `kym_entities`, preferring what the
+frame's own text already links. A deterministic 1% is also read with no
+context, to measure how often the frame's title put a name in the model's
+mouth (on the pilot the context-only names were all right, so they are
+kept). In the graph: every named entity and printed text, plus the three
+largest generic ones; everything stays in `template_entities`. A new
+lexicon re-links without re-reading.
 
 **Reviewing the event layer.** The events are a model's reading, so the
 dashboard has one page that WRITES: `:8080/dashboard/` → *Review*. Draw the
@@ -254,7 +320,13 @@ the Wikidata links from `kym_entities`: the items are Wikidata's own
 resources (`http://www.wikidata.org/entity/Q…`, labelled, never typed),
 and the frame's `m4s:fromAbout` / `m4s:fromTags` / `mk:fromTitle` edges to
 them are a linker's reading — each mention annotated with how sure it was
-(`mk:linkScore`) and how it was found (`mk:linkMethod`).
+(`mk:linkScore`) and how it was found (`mk:linkMethod`). The template
+layer (6.4.0) adds `mk:MemeTemplate` nodes (`mk:template/<imgflip id>`,
+with IMKG's `imgflip:templateId`), linked from each frame that selected
+them by `mk:hasTemplate` and back by IMKG's `m4s:templateOf`, annotated
+with the fit (`mk:templateScore`); what a template's image shows is linked
+with IMKG's `m4s:fromImage`, each region annotated with its box
+(`mk:boundingBox`, a Media Fragments literal) and the model that read it.
 
 **`kym_kg`** (triggered by events) — lifts `entries`, the events
 extracted from them and their Wikidata links, into a knowledge graph

@@ -56,6 +56,10 @@
 # mk:nerLabel). The item is Wikidata's canonical entity IRI and gets its
 # rdfs:label and no class.
 #
+# 6.5.0: only RELEVANT links are emitted (modules/kg/curation.py: local
+# rules, then an LLM judge; the dropped ones stay in Mongo). Each kept
+# mention says why it was kept (mk:relevanceBasis).
+#
 # RDF-star: each *_occurrences.csv has a row per mention. Its *_edge mapping
 # is quotedNonAsserted (morph-kgc still asserts it; the same triple already
 # comes from the edge CSV, and RDF is a set), and the annotation mapping over
@@ -78,6 +82,7 @@ prefixes:
   skos: "http://www.w3.org/2004/02/skos/core#"
   rdfs: "http://www.w3.org/2000/01/rdf-schema#"
   xsd: "http://www.w3.org/2001/XMLSchema#"
+  imgflip: "https://imgflip.com/"
 
 mappings:
 
@@ -417,6 +422,65 @@ mappings:
     po:
       - [m4s:fromAbout, http://www.wikidata.org/entity/$(qid)~iri]
 
+  # ---- MemeAtlas: imgflip meme templates (6.4.0) ------------------------------
+  # mk:template/<imgflip id>, minted here like mk:event/<id>. The id columns
+  # are all digits and are read as integers; no row lacks one, so the IRIs
+  # and imgflip:templateId (IMKG's term, a plain literal as IMKG writes it)
+  # come out exactly as modules/kg/rdf.py writes them.
+  template:
+    sources:
+      - [rml_data/templates.csv~csv]
+    subjects: $(iri)
+    po:
+      - [a, mk:MemeTemplate]
+      - [rdfs:label, $(label)]
+      - [imgflip:templateId, $(template_id)]
+      - [mk:fileFormat, $(file_format)]
+
+  template_alt_name:
+    sources:
+      - [rml_data/template_alt_names.csv~csv]
+    subjects: $(iri)
+    po:
+      - [skos:altLabel, $(alt_name)]
+
+  # frame -> template, and IMKG's m4s:templateOf back (the series pattern).
+  has_template:
+    sources:
+      - [rml_data/template_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [mk:hasTemplate, https://meme4.science/atlas/template/$(template)~iri]
+
+  has_template_inverse:
+    sources:
+      - [rml_data/template_edges.csv~csv]
+    subjects: https://meme4.science/atlas/template/$(template)
+    po:
+      - [m4s:templateOf, $(url)~iri]
+
+  template_image:
+    sources:
+      - [rml_data/template_image_edges.csv~csv]
+    subjects: https://meme4.science/atlas/template/$(template)
+    po:
+      - [mk:templateImage, $(image)~iri]
+
+  template_page:
+    sources:
+      - [rml_data/template_page_edges.csv~csv]
+    subjects: https://meme4.science/atlas/template/$(template)
+    po:
+      - [mk:imgflipPage, $(page_url)~iri]
+
+  # IMKG's own predicate for an image's Wikidata entities, verbatim.
+  entity_from_image:
+    sources:
+      - [rml_data/entity_image_edges.csv~csv]
+    subjects: https://meme4.science/atlas/template/$(template)
+    po:
+      - [m4s:fromImage, http://www.wikidata.org/entity/$(qid)~iri]
+
   # ---- MemeAtlas: occurrences, as RDF-star annotations -----------------------
 
   relates_occurrence_edge:
@@ -495,6 +559,7 @@ mappings:
       - [mk:linkScore, $(link_score), xsd:decimal]
       - [mk:linkMethod, $(link_method)]
       - [mk:nerLabel, $(ner_label)]
+      - [mk:relevanceBasis, $(relevance_basis)]
 
   entity_tag_occurrence_edge:
     sources:
@@ -513,6 +578,7 @@ mappings:
       - [mk:linkScore, $(link_score), xsd:decimal]
       - [mk:linkMethod, $(link_method)]
       - [mk:nerLabel, $(ner_label)]
+      - [mk:relevanceBasis, $(relevance_basis)]
 
   entity_about_occurrence_edge:
     sources:
@@ -531,3 +597,43 @@ mappings:
       - [mk:linkScore, $(link_score), xsd:decimal]
       - [mk:linkMethod, $(link_method)]
       - [mk:nerLabel, $(ner_label)]
+      - [mk:relevanceBasis, $(relevance_basis)]
+
+  # How well a template fits the frame, and why it was kept (6.4.0) — on the
+  # frame's mk:hasTemplate triple, one row per (frame, template).
+  template_occurrence_edge:
+    sources:
+      - [rml_data/template_occurrences.csv~csv]
+    subjects: $(src)
+    po:
+      - [mk:hasTemplate, https://meme4.science/atlas/template/$(dst)~iri]
+
+  template_occurrence:
+    sources:
+      - [rml_data/template_occurrences.csv~csv]
+    subjects:
+      - quotedNonAsserted: template_occurrence_edge
+    po:
+      - [mk:templateScore, $(template_score), xsd:decimal]
+      - [mk:templateMatch, $(template_match)]
+
+  # One row per REGION of a template image a Wikidata item was read from.
+  entity_image_occurrence_edge:
+    sources:
+      - [rml_data/entity_image_occurrences.csv~csv]
+    subjects: https://meme4.science/atlas/template/$(src)
+    po:
+      - [m4s:fromImage, http://www.wikidata.org/entity/$(dst)~iri]
+
+  entity_image_occurrence:
+    sources:
+      - [rml_data/entity_image_occurrences.csv~csv]
+    subjects:
+      - quotedNonAsserted: entity_image_occurrence_edge
+    po:
+      - [mk:mentionText, $(mention_text)]
+      - [mk:linkScore, $(link_score), xsd:decimal]
+      - [mk:linkMethod, $(link_method)]
+      - [mk:depictionKind, $(depiction_kind)]
+      - [mk:boundingBox, $(bounding_box)]
+      - [mk:detectedBy, $(detected_by)]

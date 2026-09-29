@@ -108,13 +108,21 @@ __all__ = [
     "MIN_LINK_SCORE", "WEIGHTS", "W_CLARITY", "NER_FAMILIES", "frame_key", "frame_unit",
     "field_text", "load_nlp", "nlp_stamp", "model_stamp", "Linker", "audit",
     "link_units", "append_jsonl", "iter_jsonl", "main",
+    "Sense", "Senses", "NO_SENSES", "load_senses", "sense_blocks",
 ]
 
 # Bump when THIS MODULE's contract changes — recognition, lookup keys, the
 # scoring, the threshold, the record's shape. The store re-links every frame
 # whose stored linker_version differs.
 #   1.1.0  MIN_LINK_SCORE 0.50 -> 0.45, re-read on the full lexicon.
-LINKER_VERSION = "1.1.0"
+#   1.2.0  (gap 09) curated SENSES (kg_config/entity_senses.yaml): "a series
+#          of" links nothing and "series" is never the maths series; "game"
+#          is a video game; "X" is Twitter only where the text says so. And a
+#          lookup key whose best candidate is under the threshold no longer
+#          blocks the next key: "video games" found only the album "Video
+#          Games" (rejected), so the lemma "video game" was never tried and
+#          the suffix "games" linked to games-in-general — 222 times.
+LINKER_VERSION = "1.2.0"
 
 # Where a mention was read from. Order is page order and the graph's.
 SOURCE_FIELDS: tuple[str, ...] = ("title", "tag", "about")
@@ -136,6 +144,10 @@ DEFAULT_SPACY_MODEL = "en_core_web_sm"
 # are mostly patterns no threshold removes — a common word's other sense,
 # a nationality read as its language, a fragment of a longer name — gap 09.
 MIN_LINK_SCORE = 0.45
+
+# link_label: a candidate the frame's own text already links is taken, and
+# scores at least this (the template layer; frame linking never uses it).
+FRAME_AGREE_SCORE = 0.9
 
 # Ranking weights (sum 1.0). The certain link (P13484) bypasses them.
 #   prior    popularity: log Wikipedia sitelinks (kg/wikidata.prior)
@@ -192,6 +204,100 @@ _QID = re.compile(r"^Q[1-9][0-9]*$")
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# ---------------------------------------------------------------- senses ----
+# A small curated list of surfaces the ranking gets WRONG, found by reading
+# the corpus's biggest hubs (gap 09): "series" is the maths series in
+# Wikidata's label index because the sense KYM means ("series of creative
+# works") is not labelled "series"; half the time it is the quantifier "a
+# series of", which names nothing at all. No threshold fixes that — the
+# right item is not even a candidate — so the fix is data, tracked in
+# kg_config/ like the origin and tag lists, and its sha is a linker stamp.
+
+@dataclass(frozen=True)
+class Sense:
+    """What to do with one surface key (a normalised lookup key)."""
+    link: bool = True                          # False: this surface links nothing
+    never: frozenset[int] = frozenset()        # items it must never link to
+    instead: int | None = None                 # the item it does name
+    unless_next: tuple[str, ...] = ()          # no link when followed by one of these
+    only_if_prev: tuple[str, ...] = ()         # link only when preceded by one...
+    only_if_next: tuple[str, ...] = ()         # ...or followed by one of these
+
+    @property
+    def guarded(self) -> bool:
+        return bool(self.unless_next or self.only_if_prev or self.only_if_next)
+
+
+@dataclass(frozen=True)
+class Senses:
+    by_key: dict[str, Sense]
+    version: str
+
+
+NO_SENSES = Senses({}, "none")
+
+
+def _qids(values) -> frozenset[int]:
+    out = set()
+    for v in values or []:
+        s = str(v).strip()
+        if not _QID.match(s):
+            raise ValueError(f"not a QID: {v!r}")
+        out.add(int(s[1:]))
+    return frozenset(out)
+
+
+def load_senses(path: str | None) -> Senses:
+    """kg_config/entity_senses.yaml -> Senses; NO_SENSES when absent. The
+    version is the file's sha256[:16], a linker stamp: editing the list
+    re-links every frame."""
+    if not path or not os.path.exists(path):
+        return NO_SENSES
+    import yaml
+
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    doc = yaml.safe_load(raw) or {}
+    by_key: dict[str, Sense] = {}
+    for surface, spec in (doc.get("senses") or {}).items():
+        spec = spec or {}
+        instead = spec.get("instead")
+        sense = Sense(
+            link=bool(spec.get("link", True)),
+            never=_qids(spec.get("never")),
+            instead=min(_qids([instead])) if instead else None,
+            unless_next=tuple(str(w).lower() for w in spec.get("unless_next") or ()),
+            only_if_prev=tuple(str(w).lower() for w in spec.get("only_if_prev") or ()),
+            only_if_next=tuple(str(w).lower() for w in spec.get("only_if_next") or ()))
+        if sense.instead is not None and sense.instead in sense.never:
+            raise ValueError(f"sense {surface!r}: 'instead' is also in 'never'")
+        for key in {norm(str(surface)), *(norm(str(a)) for a in spec.get("also") or ())}:
+            by_key[key] = sense
+    return Senses(by_key, hashlib.sha256(raw).hexdigest()[:16])
+
+
+def _word_at(text: str, words: Sequence[str]) -> bool:
+    """``text`` begins with one of ``words`` as a whole word or phrase."""
+    t = text.lower()
+    return any(t == w or t.startswith(w) and not t[len(w):len(w) + 1].isalnum()
+               for w in words)
+
+
+def sense_blocks(sense: Sense, text: str, start: int, end: int) -> bool:
+    """The context guards: does this occurrence of the surface link nothing?"""
+    after = text[end:].lstrip()
+    before = text[:start].rstrip().lower()
+    if sense.unless_next and _word_at(after, sense.unless_next):
+        return True
+    if sense.only_if_prev or sense.only_if_next:
+        prev_ok = any(before.endswith(w) and (len(before) == len(w)
+                                              or not before[-len(w) - 1].isalnum())
+                      for w in sense.only_if_prev)
+        next_ok = bool(sense.only_if_next) and _word_at(after, sense.only_if_next)
+        return not (prev_ok or next_ok)
+    return False
 
 
 # ------------------------------------------------------------- the units ----
@@ -394,15 +500,18 @@ class Linker:
     """Recognise and link entities for frame units against one lexicon and
     one spaCy pipeline. Construct once per mapped task."""
 
-    def __init__(self, lexicon: Lexicon, nlp, *, min_score: float = MIN_LINK_SCORE):
+    def __init__(self, lexicon: Lexicon, nlp, *, min_score: float = MIN_LINK_SCORE,
+                 senses: Senses = NO_SENSES):
         from spacy.lang.en.stop_words import STOP_WORDS
         self.lexicon = lexicon
         self.nlp = nlp
         self.min_score = min_score
+        self.senses = senses
         self.stop = frozenset(STOP_WORDS)
         self.stamps = {"linker_version": LINKER_VERSION,
                        "lexicon_version": lexicon.version,
-                       "nlp_model": nlp_stamp(nlp)}
+                       "nlp_model": nlp_stamp(nlp),
+                       "senses_version": senses.version}
         self._families: dict[int, frozenset[int]] = {}
         self._self_qid: int | None = None     # the frame being linked's own item
 
@@ -464,17 +573,53 @@ class Linker:
 
     # -- one field ------------------------------------------------------------
 
+    def _candidates(self, key: str) -> list[Candidate]:
+        """The lexicon's candidates for a key, after the curated senses: a
+        ``never`` item is gone, and an ``instead`` item is the only one."""
+        sense = self.senses.by_key.get(key)
+        if sense is None:
+            return list(self.lexicon.candidates(key))
+        if not sense.link:
+            return []
+        if sense.instead is not None:
+            item = self.lexicon.entity(sense.instead)
+            return [item] if item is not None else []
+        return [c for c in self.lexicon.candidates(key) if c.qid not in sense.never]
+
     def _resolve(self, text: str, keys: Sequence[str], *, ner_label: str | None,
                  context: set[str], self_qid: int | None, case_known: bool = True):
-        """(scored candidates, the key that matched) for the first key that
-        names anything in the lexicon; ([], None) when none does."""
+        """(scored candidates, the key that matched) for the first key whose
+        best candidate clears the threshold — or, when none does, for the key
+        whose best candidate came closest; ([], None) when no key names
+        anything. (Before 1.2.0 the first key that named ANYTHING won, so a
+        literal plural naming only junk — "video games", an album — hid the
+        lemma "video game".) A curated ``instead`` item is linked at no less
+        than the threshold: it is a person's decision, not a guess."""
+        best, best_key = [], None
         for key in keys:
-            cands = self.lexicon.candidates(key)
-            if cands:
-                return self.score(text, cands, ner_label=ner_label,
-                                  context=context, self_qid=self_qid,
-                                  case_known=case_known), key
-        return [], None
+            cands = self._candidates(key)
+            if not cands:
+                continue
+            scored = self.score(text, cands, ner_label=ner_label, context=context,
+                                self_qid=self_qid, case_known=case_known)
+            sense = self.senses.by_key.get(key)
+            if sense is not None and sense.instead is not None:
+                s, c, feats, rank = scored[0]
+                scored[0] = (max(s, self.min_score), c, {**feats, "sense": 1.0}, rank)
+            if scored[0][0] >= self.min_score:
+                return scored, key
+            if not best or scored[0][0] > best[0][0]:
+                best, best_key = scored, key
+        return best, best_key
+
+    def _sense_blocked(self, surface: str, keys: Sequence[str], text: str,
+                       start: int, end: int) -> bool:
+        """A guarded sense (e.g. "series" followed by "of") in this context."""
+        for key in keys:
+            sense = self.senses.by_key.get(key)
+            if sense is not None and sense.guarded:
+                return sense_blocks(sense, text, start, end)
+        return False
 
     def _mention(self, field: str, text: str, start: int, end: int, method: str,
                  scored: list, *, ner_label: str | None, proper: bool,
@@ -512,7 +657,11 @@ class Linker:
             if not free(sp.start, sp.end):
                 continue
             surface = text[sp.start:sp.end]
-            scored, _key = self._resolve(surface, _keys(surface, sp.lemma_key),
+            keys = _keys(surface, sp.lemma_key)
+            if self._sense_blocked(surface, keys, text, sp.start, sp.end):
+                stats["sense_blocked"] = stats.get("sense_blocked", 0) + 1
+                continue
+            scored, _key = self._resolve(surface, keys,
                                          ner_label=sp.ner_label, context=context,
                                          self_qid=self._self_qid,
                                          case_known=case_known)
@@ -531,6 +680,72 @@ class Linker:
             if free(sp.start, sp.end):
                 nil.append({"field": field, "text": text[sp.start:sp.end],
                             "start": sp.start, "end": sp.end, "ner_label": sp.ner_label})
+
+    # -- one short name (template layer) --------------------------------------
+
+    def link_label(self, text: str, *, field: str, context: set[str],
+                   ner_label: str | None = None, prefer: Iterable[int] = (),
+                   method: str = "label") -> tuple[dict | None, str]:
+        """Link ONE short name, taken whole — what a vision model called a
+        region of a meme template ("Drake", "Kermit the Frog", "cat") — to
+        a Wikidata item.
+
+        Returns (mention | None, outcome) where outcome is ``linked``,
+        ``nil`` (the lexicon has no such name) or ``rejected`` (under
+        min_score).
+
+        Unlike ``link``, this never consults the KYM-slug join: the text is
+        not a KYM page, and an imgflip URL slug that happens to equal a KYM
+        slug must not become a certain link. ``prefer`` holds the items the
+        FRAME already links (its own item, its About/tag links): a
+        candidate among them wins and scores at least FRAME_AGREE_SCORE,
+        method ``frame_agree`` — the frame's text already names it, which
+        is the strongest context a four-word label can have. Frame linking
+        (``link``) is untouched, so LINKER_VERSION does not move.
+        """
+        text = (text or "").strip()
+        if not text:
+            return None, "nil"
+        doc = self.nlp(text)
+        head = doc[-1] if len(doc) else None
+        lemma_key = None
+        if head is not None and head.lemma_ and head.lemma_.lower() != head.text.lower():
+            lemma_key = norm(text[:head.idx] + head.lemma_)
+        scored, _key = self._resolve(text, _keys(text, lemma_key), ner_label=ner_label,
+                                     context=context, self_qid=None)
+        if not scored:
+            return None, "nil"
+        preferred = set(prefer)
+        for i, (s, c, feats, rank) in enumerate(scored):
+            if c.qid in preferred:
+                if i:
+                    scored = [scored[i]] + scored[:i] + scored[i + 1:]
+                s = max(s, FRAME_AGREE_SCORE)
+                scored[0] = (s, c, feats, rank)
+                return self._mention(field, text, 0, len(text), "frame_agree", scored,
+                                     ner_label=ner_label,
+                                     proper=text[:1].isupper()), "linked"
+        if scored[0][0] < self.min_score:
+            return None, "rejected"
+        return self._mention(field, text, 0, len(text), method, scored,
+                             ner_label=ner_label, proper=text[:1].isupper()), "linked"
+
+    def link_spans(self, text: str, *, field: str, context: set[str],
+                   methods: Iterable[str] = ("title", "ner", "propn")) -> list[dict]:
+        """Link the names INSIDE a piece of text — the words printed on a
+        template ("CHANGE MY MIND", a sign, a logo) — with the frame
+        pipeline's recognition, keeping only the span methods given (named
+        entities, proper-noun runs and the whole text by default: a noun
+        chunk of a caption is too often an incidental word)."""
+        mentions: list[dict] = []
+        nil: list[dict] = []
+        doc = self.nlp(text) if text else None
+        self._self_qid = None
+        self._link_text(field, text, doc, context=context, whole=True,
+                        mentions=mentions, nil=nil, stats={"rejected": 0},
+                        case_known=False)
+        wanted = set(methods)
+        return [m for m in mentions if m["method"] in wanted]
 
     # -- one frame ------------------------------------------------------------
 
@@ -650,7 +865,7 @@ def audit(record: dict, unit: dict, *, min_score: float = MIN_LINK_SCORE) -> lis
         problems.append("entity_count does not match the distinct QIDs")
     if record.get("source_sha256") != unit.get("source_sha256"):
         problems.append("source_sha256 is not the unit's")
-    for key in ("linker_version", "lexicon_version", "nlp_model"):
+    for key in ("linker_version", "lexicon_version", "nlp_model", "senses_version"):
         if not record.get(key):
             problems.append(f"{key} missing")
     return problems
@@ -733,6 +948,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ln.add_argument("--out", required=True, help="entities JSONL (appended)")
     ln.add_argument("--model", default=None, help=f"spaCy model ({DEFAULT_SPACY_MODEL})")
     ln.add_argument("--limit", type=int, default=0)
+    ln.add_argument("--senses", default=None,
+                    help="kg_config/entity_senses.yaml (none = no curated senses)")
 
     au = sub.add_parser("audit", help="re-check an entities JSONL against its entries")
     au.add_argument("--input", required=True)
@@ -755,7 +972,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.limit:
         units = units[:args.limit]
     with Lexicon(args.lexicon) as lexicon:
-        linker = Linker(lexicon, load_nlp(args.model))
+        linker = Linker(lexicon, load_nlp(args.model), senses=load_senses(args.senses))
         summary = link_units(linker, units,
                              on_record=lambda r: append_jsonl(args.out, r))
     print(json.dumps(summary, indent=2))

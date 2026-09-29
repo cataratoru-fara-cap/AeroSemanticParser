@@ -37,7 +37,18 @@ orchestration to `dags/kym_kg_dag.py`.
                    and handed to build.py as data, like events. Neither
                    reaches the network: the dump is downloaded once, by hand.
 
-The two LLM modules are the only ones here that reach the network, and
+    visual.py      perceptual hashes (pHash, dHash, mirrored, borders trimmed)
+                   and the band index that finds near-duplicate images.
+                   Pillow + numpy + scipy; no network.
+    templates.py   which imgflip templates fit a KYM frame: queries, the
+                   search (through handed-in functions), relevance, global
+                   dedup, the 0-or-1-to-10 most-varied selection.
+    template_review.py   contact sheets for reading those selections.
+    template_entities.py what a template image shows (the lab's vision
+                   model, through the client it is handed), grounded, and
+                   linked to Wikidata through entities.Linker.link_label.
+
+The LLM modules are the only ones here that reach the network, and
 they do it exclusively through modules/openwebui_client.py. Both take the
 client as an argument rather than constructing one, so importing either
 reads no configuration and contacts nothing.

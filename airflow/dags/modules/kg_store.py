@@ -90,7 +90,8 @@ __all__ = [
     "current_build", "current_build_id", "prune_builds", "fail_build",
     "mark_verified", "record_validation", "events_for", "extraction_stamps",
     "EVENT_STAMP_KEYS", "entity_links_for", "linking_stamps",
-    "ENTITY_STAMP_KEYS",
+    "ENTITY_STAMP_KEYS", "template_links_for", "template_stamps",
+    "TEMPLATE_STAMP_KEYS",
 ]
 
 # The pointer document's _id. A build_id can never collide with it because
@@ -128,6 +129,7 @@ _CONCEPT_KIND_FOR_PREFIX = {
     "event:": "event",
     # Same defensive reason: build.py always emits the node with its edge.
     "wd:": "wikidata_entity",
+    "template:": "template",
 }
 
 # The event layer's staleness stamps (6.0.0), compared by is_stale like
@@ -145,8 +147,23 @@ EVENT_STAMP_KEYS: tuple[str, ...] = (
 # total and the lexicon versions ride along with the frame count.
 ENTITY_STAMP_KEYS: tuple[str, ...] = (
     "entities_frames", "entities_mentions", "entities_linker_versions",
-    "entities_lexicon_versions", "entities_nlp_models",
+    "entities_lexicon_versions", "entities_nlp_models", "entities_senses_versions",
     "entities_max_linked_at",
+    # 6.5.0: curation (gap 09) — which links are kept, and by what judgement.
+    "entities_curation_frames", "entities_in_graph", "entities_curation_pending",
+    "entities_curation_versions", "entities_judge_models", "entities_max_curated_at",
+)
+
+# The template layer's (6.4.0): which templates each frame selected
+# (template_store), and what their images show (template_entity_store).
+# The selection digest moves when a re-selection changes WHICH templates
+# or their scores, even when every count stays the same.
+TEMPLATE_STAMP_KEYS: tuple[str, ...] = (
+    "templates_frames", "templates_links", "templates_selection_digest",
+    "templates_versions", "templates_detailed", "templates_max_selected_at",
+    "template_entities_templates", "template_entities_in_graph",
+    "template_entities_lexicons", "template_entities_prompts",
+    "template_entities_models", "template_entities_max_linked_at",
 )
 
 
@@ -290,7 +307,7 @@ class KGStore(MongoStoreBase):
                     "origin_taxonomy_version", "tag_denylist_version",
                     "entries_count", "parser_versions",
                     "corpus_policy_versions", "max_parsed_at",
-                    *EVENT_STAMP_KEYS, *ENTITY_STAMP_KEYS):
+                    *EVENT_STAMP_KEYS, *ENTITY_STAMP_KEYS, *TEMPLATE_STAMP_KEYS):
             if stamps.get(key) != published.get(key):
                 return True, (f"{key} changed: "
                               f"{published.get(key)!r} -> {stamps.get(key)!r}")
@@ -628,17 +645,68 @@ def extraction_stamps(snapshot_at) -> dict[str, Any]:
 
 def entity_links_for(entry_ids: list[str], snapshot_at) -> dict[str, list[dict]]:
     """{frame_url: [mention, ...]} for one build chunk, frozen at the
-    snapshot — a deliberate re-export of entity_store.links_for, for the
-    reason events_for gives."""
-    from modules import entity_store
-    return entity_store.links_for(entry_ids, linked_at_lte=snapshot_at)
+    snapshot: entity_store's links, CURATED (6.5.0, gap 09) — only the
+    mentions entity_curation_store keeps, each with its ``relevance_basis``.
+
+    A frame whose curation is missing, or was computed over other links (a
+    re-link since), keeps only what needs no lexicon and no judge: its
+    title links and its own item. Gabi: until curation has read a frame,
+    only rule-kept links reach the graph."""
+    from modules import entity_curation_store, entity_store
+    from modules.kg import curation as kc
+
+    links = entity_store.links_for(entry_ids, linked_at_lte=snapshot_at)
+    curated = entity_curation_store.decisions_for(entry_ids, curated_at_lte=snapshot_at)
+    out: dict[str, list[dict]] = {}
+    for url, mentions in links.items():
+        cur = curated.get(url)
+        fresh = cur is not None and cur["mentions_sha"] == kc.mentions_sha(mentions)
+        kept = []
+        for m in mentions:
+            if fresh:
+                basis = cur["keep"].get(kc.mention_key(m))
+            elif m.get("field") == "title":
+                basis = "title"
+            elif m.get("method") == "kym_id":
+                basis = "own_item"
+            else:
+                basis = None
+            if basis:
+                kept.append({**m, "relevance_basis": basis})
+        if kept:
+            out[url] = kept
+    return out
 
 
 def linking_stamps(snapshot_at) -> dict[str, Any]:
     """The entity layer's staleness stamps over the build's frozen
-    generation. See ENTITY_STAMP_KEYS."""
-    from modules import entity_store
-    return entity_store.linking_stamps(linked_at_lte=snapshot_at)
+    generation — the links and (6.5.0) their curation. See
+    ENTITY_STAMP_KEYS."""
+    from modules import entity_curation_store, entity_store
+    return {**entity_store.linking_stamps(linked_at_lte=snapshot_at),
+            **entity_curation_store.curation_stamps(curated_at_lte=snapshot_at)}
+
+
+def template_links_for(entry_ids: list[str], snapshot_at) -> dict[str, list[dict]]:
+    """{frame_url: [template record]} for one build chunk, frozen at the
+    snapshot: each frame's selected templates with their details
+    (template_store) and their in-graph image entities
+    (template_entity_store) as ``mentions`` — the shape build.py's
+    ``templates=`` takes. Re-exported for the reason events_for gives."""
+    from modules import template_entity_store, template_store
+    by_frame = template_store.selections_for(entry_ids, selected_at_lte=snapshot_at)
+    tids = {t["template_id"] for recs in by_frame.values() for t in recs}
+    mentions = template_entity_store.graph_mentions_for(tids, linked_at_lte=snapshot_at)
+    return {url: [dict(t, mentions=mentions.get(t["template_id"], [])) for t in recs]
+            for url, recs in by_frame.items()}
+
+
+def template_stamps(snapshot_at) -> dict[str, Any]:
+    """The template layer's staleness stamps over the build's frozen
+    generation. See TEMPLATE_STAMP_KEYS."""
+    from modules import template_entity_store, template_store
+    return {**template_store.selection_stamps(selected_at_lte=snapshot_at),
+            **template_entity_store.graph_stamps(linked_at_lte=snapshot_at)}
 
 
 def iter_nodes(build_id: str, kinds=None, fields=None):

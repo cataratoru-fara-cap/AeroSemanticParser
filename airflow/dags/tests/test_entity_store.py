@@ -171,7 +171,8 @@ class ReadTests(unittest.TestCase):
 
     def test_links_for_hands_the_build_only_what_it_uses(self):
         (m, _) = self.s.links_for(self.ids)[URL]
-        self.assertEqual(set(m), set(st.LINK_PROJECTION_FIELDS))
+        # tag_index exists on tag mentions only; this one is from the About
+        self.assertEqual(set(m), set(st.LINK_PROJECTION_FIELDS) - {"tag_index"})
         self.assertNotIn("features", m)
 
     def test_links_for_honours_the_snapshot(self):

@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+
+<head>
+
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<script>
+a=new XMLHttpRequest();
+a.onload=function(){I=JSON.parse(this.responseText);if(window.initData)initData();};
+a.open('get','/ajax_get_le_data',true);
+a.send();
+</script>
+
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-DCRTFFEBRL"></script>
+<script>
+	window.dataLayer = window.dataLayer || [];
+	function gtag(){dataLayer.push(arguments);}
+	gtag('js', new Date());
+	gtag('config', 'G-DCRTFFEBRL');
+	gtag('set', 'user_properties', {
+		app_type: (typeof window.matchMedia !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches) ? 'standalone' : 'web'
+	});
+	gtag('config', 'G-X8YQQMPY4Q', {send_page_view: false});
+	window._pwGA4PageviewId = ''.concat(Date.now());
+	gtag('event', 'ramp_js', {
+		send_to: 'G-X8YQQMPY4Q',
+		pageview_id: window._pwGA4PageviewId
+	});
+</script>
+<script>
+version=1551;
+spriteNum=5223;
+IMAGE_DOMAIN='//i.imgflip.com/';
+mm=0;
+</script>
+
+<style>
+.i-banner{width:320px;height:50px;display:block;margin:0 auto;overflow:hidden;}
+@media(min-width:500px){.i-banner{width:468px;height:60px;}}
+@media(min-width:760px){.i-banner{width:728px;height:90px;}}
+</style>
+<link rel="icon" href="/favicon.ico?b"/>
+<link rel="icon" sizes="96x96" href="/imgflip-icon-96.png"/>
+<link rel="icon" sizes="180x180" href="/apple-touch-icon.png?c"/>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?c"/>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Imgflip">
+<meta name="theme-color" content="#333"/>
+<link rel="manifest" href="/manifest.json">
+<link rel='stylesheet' href='//s.imgflip.com/v1551/style.css' media='screen'/>
+	<title>Distracted Boyfriend Blank Meme Template - Imgflip</title>
+	<meta name='description' content='Blank high quality Distracted Boyfriend meme template'/>
+
+<link rel='stylesheet' href='//s.imgflip.com/v1551/memetemplate.css' media='screen'/>
+
+</head>
+
+<body class="fixed-header">
+<script>
+	var dm = document.cookie.match(/(^|;\s?)dm=([^;]+)/);
+	dm = dm ? dm[2] : '';
+	if (dm === '1' || (dm === '' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+		document.body.className += ' darkmode';
+	}
+</script>
+
+<div id="panel-back">
+
+	<div id="panel">
+		<div id="nt-nots-mini" class="darkmode"></div>
+		<a class="nav" href="/">
+			<img id="logo" alt="Imgflip Logo" src="/imgflip_white_96.png">
+			<img id="logo-icon" alt="Imgflip Logo Icon" src="/imgflip-icon-transparent-192.svg">
+		</a>
+
+		<div class="nav menu-wrap" id="nav-make">
+			<div id="nav-make-inner" class="menu-btn nosel down-arrow">Create</div>
+			<div id="make-list" class="menu">
+				<a class="make-item" href="/memegenerator" title="Meme Generator">
+					<svg width=30 height=30 class="make-icon make-icon-meme">
+						<g transform="scale(.3)">
+							<path d="M 20 0 l 30 50 l -50 -10 l 0 -40 z"/>
+							<path d="M 60 0 l 40 0 l -50 50 z"/>
+							<path d="M 100 60 l 0 40 l -20 0 l -30 -50 z"/>
+							<path d="M 40 100 l -40 0 l 50 -50 z"/>
+						</g>
+					</svg>
+					Make a Meme
+				</a>
+				<a class="make-item" href="/gif-maker" title="Animated GIF Maker (from video, youtube, images, etc.)">
+					<svg class="make-icon make-icon-gif">
+						<g transform="scale(.3)">
+							<rect width=66 height=66 x=31 y=3 />
+							<rect width=66 height=66 x=17 y=17 />
+							<rect width=66 height=66 x=3 y=31 />
+							<path d="M 24 50 l 25 14 l -25 14 z"/>
+						</g>
+					</svg>
+					Make a GIF or Short Video
+				</a>
+				<a class="make-item" href="/memetemplates" title="Popular Blank Meme Templates">
+					<div class="make-icon make-icon-meme-templates"></div>
+					Meme Templates
+				</a>
+				<a class="make-item" href="/gif-templates" title="Popular Blank GIF Templates">
+					<svg class="make-icon make-icon-gif-templates" viewBox="0 0 30 30">
+						<g transform="scale(.3)">
+							<path d="M 35 30 l 34 20 l -34 20 z"/>
+						</g>
+					</svg>
+					GIF Templates
+				</a>
+			</div>
+		</div>
+
+		<div class="nav menu-wrap" id="u-menu-wrap">
+			<div id="u-menu-btn" class="menu-btn nosel down-arrow">
+				<span id="u-long"></span>
+			</div>
+			<div id="u-menu" class="menu"></div>
+		</div>
+
+		<div id="nt-count" class="display-none"></div>
+
+		<svg width=30 height=30 id="panel-search-icon" class="s-icon" viewBox="0 0 100 100">
+			<path d="M 20 80 l 25 -25"/>
+			<circle r=20 cx=59 cy=41 />
+		</svg>
+
+		<div class="clear"></div>
+	</div>
+
+	<div id="panel-search-back" class="hidden">
+		<div id="panel-search">
+			<form class="s-form" action="/search" method="get">
+				<input id="panel-search-input" name="q" type="text" placeholder="Search memes, gifs, tags, users" autocomplete="off" autocapitalize="off" autocorrect="off"/>
+			</form>
+			<button type="button" class="s-submit l but">
+				<svg width=26 height=26 class="s-icon" viewBox="0 0 100 100">
+					<path d="M 20 80 l 25 -25"/>
+					<circle r=20 cx=59 cy=41 />
+				</svg>
+			</button>
+		</div>
+	</div>
+
+	<div id="panel-offline-msg" class="display-none"></div>
+</div>
+
+<div id="page">
+
+		
+		<img id="mtm-img" class="shadow" src="/s/meme/Distracted-Boyfriend.jpg" alt="High Quality Distracted Boyfriend Blank Meme Template"
+	     title="Distracted Boyfriend Blank Meme Template" width="750" height="500"/>
+	
+	<div id="mtm-info" class="ibox">
+		<h1 id="mtm-title">Distracted Boyfriend Meme Template</h1>
+				<h2 id="mtm-subtitle">also called: distracted bf, guy checking out another girl, man looking at other woman, jealous girlfriend, guy looking back, cheater temptation, wandering eyes, disloyal boyfriend, unfaithful guy, distracted boyfriend meme, guy holding hand with girl and looks back, distraction</h2>
+				
+		<div class="mtm-btns">
+			<a href='/memegenerator/Distracted-Boyfriend' class='recaption l but'>
+				<svg class="make-icon make-icon-meme on">
+					<g transform="scale(.3)">
+						<path d="M 20 0 l 30 50 l -50 -10 l 0 -40 z"/>
+						<path d="M 60 0 l 40 0 l -50 50 z"/>
+						<path d="M 100 60 l 0 40 l -20 0 l -30 -50 z"/>
+						<path d="M 40 100 l -40 0 l 50 -50 z"/>
+					</g>
+				</svg>
+				<span class="recaption-text">Caption this Meme</span>
+			</a>
+			<a id="mtm-all-templates-link" href='/memetemplates' class='l but'>All Meme Templates</a>
+		</div>
+
+		<p>Template ID: 112126428</p>
+		<p>Format: jpg</p>
+		<p>Dimensions: 1200x800 px</p>
+		<p>Filesize: 98 KB</p>
+		<p>
+			Uploaded by
+						an Imgflip user
+						9 years ago
+		</p>
+		
+		
+				<div id="mtm-ad-wrap"><div class="mtm-ad"></div></div>
+		
+				<div id="mtm-recs">
+			<h3 id="mtm-rec-title">Featured Distracted Boyfriend Memes</h3>
+			<div class="mtm-rec-links">
+			<a class='mtm-rec-link' href='/i/b25o49'><img class='mtm-rec-img' alt=':) | Audhd me; my other interests, hobbies, and passions; whatever the heck i have decided to learn and memorize at the moment | image tagged in memes,distracted boyfriend | made w/ Imgflip meme maker' src='//i.imgflip.com/2/b25o49.jpg'/></a><a class='mtm-rec-link' href='/i/b205be'><img class='mtm-rec-img' alt='Ifynyn | ssundee; minecraft; among us | image tagged in memes,distracted boyfriend | made w/ Imgflip meme maker' src='//i.imgflip.com/2/b205be.jpg'/></a><a class='mtm-rec-link' href='/i/b1b3m2'><img class='mtm-rec-img' alt='Distracted Boyfriend Meme | you; facts; Propaganda | image tagged in memes,distracted boyfriend | made w/ Imgflip meme maker' src='//i.imgflip.com/2/b1b3m2.jpg'/></a>			</div>
+			<div class="mtm-all-link-wrap"><a href="/meme/Distracted-Boyfriend">see all Distracted Boyfriend memes</a></div>
+		</div>
+			</div>
+	<div class="clear"></div>
+
+</div>
+
+<div id="footer">
+	<div id="footer-nav">
+		<a href="/pro?from=footer">Imgflip Pro</a>
+		<a href="/gif-maker">GIF Maker</a>
+		<a href="/memegenerator">Meme Generator</a>
+		<a href="/memetemplates">Blank Meme Templates</a>
+		<a href="/gif-templates">GIF Templates</a>
+		<a href="/chart-maker">Chart Maker</a>
+		<a href="/demotivational-maker">Demotivational Maker</a>
+		<a href="/image-resizer">Image Resizer</a>
+		<a href="/about">About</a>
+		<a href="/privacy">Privacy</a>
+		<a href="/terms">Terms</a>
+		<a href="/api">API</a>
+		<a href="/slack">Slack App</a>
+		<a href="/request_removal">Request Image Removal</a>
+		<a class="feedback-open" href="javascript:void(0)" data-from="footer" title="Submit feedback about Imgflip">Send Feedback</a>
+		<span id="do-not-sell-btn" class="qc-ccpa-persistent-link"></span>
+	</div>
+	<div id="findUs">
+		<a id="on-fb" href="https://www.facebook.com/imgflip">Facebook</a>
+		<a id="on-tw" href="https://twitter.com/imgflip">Twitter</a>
+		<a id="on-android" href="https://play.google.com/store/apps/details?id=com.imgflip.twa">Android App</a>
+		<a id="on-chrome" href="https://chrome.google.com/webstore/detail/imgflip-quick-create/ipdbhnffahpohpdkcelabahpmlheidff">Chrome Extension</a>
+	</div>
+	<div id="footline">
+		Empowering creativity on teh interwebz
+		<br/>Imgflip LLC 2026	</div>
+
+	</div>
+
+<script src="https://s.imgflip.com/jq.js"></script>
+
+<script crossorigin='anonymous' src='//s.imgflip.com/v1551/common.js'></script>
+<script>
+	$('.mtm-delete-btn').click(function() {
+		if (confirm('Are you sure you want to permanently delete this template?')) {
+			loading('Deleting Template');
+			$.ajax({
+				url: '/ajax_delete_template',
+				type: 'post',
+				dataType: 'json',
+				data: {id: 112126428},
+				success: function(result) {
+					if (result.error) {
+						loading(false);
+						error_dialog(result.error);
+					} else {
+						MSG('Template Deleted Successfully!', 'green');
+						window.location = '/my-templates';
+					}
+				}
+			})
+		}
+	});
+	$('#approve-label').click(function() {
+		$('#edit-url-name').val($('#edit-name').val().replace(/ /g, '-'));
+	});
+	$('#disapprove-label').click(function() {
+		$('#edit-url-name').val('');
+	});
+	$('.mtm-form').submit(function() {
+		if ($('input[name="approved"][value="1"]').prop('checked') && $('input[name="safe_for_work"][value="unknown"]').prop('checked')) {
+			MSG('Featured memes must specify safe_for_work setting', 'red');
+			return false;
+		}
+	});
+
+	addGifPlayButtons('#mtm-video');
+
+	$('textarea').trigger('input');
+
+		$('.mtm-ad').html(adCode('', window.innerWidth > 1000 ? 'med_rect_atf' : 'med_rect_btf'));
+	</script>
+
+</body>

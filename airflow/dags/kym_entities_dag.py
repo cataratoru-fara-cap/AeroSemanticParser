@@ -69,6 +69,9 @@ MAX_PARALLEL_LINK_TASKS = 4
 
 LEXICON_PATH = os.getenv("WIKIDATA_LEXICON",
                          "/opt/airflow/data/wikidata/lexicon.sqlite")
+# Curated word senses (linker 1.2.0, gap 09); its sha is a linker stamp.
+SENSES_PATH = os.path.join(os.getenv("KG_CONFIG_DIR", "/opt/airflow/dags/kg_config"),
+                           "entity_senses.yaml")
 
 DEFAULT_ARGS = {
     "owner": "gabi",
@@ -115,7 +118,8 @@ def kym_entities_dag():
         with Lexicon(LEXICON_PATH) as lexicon:
             stamps = {"linker_version": kg_entities.LINKER_VERSION,
                       "lexicon_version": lexicon.version,
-                      "nlp_model": kg_entities.model_stamp()}
+                      "nlp_model": kg_entities.model_stamp(),
+                      "senses_version": kg_entities.load_senses(SENSES_PATH).version}
             lexicon_meta = {k: lexicon.meta.get(k) for k in (
                 "version", "dump", "dump_newest_modified", "entities", "built_at")}
         units = store.pending_units(stamps=stamps,
@@ -157,7 +161,8 @@ def kym_entities_dag():
             return {"units": 0, "mentions": 0, "skipped": skipped}
 
         with Lexicon(LEXICON_PATH) as lexicon:
-            linker = kg_entities.Linker(lexicon, kg_entities.load_nlp())
+            linker = kg_entities.Linker(lexicon, kg_entities.load_nlp(),
+                                        senses=kg_entities.load_senses(SENSES_PATH))
             if linker.stamps != selected["stamps"]:
                 # The lexicon or the model changed between select and link
                 # (a rebuild landed mid-run). Linking now would stamp frames
