@@ -532,6 +532,14 @@ services:
       # The one collection the dashboard WRITES: human verdicts on the
       # event layer (gap 08). See dashboard/lib/review.py.
       MONGODB_EVENT_REVIEWS_COLLECTION: ${MONGODB_EVENT_REVIEWS_COLLECTION:-event_reviews}
+      # The Entities and Templates pages (read-only).
+      MONGODB_ENTITIES_COLLECTION: ${MONGODB_ENTITIES_COLLECTION:-entities}
+      MONGODB_ENTITY_CURATION_COLLECTION: ${MONGODB_ENTITY_CURATION_COLLECTION:-entity_curation}
+      MONGODB_ENTITY_CURATION_FAILURES_COLLECTION: ${MONGODB_ENTITY_CURATION_FAILURES_COLLECTION:-entity_curation_failures}
+      MONGODB_FRAME_TEMPLATES_COLLECTION: ${MONGODB_FRAME_TEMPLATES_COLLECTION:-frame_templates}
+      MONGODB_IMGFLIP_TEMPLATES_COLLECTION: ${MONGODB_IMGFLIP_TEMPLATES_COLLECTION:-imgflip_templates}
+      MONGODB_TEMPLATE_ENTITIES_COLLECTION: ${MONGODB_TEMPLATE_ENTITIES_COLLECTION:-template_entities}
+      MONGODB_TEMPLATE_ENTITY_FAILURES_COLLECTION: ${MONGODB_TEMPLATE_ENTITY_FAILURES_COLLECTION:-template_entity_failures}
     ports:
       # Loopback only — the public route is http://<host>:8080/dashboard/.
       - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"

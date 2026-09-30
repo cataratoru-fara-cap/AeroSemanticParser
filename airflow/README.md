@@ -296,10 +296,28 @@ the same build and whether the last RDF gate agreed. It deliberately does
 **not** connect to Neo4j or Fuseki: that would put two more drivers in this
 image for data the DAG already recorded in the run summary at publish time.
 
+The derived layers have a page each, in pipeline order after Parse:
+**Entities** (what the linker found; what curation keeps and why, the
+judge's roles, which frequently linked items survive), **Events**
+(coverage, re-extraction progress with its pace, and the newest events
+read against their evidence) and **Templates** (which frames found
+templates and why the others did not, the pool, the image reading with its
+pace, the blind audit, the templates read last). The Overview has one
+progress line per derived layer.
+
+On the Events and Review pages, what an event extracted is marked in the
+sentences it came from: the date words, the places and the people or
+accounts, each with its own underline style and a written legend, matched
+the way the event audit matches (`dashboard/lib/highlight.py`). On Review
+the marks appear only after the recall question is answered.
+
 Its colours are a validated palette (see `dashboard/lib/theme.py`), not a
 taste call: categorical hues in fixed order and never cycled, magnitude
-bars on a single sequential hue, reserved status colours that always ship
-with an icon and a written label, and a data table behind every chart.
+bars in one colour (one series is one colour; a darker-where-bigger ramp on
+unordered categories would repeat the bar length in hue), reserved status
+colours that always ship with an icon and a written label, and a data table
+behind every chart. `dashboard/tests/` covers the highlighter; every page
+can be run headless with Streamlit's `AppTest` inside the dashboard image.
 
 ## The KG stage
 

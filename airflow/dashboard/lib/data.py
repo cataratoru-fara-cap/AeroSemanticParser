@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import streamlit as st
@@ -295,6 +295,367 @@ def failure_samples(limit: int = 50) -> list[dict[str, Any]]:
          "error": (d.get("error") or "")[:400]}
         for d in failures.find({}, {"_id": 0}).sort("failed_at", -1).limit(limit)
     ]
+
+
+def _version_key(v: str | None) -> tuple:
+    """Order "3.2.0" < "4.0.0" < "10.0.0" (a string sort would not)."""
+    parts = []
+    for bit in str(v or "").split("."):
+        parts.append(int(bit) if bit.isdigit() else -1)
+    return tuple(parts)
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def event_progress() -> dict[str, Any]:
+    """How far a re-extraction has got: sections by extraction version,
+    the newest version's pace over the last hours, and when the rest will
+    be done at that pace. Live from `events` (current state, not history)."""
+    events = _coll("MONGODB_EVENTS_COLLECTION", "events")
+    by_version = {(d["_id"] or "unknown"): d["n"] for d in events.aggregate([
+        {"$group": {"_id": "$extraction_version", "n": {"$sum": 1}}}])}
+    if not by_version:
+        return {"by_version": {}, "current": None}
+    current = max(by_version, key=_version_key)
+    now = datetime.now(timezone.utc)
+    pace = {h: events.count_documents({"extraction_version": current,
+                                        "extracted_at": {"$gte": now - timedelta(hours=h)}})
+            for h in (1, 6)}
+    remaining = sum(n for v, n in by_version.items() if v != current)
+    per_hour = pace[6] / 6
+    return {"by_version": by_version, "current": current,
+            "current_units": by_version[current], "remaining": remaining,
+            "last_hour": pace[1], "last_6h": pace[6],
+            "eta_hours": (remaining / per_hour) if per_hour and remaining else None}
+
+
+def event_cards(limit: int = 12, section: str = "any", certainty: str = "any",
+                with_values: bool = True) -> list[dict[str, Any]]:
+    """The newest events of the newest extraction, for reading against
+    their evidence: each with its quote and what was extracted from it.
+    Not cached — the filters change per click and the query is small."""
+    events = _coll("MONGODB_EVENTS_COLLECTION", "events")
+    newest = event_progress().get("current")
+    query: dict[str, Any] = {"event_count": {"$gt": 0}}
+    if newest:
+        query["extraction_version"] = newest
+    if section != "any":
+        query["source_section"] = section
+    out: list[dict[str, Any]] = []
+    for doc in events.find(query, {"frame_url": 1, "source_section": 1, "events": 1,
+                                   "model": 1, "extraction_version": 1}
+                           ).sort("extracted_at", -1).limit(limit * 6):
+        for ev in doc.get("events") or []:
+            if certainty != "any" and ev.get("certainty") != certainty:
+                continue
+            if with_values and not (ev.get("date_text") or ev.get("locations")
+                                    or ev.get("location") or ev.get("actors")):
+                continue
+            out.append({**ev, "frame_url": doc.get("frame_url"),
+                        "source_section": doc.get("source_section"),
+                        "model": doc.get("model")})
+            if len(out) >= limit:
+                return out
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Entities: Wikidata links (kym_entities) and their curation (gap 09)
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL)
+def entity_state() -> dict[str, Any]:
+    """The linker's output, live from `entities` (one doc per frame)."""
+    ents = _coll("MONGODB_ENTITIES_COLLECTION", "entities")
+    head = list(ents.aggregate([{"$group": {
+        "_id": None, "frames": {"$sum": 1},
+        "linked": {"$sum": {"$cond": [{"$gt": ["$mention_count", 0]}, 1, 0]}},
+        "mentions": {"$sum": "$mention_count"},
+        "own_item": {"$sum": {"$cond": [{"$ifNull": ["$self_qid", False]}, 1, 0]}},
+        "latest": {"$max": "$linked_at"}}}]))
+    head = head[0] if head else {}
+    facets = list(ents.aggregate([
+        {"$project": {"mentions.field": 1, "mentions.method": 1, "mentions.qid": 1}},
+        {"$unwind": "$mentions"},
+        {"$facet": {
+            "field": [{"$group": {"_id": "$mentions.field", "n": {"$sum": 1}}}],
+            "method": [{"$group": {"_id": "$mentions.method", "n": {"$sum": 1}}}],
+            "items": [{"$group": {"_id": "$mentions.qid"}}, {"$count": "n"}]}},
+    ], allowDiskUse=True))
+    f = facets[0] if facets else {"field": [], "method": [], "items": []}
+
+    def versions(field: str) -> dict[str, int]:
+        return {(d["_id"] or "unknown"): d["n"] for d in ents.aggregate([
+            {"$group": {"_id": f"${field}", "n": {"$sum": 1}}}])}
+    return {
+        "frames": head.get("frames", 0), "frames_linked": head.get("linked", 0),
+        "mentions": head.get("mentions", 0), "own_item": head.get("own_item", 0),
+        "last_linked_at": _as_utc(head.get("latest")),
+        "by_field": {d["_id"] or "unknown": d["n"] for d in f["field"]},
+        "by_method": {d["_id"] or "unknown": d["n"] for d in f["method"]},
+        "distinct_items": f["items"][0]["n"] if f["items"] else 0,
+        "linker_versions": versions("linker_version"),
+        "senses_versions": versions("senses_version"),
+        "lexicon_versions": versions("lexicon_version"),
+    }
+
+
+KEEP_BASES_ORDER = ("title", "own_item", "platform", "format", "title_agrees",
+                    "tag_and_text", "tag_named", "judge")
+KEEP_ROLES = ("subject", "source", "format", "platform")
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def curation_state() -> dict[str, Any]:
+    """Which links curation keeps and why, live from `entity_curation`.
+    Keep/drop counts are MENTIONS (what the graph carries); the judge's
+    roles are ITEMS per frame (what it was asked)."""
+    cur = _coll("MONGODB_ENTITY_CURATION_COLLECTION", "entity_curation")
+    fails = _coll("MONGODB_ENTITY_CURATION_FAILURES_COLLECTION", "entity_curation_failures")
+    decisions = {(d["_id"]["b"], d["_id"]["k"]): d["n"] for d in cur.aggregate([
+        {"$project": {"decisions.basis": 1, "decisions.keep": 1}},
+        {"$unwind": "$decisions"},
+        {"$group": {"_id": {"b": "$decisions.basis", "k": "$decisions.keep"},
+                    "n": {"$sum": 1}}}], allowDiskUse=True)}
+    kept = {b: n for (b, k), n in decisions.items() if k is True}
+    dropped = {b: n for (b, k), n in decisions.items() if k is False}
+    pending = sum(n for (b, k), n in decisions.items() if k is None)
+    roles = {d["_id"]: d["n"] for d in cur.aggregate([
+        {"$match": {"judge.roles": {"$exists": True}}},
+        {"$project": {"r": {"$objectToArray": "$judge.roles"}}},
+        {"$unwind": "$r"}, {"$group": {"_id": "$r.v", "n": {"$sum": 1}}}])}
+    # The confirming reading: About-only items the judge kept, asked again
+    # with the other prompt. Kept only if both readings keep them.
+    confirm = {d["_id"]: d["n"] for d in cur.aggregate([
+        {"$match": {"judge.confirm_roles": {"$exists": True}}},
+        {"$project": {"r": {"$objectToArray": "$judge.confirm_roles"}}},
+        {"$unwind": "$r"},
+        {"$group": {"_id": {"$in": ["$r.v", list(KEEP_ROLES)]}, "n": {"$sum": 1}}}])}
+    models = {f"{d['_id'].get('m') or '?'} · prompt {d['_id'].get('p') or '?'}": d["n"]
+              for d in cur.aggregate([
+                  {"$match": {"judge": {"$exists": True}}},
+                  {"$group": {"_id": {"m": "$judge.judge_model",
+                                      "p": "$judge.judge_prompt_version"},
+                              "n": {"$sum": 1}}}])}
+    latest = list(cur.aggregate([{"$group": {"_id": None, "t": {"$max": "$curated_at"}}}]))
+    return {
+        "frames": cur.count_documents({}),
+        "frames_judged": cur.count_documents({"judge": {"$exists": True}}),
+        "frames_waiting": cur.count_documents({"pending_qids.0": {"$exists": True}}),
+        "frames_none_kept": cur.count_documents({"in_graph_count": 0}),
+        "failures": fails.count_documents({}),
+        "kept": kept, "dropped": dropped, "pending": pending,
+        "kept_total": sum(kept.values()), "dropped_total": sum(dropped.values()),
+        "judge_roles": roles,
+        "confirm_agreed": confirm.get(True, 0), "confirm_overturned": confirm.get(False, 0),
+        "judge_models": models,
+        "versions": {(d["_id"] or "unknown"): d["n"] for d in cur.aggregate([
+            {"$group": {"_id": "$curation_version", "n": {"$sum": 1}}}])},
+        "last_curated_at": _as_utc(latest[0]["t"]) if latest else None,
+    }
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def curation_items(limit: int = 20) -> list[dict[str, Any]]:
+    """The most-linked items (by About and tag mentions — titles are always
+    kept) and how curation split them: which frequent items survive."""
+    cur = _coll("MONGODB_ENTITY_CURATION_COLLECTION", "entity_curation")
+    ents = _coll("MONGODB_ENTITIES_COLLECTION", "entities")
+    rows = list(cur.aggregate([
+        {"$project": {"decisions.qid": 1, "decisions.keep": 1, "decisions.field": 1}},
+        {"$unwind": "$decisions"},
+        {"$match": {"decisions.field": {"$ne": "title"}}},
+        {"$group": {"_id": "$decisions.qid", "total": {"$sum": 1},
+                    "kept": {"$sum": {"$cond": ["$decisions.keep", 1, 0]}}}},
+        {"$sort": {"total": -1}}, {"$limit": limit}], allowDiskUse=True))
+    qids = [r["_id"] for r in rows]
+    labels = {d["_id"]: d["label"] for d in ents.aggregate([
+        {"$match": {"mentions.qid": {"$in": qids}}},
+        {"$project": {"mentions.qid": 1, "mentions.label": 1}},
+        {"$unwind": "$mentions"}, {"$match": {"mentions.qid": {"$in": qids}}},
+        {"$group": {"_id": "$mentions.qid", "label": {"$first": "$mentions.label"}}}])}
+    return [{"item": f"{labels.get(r['_id'], r['_id'])} ({r['_id']})",
+             "kept": r["kept"], "dropped": r["total"] - r["kept"], "mentions": r["total"]}
+            for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Templates: imgflip search (kym_templates) and reading (kym_template_entities)
+# ---------------------------------------------------------------------------
+
+TEMPLATE_PRIORITY = {1: "own imgflip link", 2: "template-type meme", 3: "other meme",
+                     4: "other entry"}
+TEMPLATE_STATUS = ("selected", "below_threshold", "no_results")
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def template_state() -> dict[str, Any]:
+    """The template pool, live from `frame_templates` and `imgflip_templates`."""
+    frames = _coll("MONGODB_FRAME_TEMPLATES_COLLECTION", "frame_templates")
+    templates = _coll("MONGODB_IMGFLIP_TEMPLATES_COLLECTION", "imgflip_templates")
+    by_priority: dict[str, dict[str, int]] = {}
+    for d in frames.aggregate([{"$group": {"_id": {"p": "$priority", "s": "$status"},
+                                           "n": {"$sum": 1}}}]):
+        label = TEMPLATE_PRIORITY.get(d["_id"].get("p"), str(d["_id"].get("p")))
+        by_priority.setdefault(label, {})[d["_id"].get("s") or "not searched"] = d["n"]
+    per_frame = {d["_id"]: d["n"] for d in frames.aggregate([
+        {"$match": {"status": "selected"}},
+        {"$group": {"_id": {"$size": "$selected"}, "n": {"$sum": 1}}}])}
+    methods = {(d["_id"] or "unknown"): d["n"] for d in frames.aggregate([
+        {"$match": {"status": "selected"}}, {"$unwind": "$selected"},
+        {"$group": {"_id": "$selected.method", "n": {"$sum": 1}}}])}
+    kept = frames.distinct("selected.template_id", {"status": "selected"})
+    with_image = templates.count_documents({"_id": {"$in": kept}, "blank_path": {"$exists": True}})
+    image_failed = templates.count_documents({"_id": {"$in": kept}, "blank_error": {"$exists": True},
+                                              "blank_path": {"$exists": False}})
+    latest = list(frames.aggregate([{"$group": {"_id": None, "t": {"$max": "$searched_at"}}}]))
+    return {
+        "frames": frames.count_documents({}),
+        "by_priority": by_priority,
+        "by_status": {s: sum(v.get(s, 0) for v in by_priority.values()) for s in TEMPLATE_STATUS},
+        "per_frame": per_frame,
+        "links": sum(k * n for k, n in per_frame.items()),
+        "methods": methods,
+        "kept": len(kept), "with_image": with_image, "image_failed": image_failed,
+        "seen": templates.estimated_document_count(),
+        "merged": templates.count_documents({"leader": {"$exists": True},
+                                             "$expr": {"$ne": ["$leader", "$_id"]}}),
+        "last_searched_at": _as_utc(latest[0]["t"]) if latest else None,
+    }
+
+
+def _iou(a: list[float], b: list[float]) -> float:
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def template_reading() -> dict[str, Any]:
+    """What the vision model has read, live from `template_entities`."""
+    frames = _coll("MONGODB_FRAME_TEMPLATES_COLLECTION", "frame_templates")
+    templates = _coll("MONGODB_IMGFLIP_TEMPLATES_COLLECTION", "imgflip_templates")
+    read = _coll("MONGODB_TEMPLATE_ENTITIES_COLLECTION", "template_entities")
+    fails = _coll("MONGODB_TEMPLATE_ENTITY_FAILURES_COLLECTION", "template_entity_failures")
+    kept = frames.distinct("selected.template_id", {"status": "selected"})
+    readable = [d["_id"] for d in templates.find(
+        {"_id": {"$in": kept}, "blank_path": {"$exists": True}}, {"_id": 1})]
+    read_kept = read.count_documents({"_id": {"$in": readable}})
+    failed_kept = fails.count_documents({"_id": {"$in": readable}})
+    now = datetime.now(timezone.utc)
+    pace = {h: read.count_documents({"detected_at": {"$gte": now - timedelta(hours=h)}})
+            for h in (1, 6)}
+    remaining = max(0, len(readable) - read_kept - failed_kept)
+    per_hour = pace[6] / 6
+    regions = list(read.aggregate([
+        {"$project": {"r": "$detection.regions"}}, {"$unwind": "$r"},
+        {"$facet": {"kind": [{"$group": {"_id": "$r.kind", "n": {"$sum": 1}}}],
+                    "named": [{"$group": {"_id": "$r.named", "n": {"$sum": 1}}}]}}],
+        allowDiskUse=True))
+    rg = regions[0] if regions else {"kind": [], "named": []}
+    links = {(d["_id"].get("s") or "?", bool(d["_id"].get("g"))): d["n"] for d in read.aggregate([
+        {"$project": {"m": "$links.mentions"}}, {"$unwind": "$m"},
+        {"$group": {"_id": {"s": "$m.source", "g": "$m.in_graph"}, "n": {"$sum": 1}}}])}
+    failure_kinds: dict[str, int] = {}
+    for d in fails.find({}, {"error": 1, "error_kind": 1}):
+        err = str(d.get("error") or "")
+        if "token repeat limit" in err:
+            what = "stuck repeating itself"
+        elif "not JSON" in err:
+            what = "answer cut off"
+        else:
+            what = d.get("error_kind") or "other"
+        failure_kinds[what] = failure_kinds.get(what, 0) + 1
+    # The blind audit: of the names read WITH context, how many the blind
+    # reading also found (same name, or same kind in an overlapping box).
+    named = confirmed = 0
+    for d in read.find({"detection.blind.regions": {"$exists": True}},
+                       {"detection.regions": 1, "detection.blind.regions": 1}):
+        blind = d["detection"]["blind"]["regions"]
+        for r in d["detection"].get("regions") or []:
+            if not r.get("named"):
+                continue
+            named += 1
+            confirmed += any(
+                b["name"].casefold() == r["name"].casefold()
+                or (b["kind"] == r["kind"] and _iou(b["box"], r["box"]) >= 0.5)
+                for b in blind)
+    return {
+        "readable": len(readable), "read": read_kept, "read_total": read.count_documents({}),
+        "failed": failed_kept, "remaining": remaining,
+        "last_hour": pace[1], "last_6h": pace[6],
+        "eta_hours": (remaining / per_hour) if per_hour and remaining else None,
+        "regions_by_kind": {(d["_id"] or "other"): d["n"] for d in rg["kind"]},
+        "regions_named": sum(d["n"] for d in rg["named"] if d["_id"]),
+        "regions_total": sum(d["n"] for d in rg["named"]),
+        "links": links,
+        "links_in_graph": sum(n for (s, g), n in links.items() if g),
+        "failure_kinds": failure_kinds,
+        "blind_named": named, "blind_confirmed": confirmed,
+    }
+
+
+def recent_templates(limit: int = 8) -> list[dict[str, Any]]:
+    """The templates read most recently, with what was read and linked —
+    for looking at the model's work. Not cached: it should move."""
+    read = _coll("MONGODB_TEMPLATE_ENTITIES_COLLECTION", "template_entities")
+    templates = _coll("MONGODB_IMGFLIP_TEMPLATES_COLLECTION", "imgflip_templates")
+    docs = list(read.find({"detection.ok": True},
+                          {"detection.regions": 1, "links.mentions": 1, "detected_at": 1}
+                          ).sort("detected_at", -1).limit(limit))
+    meta = {d["_id"]: d for d in templates.find(
+        {"_id": {"$in": [d["_id"] for d in docs]}},
+        {"name": 1, "thumb_url": 1, "url": 1})}
+    out = []
+    for d in docs:
+        m = meta.get(d["_id"], {})
+        by_region: dict[int, list[str]] = {}
+        for mention in (d.get("links") or {}).get("mentions") or []:
+            idx = (mention.get("region") or {}).get("index")
+            tag = mention.get("label") or mention.get("qid")
+            if mention.get("in_graph"):
+                tag += " ✓"
+            by_region.setdefault(idx, []).append(tag)
+        out.append({
+            "template_id": d["_id"], "name": m.get("name") or str(d["_id"]),
+            "thumb_url": m.get("thumb_url"), "url": m.get("url"),
+            "read_at": _as_utc(d.get("detected_at")),
+            "regions": [{"name": r.get("name"), "kind": r.get("kind"),
+                         "named": bool(r.get("named")), "text": r.get("text"),
+                         "links": by_region.get(r.get("index"), [])}
+                        for r in (d.get("detection") or {}).get("regions") or []],
+        })
+    return out
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def derived_state() -> dict[str, Any]:
+    """The Overview's one line per derived layer — plain counts only, so the
+    landing page stays fast; each layer's own page has the breakdowns."""
+    ents = _coll("MONGODB_ENTITIES_COLLECTION", "entities")
+    cur = _coll("MONGODB_ENTITY_CURATION_COLLECTION", "entity_curation")
+    frames = _coll("MONGODB_FRAME_TEMPLATES_COLLECTION", "frame_templates")
+    templates = _coll("MONGODB_IMGFLIP_TEMPLATES_COLLECTION", "imgflip_templates")
+    read = _coll("MONGODB_TEMPLATE_ENTITIES_COLLECTION", "template_entities")
+    linked = list(ents.aggregate([{"$group": {"_id": None, "m": {"$sum": "$mention_count"},
+                                              "f": {"$sum": {"$cond": [
+                                                  {"$gt": ["$mention_count", 0]}, 1, 0]}}}}]))
+    kept = list(cur.aggregate([{"$group": {"_id": None, "k": {"$sum": "$in_graph_count"}}}]))
+    kept_ids = frames.distinct("selected.template_id", {"status": "selected"})
+    readable = [d["_id"] for d in templates.find(
+        {"_id": {"$in": kept_ids}, "blank_path": {"$exists": True}}, {"_id": 1})]
+    return {
+        "frames_total": ents.estimated_document_count(),
+        "frames_linked": linked[0]["f"] if linked else 0,
+        "mentions": linked[0]["m"] if linked else 0,
+        "frames_curated": cur.count_documents({}),
+        "frames_waiting": cur.count_documents({"pending_qids.0": {"$exists": True}}),
+        "links_kept": kept[0]["k"] if kept else 0,
+        "templates_kept": len(kept_ids),
+        "templates_readable": len(readable),
+        "templates_read": read.count_documents({"_id": {"$in": readable}}),
+    }
 
 
 # ---------------------------------------------------------------------------

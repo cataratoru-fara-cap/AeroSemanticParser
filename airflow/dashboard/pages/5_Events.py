@@ -11,10 +11,12 @@ model said them — plus a sample to check against the quotes they cite.
 
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
-from lib import charts, components as ui, data
-from lib.theme import PLOTLY_CONFIG, active_palette
+from lib import charts, components as ui, data, highlight
+from lib.theme import PLOTLY_CONFIG, active_palette, highlight_css
 
 st.set_page_config(page_title="Events · KYM", page_icon="🗓️", layout="wide")
 pal = active_palette()
@@ -29,6 +31,8 @@ st.caption("`kym_events`, triggered by parse · owns `events` and "
            "`event_failures` · one LLM call per Origin/Spread section")
 
 state = data.event_state()
+prog = data.event_progress()
+st.markdown(highlight_css(pal), unsafe_allow_html=True)
 
 if not state["units_total"] and not state["failures_total"]:
     ui.empty_state(
@@ -75,6 +79,27 @@ with right:
     if state["last_extracted_at"]:
         st.caption(f"Last extraction: "
                    f"{state['last_extracted_at']:%Y-%m-%d %H:%M} UTC.")
+
+if prog.get("current") and prog["remaining"]:
+    st.markdown(f"#### Re-extraction to {prog['current']}")
+    left, right = st.columns([1, 2], gap="large")
+    with left:
+        ui.meter(f"Sections at extraction {prog['current']}", prog["current_units"],
+                 prog["current_units"] + prog["remaining"], pal,
+                 good_above=0.999, warn_above=0.0)     # progress, not a fault
+    with right:
+        pace = (f"{prog['last_hour']:,} sections in the last hour, "
+                f"{prog['last_6h']:,} in six hours")
+        if prog["eta_hours"]:
+            pace += (f" · the remaining {prog['remaining']:,} take about "
+                     f"{prog['eta_hours']:.0f} h at that pace")
+        st.caption(pace + ". Until it finishes, the layer mixes extraction versions; "
+                   "the table has the split.")
+        ui.data_table([{"extraction version": v, "sections": n}
+                       for v, n in sorted(prog["by_version"].items(),
+                                          key=lambda kv: data._version_key(kv[0]),
+                                          reverse=True)],
+                      "Show sections by extraction version")
 
 st.divider()
 
@@ -130,12 +155,19 @@ st.caption(
 c1, c2 = st.columns(2, gap="large")
 with c1:
     st.markdown("**Sections by model**")
-    st.plotly_chart(
-        charts.magnitude_bars(state["models_in_use"], pal, value_name="sections"),
-        config=PLOTLY_CONFIG, width="stretch")
+    if len(state["models_in_use"]) == 1:          # one number is a tile, not a bar
+        (model, n), = state["models_in_use"].items()
+        ui.stat_tiles([{"label": model, "value": n}], pal)
+    else:
+        st.plotly_chart(
+            charts.magnitude_bars(state["models_in_use"], pal, value_name="sections"),
+            config=PLOTLY_CONFIG, width="stretch")
 with c2:
     st.markdown("**Dead-letter by kind**")
-    if state["failure_kind_counts"]:
+    if len(state["failure_kind_counts"]) == 1:
+        (kind, n), = state["failure_kind_counts"].items()
+        ui.stat_tiles([{"label": kind, "value": n}], pal)
+    elif state["failure_kind_counts"]:
         st.plotly_chart(
             charts.magnitude_bars(state["failure_kind_counts"], pal,
                                   value_name="sections"),
@@ -147,9 +179,46 @@ with c2:
     else:
         st.caption("No failures recorded.")
 
+st.divider()
+
+# -- reading events against their evidence ------------------------------------------
+st.subheader("Read the events against their evidence")
+st.caption("The newest events, each with the sentences it was read from. What the "
+           "model extracted is marked where it stands in the text, so a wrong "
+           "date, place or name shows up in place. A value named in an earlier "
+           "sentence of the section is listed under the quote instead.")
+f1, f2, f3 = st.columns([1, 1, 1])
+with f1:
+    section = st.selectbox("Section", ("any", "origin", "spread"), key="ev_section")
+with f2:
+    certainties = ("any", *sorted(state["events_by_certainty"]))
+    certainty = st.selectbox("Certainty", certainties, key="ev_certainty")
+with f3:
+    how_many = st.selectbox("Show", (8, 16, 32), key="ev_count")
+cards = data.event_cards(how_many, section=section, certainty=certainty)
+if not cards:
+    st.caption("No events match these filters yet.")
+else:
+    st.markdown(f'<div class="kym-legend">{highlight.legend()}</div>',
+                unsafe_allow_html=True)
+for ev in cards:
+    with st.container(border=True):
+        entry = (ev.get("frame_url") or "").rsplit("/", 1)[-1]
+        when = ev.get("date") or "undated"
+        st.markdown(f"**[{entry}]({ev.get('frame_url')})** · {ev.get('source_section')} · "
+                    f"`{when}` ({ev.get('date_precision')}) · {ev.get('certainty')}")
+        text = ev.get("source_text") or ""
+        spans, missing = highlight.mark_event(text, ev)
+        st.markdown(f'<div class="kym-quote">{highlight.render(text, spans)}</div>',
+                    unsafe_allow_html=True)
+        if missing:
+            st.markdown('<div class="kym-aside">Named earlier in the section: ' + " · ".join(
+                f'<mark class="kym-hl kym-hl-{k}" title="{k}">{html.escape(v)}</mark>'
+                for k, v in missing) + "</div>", unsafe_allow_html=True)
+
 samples = data.event_samples(40)
 if samples:
-    ui.data_table(samples, f"Check {len(samples)} recent events against their evidence")
+    ui.data_table(samples, f"Show {len(samples)} recent events as a table")
 
 st.divider()
 

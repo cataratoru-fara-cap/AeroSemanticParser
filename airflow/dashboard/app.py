@@ -29,7 +29,8 @@ if not reachable:
     st.stop()
 
 st.title("KYM pipeline")
-st.caption("discovery → scrape → parse · live corpus state and per-run history")
+st.caption("discovery → scrape → parse, then the layers read out of the corpus: "
+           "Wikidata links, events and meme templates · live state and per-run history")
 
 disc = data.discovery_state()
 scr = data.scrape_state()
@@ -135,6 +136,48 @@ with c3:
         ("good", "Ready", prs["entries_ready"]),
         ("warning", "Incomplete", prs["entries_incomplete"]),
     ], pal)
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Derived layers — what the pipeline reads OUT of the corpus
+# ---------------------------------------------------------------------------
+
+st.subheader("Derived layers")
+st.caption("Readings of the corpus rather than parsed fact: Wikidata links, "
+           "events and meme templates. Each has its own page with the details.")
+der = data.derived_state()
+prog = data.event_progress()
+d1, d2, d3 = st.columns(3, gap="large")
+
+with d1:
+    st.markdown("**Entity links**")
+    st.page_link("pages/4_Entities.py", label="Details", icon=":material/arrow_forward:")
+    # every frame gets a curation record, links or none — hence the total
+    ui.meter("Frames curated", der["frames_curated"] - der["frames_waiting"],
+             der["frames_total"], pal, good_above=0.999, warn_above=0.0)
+    st.caption(f"{der['links_kept']:,} of {der['mentions']:,} linked mentions kept "
+               "for the graph.")
+
+with d2:
+    st.markdown("**Events**")
+    st.page_link("pages/5_Events.py", label="Details", icon=":material/arrow_forward:")
+    if prog.get("current"):
+        total_units = prog["current_units"] + prog["remaining"]
+        ui.meter(f"At extraction {prog['current']}", prog["current_units"], total_units,
+                 pal, good_above=0.999, warn_above=0.0)
+        st.caption(f"{prog['remaining']:,} to go, about {prog['eta_hours']:.0f} h at "
+                   "the last six hours' pace." if prog["eta_hours"] else
+                   "Every section is at the newest extraction.")
+    else:
+        st.caption("No events extracted yet.")
+
+with d3:
+    st.markdown("**Meme templates**")
+    st.page_link("pages/7_Templates.py", label="Details", icon=":material/arrow_forward:")
+    ui.meter("Templates read", der["templates_read"], der["templates_readable"], pal,
+             good_above=0.999, warn_above=0.0)
+    st.caption(f"{der['templates_kept']:,} templates kept across the searched frames.")
 
 st.divider()
 

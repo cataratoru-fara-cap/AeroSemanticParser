@@ -19,8 +19,10 @@ with its validator (not by eye) before being used:
 Rules this module exists to enforce:
   * categorical hues are assigned in FIXED ORDER, never cycled — a 5th
     series folds into "Other" rather than inventing a hue;
-  * magnitude (namespace sizes, missing-field counts) uses the SEQUENTIAL
-    ramp, not categorical — the bars are one quantity, not four identities;
+  * magnitude (namespace sizes, missing-field counts) is ONE series in ONE
+    colour (slot 1) — the bars are one quantity, not four identities, and a
+    darker-where-bigger ramp on unordered categories would repeat the bar
+    length in hue (the data-viz anti-pattern; changed 2026-09-30);
   * status colours (ok/failed/permanent) are reserved, never reused as a
     series, and always ship with an icon + text label.
 """
@@ -107,28 +109,6 @@ def active_palette() -> Palette:
     return LIGHT
 
 
-def sequential_steps(n: int, pal: Palette) -> list[str]:
-    """``n`` steps of the single sequential hue, light -> dark.
-
-    Used for magnitude bars, where darker simply means larger. Falls back
-    to repeating the ramp's darkest step past its length rather than
-    generating new hues.
-    """
-    ramp_light = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec",
-                  "#5598e7", "#3987e5", "#2a78d6", "#256abf", "#1c5cab",
-                  "#184f95", "#104281", "#0d366b"]
-    ramp = ramp_light if pal.mode == "light" else list(reversed(ramp_light))
-    # Magnitude bars sit on the surface, so skip the steps that vanish into
-    # it (the ordinal floor rule: nothing lighter than step 250 on light).
-    ramp = ramp[3:] if pal.mode == "light" else ramp[:-3]
-    if n <= 0:
-        return []
-    if n == 1:
-        return [ramp[len(ramp) // 2]]
-    span = len(ramp) - 1
-    return [ramp[round(i * span / (n - 1))] for i in range(n)]
-
-
 def plotly_layout(pal: Palette, height: int = 320, **overrides) -> dict:
     """Shared Plotly layout: recessive chrome, ink-coloured text, no
     background boxes. Chart text always wears text tokens — never the
@@ -152,6 +132,38 @@ def plotly_layout(pal: Palette, height: int = 320, **overrides) -> dict:
     )
     layout.update(overrides)
     return layout
+
+
+def _rgba(hex_colour: str, alpha: float) -> str:
+    h = hex_colour.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def highlight_css(pal: Palette) -> str:
+    """Styles for lib/highlight.py's marks: what an event extracted, shown
+    in the words it came from.
+
+    Built from the first three categorical slots (already validated above),
+    as a tint behind INK text plus a 2px underline in the full hue — the
+    text never wears the series colour. Each kind also has its own
+    underline STYLE (solid / dashed / dotted) and a written legend, so the
+    marks read without colour. Checked, not eyeballed (2026-09-30): ink on
+    every tint is 15.7-16.8:1 in light mode and 11.2-13.1:1 in dark, over
+    both this palette's surface and Streamlit's own page colour.
+    """
+    alpha = 0.22 if pal.mode == "light" else 0.30
+    when, where, who = pal.categorical[:3]
+    return f"""<style>
+      .kym-quote {{ font-size: 1rem; line-height: 1.8; color: {pal.ink}; margin: .2rem 0 .4rem 0; }}
+      .kym-legend {{ font-size: .82rem; color: {pal.ink_secondary}; margin-bottom: .3rem; }}
+      .kym-aside {{ font-size: .85rem; color: {pal.ink_secondary}; }}
+      mark.kym-hl {{ color: {pal.ink}; padding: .04em .18em; border-radius: 3px;
+                     border-bottom-width: 2px; }}
+      mark.kym-hl-when {{ background: {_rgba(when, alpha)}; border-bottom: 2px solid {when}; }}
+      mark.kym-hl-where {{ background: {_rgba(where, alpha)}; border-bottom: 2px dashed {where}; }}
+      mark.kym-hl-who {{ background: {_rgba(who, alpha)}; border-bottom: 2px dotted {who}; }}
+    </style>"""
 
 
 PLOTLY_CONFIG = {

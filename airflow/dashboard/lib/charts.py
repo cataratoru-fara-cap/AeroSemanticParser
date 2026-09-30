@@ -3,8 +3,9 @@ charts.py — the chart builders.
 
 Form is chosen from the data's job, not from variety:
 
-  magnitude, low->high        horizontal bar, SEQUENTIAL ramp (one hue)
-  part-to-whole by stage      horizontal stacked bar, 2 categorical slots
+  magnitude, low->high        horizontal bar, ONE colour (slot 1)
+  a distribution in order     columns in the given order, one colour
+  part-to-whole by stage      horizontal stacked bar, 2-4 categorical slots
   pipeline stages             funnel as an ordinal-ramp bar
   change over time            line, CATEGORICAL slots, capped at 4
 
@@ -19,12 +20,13 @@ Rules applied throughout:
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing import Any
 
 import plotly.graph_objects as go
 
-from lib.theme import Palette, plotly_layout, sequential_steps
+from lib.theme import Palette, plotly_layout
 
 MAX_BARS = 18          # beyond this the tail folds into one "(+n more)" bar
 MAX_TREND_SERIES = 4   # the categorical token ceiling for this dashboard
@@ -47,15 +49,15 @@ def magnitude_bars(counts: dict[str, float], pal: Palette,
                    limit: int = MAX_BARS) -> go.Figure:
     """Horizontal bars for 'how big is each of these'.
 
-    Sequential, not categorical: the bars are one quantity measured across
-    categories, so darker simply means larger. Using four identity hues
-    here would imply the categories are different *kinds* of thing.
+    One series, so ONE colour for every bar (2026-09-30, following the
+    data-viz reference's anti-patterns): a darker-where-bigger ramp on
+    categories with no order double-encodes the bar length as hue and
+    spends the only free channel on what the length already says. Four
+    identity hues would be wrong for the same reason — the bars are one
+    quantity, not four kinds of thing.
     """
     labels, values, _ = _fold_tail(counts, limit)
-    colours = sequential_steps(len(values), pal)
-    # Darkest goes to the largest bar; the ramp is ordered by magnitude,
-    # and _fold_tail already sorted descending.
-    colours = list(reversed(colours))
+    colours = [pal.categorical[0]] * len(values)
 
     fig = go.Figure(go.Bar(
         x=values, y=labels, orientation="h",
@@ -82,28 +84,37 @@ def magnitude_bars(counts: dict[str, float], pal: Palette,
     return fig
 
 
-def split_bars(rows: dict[str, dict[str, float]], keys: tuple[str, str],
-               pal: Palette, limit: int = MAX_BARS) -> go.Figure:
-    """Part-to-whole per category — two stacked segments, two categorical
-    slots, with a 2px surface gap between them."""
+def split_bars(rows: dict[str, dict[str, float]], keys: tuple[str, ...],
+               pal: Palette, limit: int = MAX_BARS,
+               names: dict[str, str] | None = None) -> go.Figure:
+    """Part-to-whole per category — up to four stacked segments, the
+    categorical slots in FIXED order (the first key always wears slot 1),
+    with a 2px surface gap between them and a legend. ``names`` relabels a
+    key for the legend."""
+    if len(keys) > MAX_TREND_SERIES:
+        raise ValueError(f"{len(keys)} segments: fold the rest into 'other' first")
     ordered = sorted(rows.items(),
                      key=lambda kv: sum(kv[1].values()), reverse=True)[:limit]
     labels = [k for k, _ in ordered]
 
     fig = go.Figure()
     for i, key in enumerate(keys):
+        label = (names or {}).get(key, key.capitalize())
         fig.add_bar(
             y=labels, x=[v.get(key, 0) for _, v in ordered],
-            orientation="h", name=key.capitalize(),
+            orientation="h", name=label,
             marker=dict(color=pal.categorical[i],
                         line=dict(color=pal.surface, width=2)),
-            hovertemplate=f"%{{y}}<br>{key}: %{{x:,.0f}}<extra></extra>",
+            hovertemplate=f"%{{y}}<br>{label}: %{{x:,.0f}}<extra></extra>",
         )
     fig.update_layout(**plotly_layout(
         pal,
         height=max(200, 26 * len(labels) + 80),
         barmode="stack",
         showlegend=True,
+        # the legend lists segments in bar order, first key first
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0,
+                    traceorder="normal", font=dict(color=pal.ink_secondary)),
         yaxis=dict(autorange="reversed", gridcolor="rgba(0,0,0,0)",
                    linecolor="rgba(0,0,0,0)",
                    tickfont=dict(color=pal.ink_secondary, size=12)),
@@ -111,6 +122,34 @@ def split_bars(rows: dict[str, dict[str, float]], keys: tuple[str, str],
                    tickfont=dict(color=pal.ink_muted), rangemode="tozero"),
         bargap=0.28,
     ))
+    return fig
+
+
+def ordered_columns(labels: list[str], values: list[float], pal: Palette,
+                    value_name: str = "count", x_title: str = "") -> go.Figure:
+    """A distribution over ordered buckets (1, 2, ... 10 templates), in the
+    order given — never re-sorted by size, the order IS the axis. One
+    series, one colour; each column's value on its cap (there are few, and
+    the values are the point), the table view carries them too."""
+    fig = go.Figure(go.Bar(
+        x=labels, y=values,
+        marker=dict(color=pal.categorical[0],
+                    line=dict(color=pal.surface, width=2)),
+        text=[f"{v:,.0f}" for v in values], textposition="outside",
+        textfont=dict(color=pal.ink_secondary, size=12),
+        hovertemplate=f"%{{x}}<br>{value_name}: %{{y:,.0f}}<extra></extra>",
+        cliponaxis=False,
+    ))
+    fig.update_layout(**plotly_layout(
+        pal, height=280,
+        xaxis=dict(type="category", gridcolor="rgba(0,0,0,0)", linecolor=pal.axis,
+                   tickfont=dict(color=pal.ink_secondary, size=12),
+                   title=dict(text=x_title, font=dict(color=pal.ink_muted, size=11))),
+        yaxis=dict(gridcolor=pal.grid, linecolor="rgba(0,0,0,0)", zeroline=False,
+                   tickfont=dict(color=pal.ink_muted), rangemode="tozero"),
+        bargap=0.35, margin=dict(l=8, r=8, t=24, b=8),
+    ))
+    fig.update_yaxes(range=[0, max(values) * 1.18 if values else 1])
     return fig
 
 
@@ -165,8 +204,15 @@ def trend_lines(series: dict[str, list[tuple[datetime, float]]], pal: Palette,
                     key=lambda kv: kv[1][-1][1] if kv[1] else 0, reverse=True)
     kept = ranked[:MAX_TREND_SERIES]
 
+    values = [v for _, pts in kept for _, v in pts if v > 0]
+    log_scale = bool(values) and max(values) / min(values) > 1000
+    top = max(values) if values else 1.0
+    labelled: list[float] = []
+
     fig = go.Figure()
     for i, (name, points) in enumerate(kept):
+        if log_scale:                   # a zero has no place on a log axis
+            points = [(t, v) for t, v in points if v > 0]
         if not points:
             continue
         xs = [t for t, _ in points]
@@ -180,15 +226,27 @@ def trend_lines(series: dict[str, list[tuple[datetime, float]]], pal: Palette,
             hovertemplate=f"%{{x|%Y-%m-%d %H:%M}}<br>{name}: "
                           f"%{{y:,.0f}}<extra></extra>",
         )
-        # direct label at the last point — identity without the legend
+        # Direct label at the last point — identity without the legend —
+        # unless it would sit on a label already placed (then the legend
+        # and the hover carry it; labels nudged apart detach from their
+        # lines). On a log axis Plotly places annotations in log units.
+        last = ys[-1]
+        if log_scale:
+            if last <= 0:
+                continue
+            y_at = math.log10(last)
+            clash = any(abs(y_at - math.log10(o)) < 0.15 for o in labelled if o > 0)
+        else:
+            y_at = last
+            clash = any(abs(last - o) < 0.06 * top for o in labelled)
+        if clash:
+            continue
+        labelled.append(last)
         fig.add_annotation(
-            x=xs[-1], y=ys[-1], text=f"  {name}", showarrow=False,
+            x=xs[-1], y=y_at, text=f"  {name}", showarrow=False,
             xanchor="left", yanchor="middle",
             font=dict(color=pal.ink_secondary, size=11),
         )
-
-    values = [v for _, pts in kept for _, v in pts if v > 0]
-    log_scale = bool(values) and max(values) / min(values) > 1000
 
     fig.update_layout(**plotly_layout(
         pal, height=340, showlegend=True,

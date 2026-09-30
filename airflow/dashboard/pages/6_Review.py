@@ -22,12 +22,13 @@ writes a verdict (`lib/review.py` explains why writing is allowed here).
 
 from __future__ import annotations
 
+import html
 import time
 
 import streamlit as st
 
-from lib import components as ui, data, review
-from lib.theme import active_palette
+from lib import components as ui, data, highlight, review
+from lib.theme import active_palette, highlight_css
 
 st.set_page_config(page_title="Review · KYM", page_icon="🔍", layout="wide")
 pal = active_palette()
@@ -138,6 +139,10 @@ else:
 
 # -- 2. the events ----------------------------------------------------------
 st.markdown("#### 2 · Is each event right?")
+# Marked only now, after the recall answer: in the prose above, marks would
+# point the reader at what was extracted and hide what was missed.
+st.markdown(highlight_css(pal), unsafe_allow_html=True)
+st.markdown(f'<div class="kym-legend">{highlight.legend()}</div>', unsafe_allow_html=True)
 verdicts: dict[str, dict[str, str]] = {}
 stored = doc.get("verdicts") or {}
 for n, e in enumerate(doc["events"], 1):
@@ -147,7 +152,13 @@ for n, e in enumerate(doc["events"], 1):
         if e.get("date_basis"):
             head += f" ({e['date_precision']}/{e['date_basis']})"
         st.markdown(head)
-        st.markdown(f"> {e['source_text']}")
+        spans, elsewhere = highlight.mark_event(e["source_text"], e)
+        st.markdown(f'<div class="kym-quote">{highlight.render(e["source_text"], spans)}</div>',
+                    unsafe_allow_html=True)
+        if elsewhere:
+            st.markdown('<div class="kym-aside">Named earlier in the section: ' + " · ".join(
+                f'<mark class="kym-hl kym-hl-{k}" title="{k}">{html.escape(v)}</mark>'
+                for k, v in elsewhere) + "</div>", unsafe_allow_html=True)
         bits = [f"**when** {e.get('date_text') or '—'}",
                 f"**where** {' · '.join(data.event_places(e)) or '—'} "
                 f"({e.get('location_type')})",
