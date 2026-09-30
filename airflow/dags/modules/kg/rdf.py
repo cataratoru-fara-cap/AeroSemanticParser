@@ -27,6 +27,13 @@ reused VERBATIM, so an IMKG query runs unchanged against MemeAtlas:
     fromAbout / fromTags    m4s:fromAbout / m4s:fromTags -> a Wikidata item
                             (6.1.0; IMKG's textual-enrichment predicates)
 
+``kym:<Category>`` is byte-equal to IMKG's (verified 2026-09-30, gap 02):
+IMKG's scraper takes the category from the page's category badge
+(``aside/dl/a/text()`` in its KnowYourMeme spider) and its mapping emits
+``kym:$(category)~iri``; its published sample data has ``Meme`` and
+``Person``. On all 23,879 corpus pages the badge reads exactly what
+``category_class`` gives: Meme, Event, Subculture, Person, Site, Culture.
+
 Everything else is a MemeAtlas extension under ``mk:`` and is declared,
 with its alignment to IMKG / schema.org / SKOS, in
 ``kg_config/memeatlas.ttl``. tests/test_kg_vocabulary.py asserts that every
@@ -57,9 +64,6 @@ Deliberate differences from IMKG, recorded so nobody rediscovers them:
   * The curated entry-type hierarchy is ``rdfs:subClassOf`` between the
     ``kymt:`` classes, not ``skos:broader`` — IMKG uses ``skos:broader``
     for frame series, and one predicate must not carry two meanings.
-  * ``kym:<Category>`` casing follows the paper's ``kym:Meme``; IMKG's raw
-    category values are not published, so exact byte-equality with IMKG's
-    class IRIs is unverified.
   * ``mk:badge`` (5.0.0) is an ``owl:ObjectProperty`` to a ``badge_concept``
     resource, not the ``owl:DatatypeProperty`` literal it was in 4.0.0 — a
     documented ontology break, not a silent one.
@@ -373,11 +377,18 @@ def concept_pref_label(label: str) -> str:
     return str(label).replace("-", " ")
 
 
+# KYM category (the parser's, from the URL path) -> IMKG's class local name,
+# which is the page's own category badge text. Verified on every corpus page
+# (gap 02); an unknown category gets no class rather than a guessed one.
+CATEGORY_CLASSES: dict[str, str] = {
+    "meme": "Meme", "event": "Event", "subculture": "Subculture",
+    "person": "Person", "site": "Site", "culture": "Culture",
+}
+
+
 def category_class(category: str | None) -> str | None:
     """KYM category -> IMKG's class local name (``meme`` -> ``Meme``)."""
-    if not category or category == "unknown":
-        return None
-    return str(category).capitalize()
+    return CATEGORY_CLASSES.get(getattr(category, "value", category)) if category else None
 
 
 def node_iri(node_id: str) -> str:

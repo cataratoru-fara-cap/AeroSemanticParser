@@ -9,8 +9,9 @@ and each one gets worse the longer it sits.
 
 - [01-mk-namespace-needs-agreement.md](01-mk-namespace-needs-agreement.md) —
   the MemeAtlas RDF namespace sits under IMKG's own domain without sign-off.
-- [02-category-class-casing-unverified.md](02-category-class-casing-unverified.md) —
-  `kym:<Category>` IRIs are a guess at IMKG's actual casing.
+- ~~[02-category-class-casing-unverified.md](02-category-class-casing-unverified.md)~~ **(closed 2026-09-30)** —
+  `kym:<Category>` IRIs were a guess at IMKG's casing; verified byte-equal
+  from IMKG's own scraper and mapping, and against every stored page.
 - [03-parser-gaps-aliases-scraped-at-template-image.md](03-parser-gaps-aliases-scraped-at-template-image.md) —
   three fields the parser writes are structurally wrong or always empty, and the
   KG now faithfully reproduces that.

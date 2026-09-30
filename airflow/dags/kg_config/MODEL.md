@@ -270,9 +270,14 @@ inside morph-kgc). It is minted once, in `kg/events.py`, and stored.
 2. **The type hierarchy uses `rdfs:subClassOf`, not `skos:broader`.** IMKG
    already uses `skos:broader` between frames for "Part of a series on". Using
    the same predicate between entry types would give it two meanings.
-3. **`kym:<Category>` capitalisation** follows the paper's `kym:Meme`. IMKG's
-   raw category values are not published, so byte equality with its class
-   IRIs has not been verified.
+3. ~~**`kym:<Category>` capitalisation**~~ — **not a difference** (verified
+   2026-09-30, gap 02). IMKG's KnowYourMeme spider takes the category from
+   the page's category badge (`aside/dl/a/text()`) and its mapping emits
+   `kym:$(category)~iri`; its sample data has `Meme` and `Person`. On all
+   23,879 corpus pages the badge reads exactly the class name MemeAtlas
+   emits: `kym:Meme`, `kym:Event`, `kym:Subculture`, `kym:Person`,
+   `kym:Site`, `kym:Culture` (`rdf.CATEGORY_CLASSES`). Kept in this list so
+   the numbering the other sections cite stays stable.
 4. **`mk:relatesToMeme` is broader than IMKG's `rdfs:seeAlso`.** IMKG's
    `rdfs:seeAlso` covers only the Related Entries box. `mk:relatesToMeme`
    covers every KYM link on the page, and is declared a sub-property of

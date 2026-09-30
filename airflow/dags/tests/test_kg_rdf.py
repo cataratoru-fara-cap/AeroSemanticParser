@@ -99,7 +99,19 @@ class ImkgFrameTests(unittest.TestCase):
     def test_unknown_category_gets_no_category_class(self):
         self.assertIsNone(rdf.category_class("unknown"))
         self.assertIsNone(rdf.category_class(None))
+        self.assertIsNone(rdf.category_class("editorial"))       # never a guessed class
         self.assertEqual(rdf.category_class("subculture"), "Subculture")
+
+    def test_category_classes_are_imkgs_badge_text(self):
+        # Gap 02, verified 2026-09-30: IMKG's spider types a frame kym:<the
+        # page's category badge text>, and on all 23,879 corpus pages the
+        # badge reads exactly these six.
+        from modules.kym_models import Category
+        self.assertEqual(
+            {c.value: rdf.category_class(c.value) for c in Category if c.value != "unknown"},
+            {"meme": "Meme", "event": "Event", "subculture": "Subculture",
+             "person": "Person", "site": "Site", "culture": "Culture"})
+        self.assertEqual(rdf.category_class(Category.person), "Person")
 
     def test_missing_attributes_emit_nothing(self):
         got = triples([frame(label=None, category=None, status=None)], [])
