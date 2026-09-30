@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator
 
@@ -74,6 +75,7 @@ __all__ = [
     "ONTOLOGY_GRAPH",
     "fuseki_load", "fuseki_publish", "fuseki_load_ontology",
     "fuseki_count", "fuseki_current", "fuseki_prune", "fuseki_graphs",
+    "fuseki_compact",
 ]
 
 
@@ -497,3 +499,49 @@ def fuseki_prune(session, cfg: FusekiConfig, keep: Iterable[str]) -> dict[str, A
             _check(resp, f"prune {g}")
         removed.append(bid)
     return {"graphs_pruned": len(removed), "pruned": removed}
+
+
+def fuseki_compact(session, cfg: FusekiConfig, *, delete_old: bool = True,
+                   poll_s: float = 10.0, timeout_s: float = 7200.0,
+                   sleep=time.sleep, clock=time.monotonic) -> dict[str, Any]:
+    """Compact the dataset's TDB2 database in place, and wait for it.
+
+    TDB2 never reclaims the space of triples it deletes or replaces: every
+    PUT of a build graph and every prune leaves the old blocks on disk, which
+    grew the database to 34 GB for ~12M live triples (gap 04, 2026-09-30).
+    Compaction — Fuseki's ``POST /$/compact/<name>``, an async task — writes
+    a new generation holding only the live data, switches to it, and with
+    ``deleteOld`` deletes the old one. Readers keep working throughout; a
+    writer waits for the switch. A failed compaction leaves the old
+    generation in use (TDB2 removes its own incomplete copy), so re-running
+    is safe.
+
+    Measured on the first run: 36.0 GB -> 3.8 GB in 9.5 minutes, the same
+    11,946,478 triples graph for graph. The deleted files stay memory-mapped
+    by Fuseki's JVM until it garbage-collects them, so the host gets the
+    disk back a little later (within ~3 minutes of query traffic that time),
+    or at once on a Fuseki restart.
+    """
+    base = cfg.base_url
+    resp = session.post(f"{base}/$/compact/{cfg.dataset}",
+                        params={"deleteOld": "true"} if delete_old else None,
+                        auth=cfg.auth, timeout=60)
+    _check(resp, "compact")
+    task_id = str((resp.json() or {}).get("taskId") or "")
+    if not task_id:
+        raise LoaderError(f"Fuseki compact gave no task id: {(resp.text or '')[:200]}")
+    started = clock()
+    while True:
+        r = session.get(f"{base}/$/tasks/{task_id}", auth=cfg.auth, timeout=60)
+        _check(r, f"compact task {task_id}")
+        task = r.json() or {}
+        if task.get("finished"):
+            if task.get("success") is False:
+                raise LoaderError(f"Fuseki compaction task {task_id} failed: {task}")
+            return {"task_id": task_id, "delete_old": delete_old,
+                    "started": task.get("started"), "finished": task.get("finished"),
+                    "seconds": round(clock() - started, 1)}
+        if clock() - started > timeout_s:
+            raise LoaderError(f"Fuseki compaction task {task_id} still running "
+                              f"after {timeout_s:.0f}s")
+        sleep(poll_s)

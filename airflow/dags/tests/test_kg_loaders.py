@@ -266,6 +266,7 @@ class StubHttp:
         return self.responses.pop(0) if self.responses else _Resp(200)
     def put(self, url, **kw): return self._take("PUT", url, kw)
     def post(self, url, **kw): return self._take("POST", url, kw)
+    def get(self, url, **kw): return self._take("GET", url, kw)
     def delete(self, url, **kw): return self._take("DELETE", url, kw)
 
 
@@ -354,6 +355,52 @@ class FusekiReadTests(unittest.TestCase):
         self.assertEqual([c[2]["params"]["graph"] for c in deletes],
                          ["urn:memeatlas:build:kg_old"])
         self.assertEqual(out, {"graphs_pruned": 1, "pruned": ["kg_old"]})
+
+
+class FusekiCompactTests(unittest.TestCase):
+    """Gap 04: TDB2 keeps replaced and deleted triples on disk until the
+    database is compacted; kym_kg compacts after every prune."""
+
+    def _run(self, responses, **kw):
+        h, naps = StubHttp(responses=responses), []
+        ticks = iter(range(0, 10_000, 5))
+        out = L.fuseki_compact(h, FCFG, poll_s=5, sleep=naps.append,
+                               clock=lambda: next(ticks), **kw)
+        return h, naps, out
+
+    def test_starts_the_task_deleting_the_old_generation_and_waits(self):
+        running = _Resp(200, payload={"task": "Compact", "taskId": "7",
+                                      "started": "2026-09-30T16:00:00Z"})
+        done = _Resp(200, payload={"task": "Compact", "taskId": "7",
+                                   "started": "2026-09-30T16:00:00Z",
+                                   "finished": "2026-09-30T16:03:10Z", "success": True})
+        h, naps, out = self._run([_Resp(202, payload={"taskId": "7", "requestId": 3}),
+                                  running, running, done])
+        method, url, kw = h.calls[0]
+        self.assertEqual((method, url), ("POST", "http://fuseki:3030/$/compact/kg"))
+        self.assertEqual((kw["params"], kw["auth"]), ({"deleteOld": "true"}, ("admin", "pw")))
+        self.assertEqual([c[1] for c in h.calls[1:]],
+                         ["http://fuseki:3030/$/tasks/7"] * 3)
+        self.assertEqual(naps, [5, 5])
+        self.assertEqual((out["task_id"], out["delete_old"], out["finished"]),
+                         ("7", True, "2026-09-30T16:03:10Z"))
+
+    def test_a_failed_task_is_an_error(self):
+        with self.assertRaises(L.LoaderError) as ctx:
+            self._run([_Resp(202, payload={"taskId": "8"}),
+                       _Resp(200, payload={"taskId": "8", "finished": "x",
+                                           "success": False})])
+        self.assertIn("failed", str(ctx.exception))
+
+    def test_it_gives_up_waiting_after_the_timeout(self):
+        running = _Resp(200, payload={"taskId": "9", "started": "x"})
+        with self.assertRaises(L.LoaderError) as ctx:
+            self._run([_Resp(202, payload={"taskId": "9"})] + [running] * 10, timeout_s=12)
+        self.assertIn("still running", str(ctx.exception))
+
+    def test_a_refused_request_is_an_error(self):
+        with self.assertRaises(L.LoaderError):
+            self._run([_Resp(403, "Forbidden")])
 
 
 class ConfigTests(unittest.TestCase):

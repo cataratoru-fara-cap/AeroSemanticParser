@@ -16,9 +16,10 @@ and each one gets worse the longer it sits.
   three fields the parser wrote were structurally wrong or always empty;
   parser 1.7.0 reads aliases from the About's bold names, passes
   `scraped_at` through, and drops `template_image_url` (always `og:image`).
-- [04-fuseki-disk-growth-tdb2-compaction.md](04-fuseki-disk-growth-tdb2-compaction.md) —
-  TDB2 never reclaims space when a build graph is replaced; already at 2.8G,
-  and the 6.0.0 event layer adds ~45% more triples.
+- ~~[04-fuseki-disk-growth-tdb2-compaction.md](04-fuseki-disk-growth-tdb2-compaction.md)~~ **(closed 2026-09-30)** —
+  TDB2 never reclaimed space when a build graph was replaced (it had reached
+  36 GB for 12M live triples); `kym_kg` now compacts after every prune
+  (first run: 36.0 -> 3.8 GB), and the dashboard shows the store's size.
 - ~~[05-postgres-weak-password-hardcoded.md](05-postgres-weak-password-hardcoded.md)~~ **(closed 2026-09-17)** —
   `POSTGRES_PASSWORD=airflow`, and it's hardcoded a second time, so editing
   `.env` alone won't even fix it.

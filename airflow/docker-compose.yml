@@ -540,6 +540,11 @@ services:
       MONGODB_IMGFLIP_TEMPLATES_COLLECTION: ${MONGODB_IMGFLIP_TEMPLATES_COLLECTION:-imgflip_templates}
       MONGODB_TEMPLATE_ENTITIES_COLLECTION: ${MONGODB_TEMPLATE_ENTITIES_COLLECTION:-template_entities}
       MONGODB_TEMPLATE_ENTITY_FAILURES_COLLECTION: ${MONGODB_TEMPLATE_ENTITY_FAILURES_COLLECTION:-template_entity_failures}
+      # Where the Knowledge Graph page measures Fuseki's disk (gap 04).
+      FUSEKI_DATA_DIR: /fuseki-data
+    volumes:
+      # Read-only, for sizes only: the dashboard never opens a TDB2 file.
+      - fuseki-data-volume:/fuseki-data:ro
     ports:
       # Loopback only — the public route is http://<host>:8080/dashboard/.
       - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"

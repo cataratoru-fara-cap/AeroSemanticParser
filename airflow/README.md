@@ -295,6 +295,9 @@ show a mixture of generations — and reports whether the four stores point at
 the same build and whether the last RDF gate agreed. It deliberately does
 **not** connect to Neo4j or Fuseki: that would put two more drivers in this
 image for data the DAG already recorded in the run summary at publish time.
+It does see Fuseki's volume, mounted read-only for sizes alone: the page
+shows how much disk the TDB2 database takes and how much the host has left,
+because that store once grew unwatched to 34 GB (gap 04).
 
 The derived layers have a page each, in pipeline order after Parse:
 **Entities** (what the linker found; what curation keeps and why, the
@@ -401,6 +404,12 @@ To get the current graph: Mongo readers take `kg_builds.findOne({_id:
 "current"}).build_id` and filter on it; file consumers follow
 `data/kg/current` (or read `data/kg/CURRENT`) to a self-describing
 `manifest.json`.
+
+After a publish, `prune` keeps `keep_builds` generations (default 2) in
+every store, and `compact_fuseki` then compacts Fuseki's TDB2 database.
+TDB2 never gives back the disk of triples it deletes or replaces: before
+this step existed it had grown to 36 GB for 12M live triples, and the first
+compaction took it to 3.8 GB with every triple kept (gap 04).
 
 ### Model calls go through one client
 

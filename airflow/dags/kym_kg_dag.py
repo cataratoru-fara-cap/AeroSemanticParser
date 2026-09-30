@@ -80,6 +80,8 @@ Pipeline:
     verify              Mongo == manifest == RML rows == Fuseki == Neo4j
     publish             followers first, Mongo last; read every pointer back
     prune               drop generations beyond keep_builds, in every store
+    compact_fuseki      reclaim the disk TDB2 keeps for replaced and deleted
+                        triples (gap 04); a leaf, beside compute_metrics
     compute_metrics     kg/metrics.py over the published build's IMKG-comparable
                         core (memory-heavy, so AFTER publish: it can never
                         block a verified graph)
@@ -669,6 +671,25 @@ def kym_kg_dag():
                 driver.close()
         return result
 
+    @task(execution_timeout=timedelta(hours=2), retries=0)
+    def compact_fuseki(pruned: dict, verified: dict) -> dict:
+        """Give back the disk this run's PUTs and prune left behind (gap 04).
+
+        TDB2 keeps every replaced or deleted triple on disk until the
+        database is compacted; without this the store had grown to 34 GB for
+        ~12M live triples (36.0 -> 3.8 GB on the first compaction). After
+        prune, so the graphs it just dropped come back too. A leaf: the graph
+        is already published and summarized, so a failed compaction fails
+        only this task (the old generation stays in use) and marks the run
+        failed where it can be seen."""
+        if not verified["stores"]["fuseki"]:
+            return {"skipped": "fuseki disabled"}
+        cfg = loaders.FusekiConfig.from_env()
+        with _http() as http:
+            result = loaders.fuseki_compact(http, cfg)
+        log.info("Fuseki compacted in %.0fs (task %s)", result["seconds"], result["task_id"])
+        return result
+
     # -- Phase 7: measure the published graph ----------------------------------
     @task(execution_timeout=timedelta(minutes=30), retries=1)
     def compute_metrics(published: dict, pruned: dict) -> dict:
@@ -807,6 +828,7 @@ def kym_kg_dag():
     verified = verify(proceed, manifest, fus, neo)
     published = publish(proceed, manifest, verified)
     pruned = prune(published, verified)
+    compact_fuseki(pruned, verified)
     measured = compute_metrics(published, pruned)
     summary = summarize(snap, built, stubs, tax, manifest, fus, neo, verified,
                         published, measured, origin_tax=origin_tax,

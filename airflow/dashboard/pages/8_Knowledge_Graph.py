@@ -209,6 +209,31 @@ if kg["legacy_docs"]:
         f"query on this page and are never pruned — dead weight that is safe to drop; "
         f"the current build already contains everything they held.")
 
+# -- storage (gap 04) ----------------------------------------------------------------
+st.markdown("**Fuseki on disk**")
+disk = data.fuseki_disk()
+if disk is None:
+    ui.empty_state("Fuseki's volume is not mounted in the dashboard.",
+                   "`FUSEKI_DATA_DIR` in docker-compose.yml.")
+else:
+    live = kg["manifest_counts"].get("triples")
+    ui.stat_tiles([
+        {"label": "TDB2 database (GB)", "value": round(disk["bytes"] / 1e9, 1),
+         "help": "Disk the SPARQL store takes, as `du` counts it. TDB2 keeps "
+                 "replaced and deleted triples until the database is compacted; "
+                 "`kym_kg` compacts after every prune (`compact_fuseki`)."},
+        {"label": "Database generations", "value": len(disk["generations"]),
+         "help": "`Data-NNNN` directories. One is normal; two means a compaction "
+                 "is running, or one finished without deleting the old copy."},
+        {"label": "Host disk free (GB)", "value": round(disk["disk_free"] / 1e9),
+         "help": f"Of {disk['disk_total'] / 1e9:,.0f} GB on the filesystem the "
+                 "volumes share with everything else on this host."},
+    ], pal)
+    st.caption("The store holds the published graph twice (the default graph and "
+               "its build's named graph) plus every other retained build's graph"
+               + (f"; the current build is {live:,} triples" if live else "")
+               + ". `keep_builds` (default 2) sets how many builds stay.")
+
 st.divider()
 
 # -- across runs ---------------------------------------------------------------------

@@ -716,6 +716,45 @@ def kg_state() -> dict[str, Any]:
     return out
 
 
+def _allocated(path: str) -> int:
+    """Bytes allocated under ``path``, as ``du`` counts them: TDB2's files
+    are sparse, so their apparent size overstates the disk they take."""
+    total = 0
+    for entry in os.scandir(path):
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                total += _allocated(entry.path)
+            else:
+                total += entry.stat(follow_symlinks=False).st_blocks * 512
+        except OSError:
+            continue                     # a file TDB2 removed mid-walk
+    return total
+
+
+@st.cache_data(ttl=600)
+def fuseki_disk() -> dict[str, Any] | None:
+    """Fuseki's TDB2 databases on disk, per generation directory
+    (``Data-NNNN``), and the free space of the filesystem they sit on (the
+    host's). None when the volume is not mounted in this container (gap 04:
+    the store grew unseen until someone ran ``du``)."""
+    import shutil
+    root = os.getenv("FUSEKI_DATA_DIR", "")
+    databases = os.path.join(root, "databases") if root else ""
+    if not databases or not os.path.isdir(databases):
+        return None
+    gens = []
+    for ds in sorted(os.scandir(databases), key=lambda e: e.name):
+        if not ds.is_dir():
+            continue
+        for gen in sorted(os.scandir(ds.path), key=lambda e: e.name):
+            if gen.is_dir() and gen.name.startswith("Data-"):
+                gens.append({"dataset": ds.name, "generation": gen.name,
+                             "bytes": _allocated(gen.path)})
+    usage = shutil.disk_usage(databases)
+    return {"generations": gens, "bytes": sum(g["bytes"] for g in gens),
+            "disk_total": usage.total, "disk_free": usage.free}
+
+
 @st.cache_data(ttl=CACHE_TTL)
 def kg_builds() -> list[dict[str, Any]]:
     """Every retained generation, newest first — the drill-down behind the
