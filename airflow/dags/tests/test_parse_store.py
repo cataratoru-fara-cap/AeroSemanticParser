@@ -121,6 +121,19 @@ class UpsertTests(unittest.TestCase):
         self.assertEqual(tallies, {"ready": 1, "incomplete": 0})
         self.assertEqual(self.store.entries.count_documents({}), 1)
 
+    def test_a_retired_field_leaves_the_doc_on_reparse(self):
+        # template_image_url (a copy of og:image) was dropped in parser
+        # 1.7.0; the $set upsert alone would have left it in every doc.
+        doc = self.store.build_entry_doc(
+            _thin_entry(), "sha1", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
+            CORPUS_POLICY_VERSION)
+        self.store.entries.insert_one({"_id": doc["_id"],
+                                       "template_image_url": "https://i.kym-cdn.com/x.jpg"})
+        self.store.upsert_entries([doc])
+        stored = self.store.entries.find_one({"_id": doc["_id"]})
+        self.assertNotIn("template_image_url", stored)
+        self.assertEqual(stored["title"], "Thin Stub")
+
     def test_upsert_is_idempotent_on_url(self):
         doc = self.store.build_entry_doc(
             _thin_entry(), "sha1", DEFAULT_CORPUS_POLICY, PARSER_VERSION,

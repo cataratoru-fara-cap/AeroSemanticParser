@@ -381,11 +381,13 @@ def content_shas(urls: Iterable[str]) -> dict[str, str]:
 
 
 def iter_html_for(urls: Iterable[str]):
-    """Stream (url, decompressed_html, content_sha256) for OK-scraped urls,
-    one document at a time off the cursor. Used by the parse DAG's chunk
-    task: each page's html is released as soon as the caller moves to the
-    next yield, so peak memory is ~one page regardless of chunk size —
-    never materialize this generator into a list/dict.
+    """Stream (url, decompressed_html, content_sha256, fetched_at) for
+    OK-scraped urls, one document at a time off the cursor. Used by the
+    parse DAG's chunk task: each page's html is released as soon as the
+    caller moves to the next yield, so peak memory is ~one page regardless
+    of chunk size — never materialize this generator into a list/dict.
+    ``fetched_at`` (UTC) is when this stored html was fetched: the parsed
+    entry's ``scraped_at``.
 
     Generator holds one connection for its lifetime and closes it when
     exhausted or garbage-collected.
@@ -396,14 +398,15 @@ def iter_html_for(urls: Iterable[str]):
             return
         cursor = store.doms.find(
             {"_id": {"$in": list(ids)}, "scrape_status": "ok"},
-            {"html": 1, "encoding": 1, "content_sha256": 1})
+            {"html": 1, "encoding": 1, "content_sha256": 1, "fetched_at": 1})
         for doc in cursor:
             url = ids.get(doc["_id"])
             if url is None or doc.get("html") is None:
                 continue
             yield (url,
                    _decode_html(doc["html"], doc.get("encoding")),
-                   doc.get("content_sha256"))
+                   doc.get("content_sha256"),
+                   as_utc(doc.get("fetched_at")))
 
 
 def iter_ok_html(limit: int = 0, namespaces: Iterable[str] | None = None,

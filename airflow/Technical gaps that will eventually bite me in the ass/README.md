@@ -12,9 +12,10 @@ and each one gets worse the longer it sits.
 - ~~[02-category-class-casing-unverified.md](02-category-class-casing-unverified.md)~~ **(closed 2026-09-30)** —
   `kym:<Category>` IRIs were a guess at IMKG's casing; verified byte-equal
   from IMKG's own scraper and mapping, and against every stored page.
-- [03-parser-gaps-aliases-scraped-at-template-image.md](03-parser-gaps-aliases-scraped-at-template-image.md) —
-  three fields the parser writes are structurally wrong or always empty, and the
-  KG now faithfully reproduces that.
+- ~~[03-parser-gaps-aliases-scraped-at-template-image.md](03-parser-gaps-aliases-scraped-at-template-image.md)~~ **(closed 2026-09-30)** —
+  three fields the parser wrote were structurally wrong or always empty;
+  parser 1.7.0 reads aliases from the About's bold names, passes
+  `scraped_at` through, and drops `template_image_url` (always `og:image`).
 - [04-fuseki-disk-growth-tdb2-compaction.md](04-fuseki-disk-growth-tdb2-compaction.md) —
   TDB2 never reclaims space when a build graph is replaced; already at 2.8G,
   and the 6.0.0 event layer adds ~45% more triples.

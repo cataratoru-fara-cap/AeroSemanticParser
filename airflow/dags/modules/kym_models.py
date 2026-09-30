@@ -204,12 +204,16 @@ class KYMEntryScrape(BaseModel):
                     "year=0 and year=3000 both validated.")
     origin: str = Field(..., min_length=1)  # required: 100% on confirmed memes
     region: list[str] = Field(default_factory=list)
+    # The page's other names for the entry: the bold names that open its
+    # About (kym_parse._aliases), never the title itself.
     aliases: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)  # gated, not required — see CorpusPolicy
 
     # --- flags / media ---
     badges: list[str] = Field(default_factory=list)
-    template_image_url: HttpUrl | None = None
+    # The page's own image. There is no separate template image: the header
+    # photo IMKG kept as "template_image_url" is this same file on every
+    # page (gap 03), so that field was dropped in parser 1.7.0.
     og_image: HttpUrl | None = None
 
     # --- relations ---
@@ -232,6 +236,8 @@ class KYMEntryScrape(BaseModel):
     meta: dict[str, str] = Field(default_factory=dict)
     kym_last_updated: int | None = None
     kym_added: int | None = None
+    # When the stored page this entry was parsed from was fetched (the
+    # scrape's doms.fetched_at); KYM's own dates are kym_added/kym_last_updated.
     scraped_at: datetime | None = None
 
     # ---- validators / normalizers ----

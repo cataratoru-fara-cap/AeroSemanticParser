@@ -140,10 +140,10 @@ def kym_parse_dag():
         failures: list[dict] = []  # tiny (url + error string) — safe to buffer
 
         def parsed_stream():
-            for url, html, sha in store.iter_html(chunk):
+            for url, html, sha, fetched_at in store.iter_html(chunk):
                 counters["seen"] += 1
                 try:
-                    entry = kym_parse.parse_entry(html, url=url)
+                    entry = kym_parse.parse_entry(html, url=url, fetched_at=fetched_at)
                 except (ValidationError, ValueError) as exc:
                     failures.append({
                         "url": url, "dom_content_sha256": sha,

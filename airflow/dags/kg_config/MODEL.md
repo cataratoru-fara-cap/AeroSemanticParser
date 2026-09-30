@@ -75,11 +75,11 @@ Neo4j and Mongo) to its RDF term.
 | edge `relatesToMeme` | `mk:relatesToMeme` | ⊑ `rdfs:seeAlso` | every KYM link on the page or in its references |
 | edge `citesExternal` | `mk:citesExternal` | ⊑ `rdfs:seeAlso` | every non-KYM link on the page or in its references |
 | `frame.description` | `mk:description` | ⊑ `schema:description` | `meta.description` |
-| `frame.aliases` | `skos:altLabel` | | `aliases` |
+| `frame.aliases` | `skos:altLabel` | | `aliases`: the bold names that open the About, other than the title (parser 1.7.0; KYM has no alias field) |
 | `frame.section_texts` | `mk:sectionText "<heading>\n\n<paragraphs>"` | ⊑ `schema:articleBody` | `sections[]` with text, except the three narrative kinds, each of which has an IMKG term of its own |
 | `frame.corpus_status`, `corpus_missing` | `mk:corpusStatus`, `mk:corpusMissing` | | corpus grading |
-| `frame.parser_version`, `parsed_at`, `scraped_at` | `mk:parserVersion`, `mk:parsedAt`, `mk:scrapedAt` | ⊑ PROV | provenance |
-| node `image` | `<file url> a mk:Image`; `mk:width`, `mk:height` | `mk:Image` ⊑ `schema:ImageObject` | `og_image`, `template_image_url`, `sections[].images[]`, `og:image:width/height` |
+| `frame.parser_version`, `parsed_at`, `scraped_at` | `mk:parserVersion`, `mk:parsedAt`, `mk:scrapedAt` | ⊑ PROV | provenance; `scraped_at` is when the stored page was fetched (parser 1.7.0) |
+| node `image` | `<file url> a mk:Image`; `mk:width`, `mk:height` | `mk:Image` ⊑ `schema:ImageObject` | `og_image`, `sections[].images[]`, `og:image:width/height` |
 | edge `hasImage` | `mk:hasImage` | ⊑ `schema:image` | |
 | node `origin_concept` (5.0.0) | `mk:origin/<slug> a skos:Concept`; `skos:inScheme mk:OriginScheme`; `skos:prefLabel` | | `origin`, canonicalized (see below) |
 | edge `hasOrigin` (5.0.0) | `mk:hasOrigin` | | curated aliases + a fallback slug, `kg_config/origin_taxonomy.yaml` |

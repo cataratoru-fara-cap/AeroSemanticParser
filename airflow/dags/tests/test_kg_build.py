@@ -331,7 +331,7 @@ class OccurrenceTests(unittest.TestCase):
 
     def test_image_shown_as_page_image_and_in_a_section_is_one_edge(self):
         nodes, edges = build.build_nodes_and_edges(entry(
-            og_image=IMG, template_image_url=IMG,
+            og_image=IMG,
             meta={"og:image:width": "600", "og:image:height": "nope"},
             sections=[section(heading="Notable Examples",
                               images=[{"src": IMG, "alt": "doge", "caption": "wow"}]),

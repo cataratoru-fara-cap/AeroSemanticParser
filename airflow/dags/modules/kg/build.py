@@ -862,15 +862,13 @@ def build_nodes_and_edges(
                 detected_by=m.get("model")))
 
     # -- images: the page's own, then those shown in its sections ------------
-    # template_image_url is currently a copy of og:image in the parser; a
-    # distinct value still gets its own node rather than being dropped.
-    page_images = list(dict.fromkeys(
-        s for s in (entry.get("og_image"), entry.get("template_image_url")) if s))
-    for src in page_images:
-        img = {"id": image_node_id(src), "kind": "image"}
-        if src == entry.get("og_image"):
-            img["width"] = _int_or_none(meta.get("og:image:width"))
-            img["height"] = _int_or_none(meta.get("og:image:height"))
+    # One page image: og:image. (Parser 1.7.0 dropped template_image_url,
+    # which was the same file on every page — gap 03.)
+    src = entry.get("og_image")
+    if src:
+        img = {"id": image_node_id(src), "kind": "image",
+               "width": _int_or_none(meta.get("og:image:width")),
+               "height": _int_or_none(meta.get("og:image:height"))}
         nodes.append(_compact(img))
         edge("hasImage", img["id"], _occurrence(role="page"))
 

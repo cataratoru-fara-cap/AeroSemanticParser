@@ -174,6 +174,17 @@ class StoreTests(unittest.TestCase):
         self.assertIn("https://kym/b",
                       self.store.select_pending(refetch_older_than_days=30))
 
+    def test_iter_html_for_carries_the_fetch_time(self):
+        # Parser 1.7.0: an entry's scraped_at is when its stored page was
+        # fetched. Before, nothing passed it and scraped_at was always empty.
+        when = datetime(2026, 7, 9, 23, 47, 44, tzinfo=timezone.utc)
+        self.store.save_result(url="https://kym/a", ok=True, html=BIG_HTML,
+                               fetched_at=when)
+        with mock.patch.object(dom_store, "get_store", return_value=self.store):
+            (url, html, sha, fetched_at), = list(dom_store.iter_html_for(["https://kym/a"]))
+        self.assertEqual((url, html, fetched_at), ("https://kym/a", BIG_HTML, when))
+        self.assertEqual(sha, self.store.doms.find_one({"url": url})["content_sha256"])
+
     def test_filter_unscraped(self):
         self.store.save_result(url="https://kym/a", ok=True, html=BIG_HTML)
         chunk = ["https://kym/a", "https://kym/b"]

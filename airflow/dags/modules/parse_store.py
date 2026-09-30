@@ -81,6 +81,11 @@ from modules.mongo_base import (
 
 log = logging.getLogger("parse_store")
 
+# Fields an older parser wrote that the current one no longer produces. The
+# upsert $sets every field it has, so without this a retired field would sit
+# in every re-parsed doc forever. template_image_url: parser 1.7.0 (gap 03).
+RETIRED_FIELDS = ("template_image_url",)
+
 __all__ = [
     "ParseStore", "get_store", "clean_namespaces", "pending_urls",
     "iter_html", "save_parsed", "namespaces_for", "save_failures",
@@ -200,9 +205,12 @@ class ParseStore(MongoStoreBase):
         currently-unresolved failures (no zombies after a parser fix)."""
         tallies = {"ready": 0, "incomplete": 0}
         resolved_ids: list[str] = []
+        retired = {f: "" for f in RETIRED_FIELDS}
         for doc in docs:
-            self.entries.update_one(
-                {"_id": doc["_id"]}, {"$set": doc}, upsert=True)
+            update: dict[str, Any] = {"$set": doc}
+            if retired:
+                update["$unset"] = retired
+            self.entries.update_one({"_id": doc["_id"]}, update, upsert=True)
             tallies[doc["corpus_status"]] += 1
             resolved_ids.append(doc["_id"])
         if resolved_ids:
@@ -320,7 +328,7 @@ def pending_urls(namespaces: Iterable[str] | None = None,
 
 
 def iter_html(urls: list[str]):
-    """Stream (url, html, dom_content_sha256) one page at a time.
+    """Stream (url, html, dom_content_sha256, fetched_at) one page at a time.
 
     A deliberate re-export of dom_store.iter_html_for: `doms` is the scrape
     stage's collection, so the parse DAG reaches it through this module

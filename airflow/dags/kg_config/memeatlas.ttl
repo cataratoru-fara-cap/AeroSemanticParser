@@ -169,7 +169,8 @@ mk:parsedAt a owl:DatatypeProperty ;
 mk:scrapedAt a owl:DatatypeProperty ;
     rdfs:domain m4s:MediaFrame ;
     rdfs:range xsd:dateTime ;
-    rdfs:label "scraped at" .
+    rdfs:label "scraped at" ;
+    rdfs:comment "When the Know Your Meme page this frame was parsed from was fetched. KYM's own dates are m4s:added and m4s:last_update_source." .
 
 # ---------------------------------------------------------------------------
 # Image attributes (of the file itself)

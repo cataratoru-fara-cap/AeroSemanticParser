@@ -7,9 +7,12 @@ Run inside the Airflow container:
 """
 import os
 import unittest
+from datetime import datetime, timezone
 
+from bs4 import BeautifulSoup
 from pydantic import ValidationError
 
+from modules import kym_parse
 from modules.kym_models import CorpusPolicy, KYMEntryScrape, corpus_ready
 from modules.kym_parse import parse_entry
 
@@ -131,6 +134,22 @@ class ParseDogeTests(unittest.TestCase):
     def test_region_gate_would_pass_here(self):
         ready, _ = corpus_ready(self.entry, CorpusPolicy(require_region=True))
         self.assertTrue(ready)
+
+    def test_no_aliases_when_the_about_bolds_only_the_title(self):
+        # "<strong>Doge</strong> (pronounced /ˈdoʊdʒ/ DOHJ) is a slang term"
+        self.assertEqual(self.entry.aliases, [])
+
+    def test_one_page_image_and_no_template_image_field(self):
+        # Parser 1.7.0 (gap 03): the header photo IMKG called the template
+        # image is og:image again on every corpus page.
+        self.assertEqual(str(self.entry.og_image),
+                         "https://i.kym-cdn.com/entries/icons/original/000/013/564/doge.jpg")
+        self.assertNotIn("template_image_url", type(self.entry).model_fields)
+
+    def test_scraped_at_is_the_stored_pages_fetch_time(self):
+        when = datetime(2026, 7, 9, 23, 47, 44, tzinfo=timezone.utc)
+        self.assertEqual(parse_entry(_load(), fetched_at=when).scraped_at, when)
+        self.assertIsNone(self.entry.scraped_at)          # none given, none invented
 
     def test_badges_empty_when_no_badges_row(self):
         # Doge's sidebar has no "Badges:" dt at all (SFW page) — confirms
@@ -278,6 +297,95 @@ class LinkPositionTests(unittest.TestCase):
                              link["text"])
         self.assertEqual(offsets[0], offsets[1])            # the same words
         self.assertGreater(offsets[2], offsets[1])          # the later mention
+
+
+def aliases(lead: str, title: str) -> list[str]:
+    html = f'<h2 id="about"><span>About</span></h2>\n{lead}\n<h2 id="origin">Origin</h2><p>x</p>'
+    return kym_parse._aliases(BeautifulSoup(html, "html.parser"), title)
+
+
+class AliasTests(unittest.TestCase):
+    """Parser 1.7.0: KYM has no alias row; the About's lead bolds the names
+    (gap 03). Each case is a pattern read on the corpus."""
+
+    def test_also_known_as_and_or_continue_the_names(self):
+        self.assertEqual(aliases(
+            "<p><strong>Distracted Boyfriend</strong>, also known as <strong>Man Looking "
+            "at Other Woman</strong> or <strong>Guy Checking Out Another Girl</strong>, "
+            "is a stock photo series in which <strong>nobody</strong> is named.</p>",
+            "Distracted Boyfriend"),
+            ["Man Looking at Other Woman", "Guy Checking Out Another Girl"])
+
+    def test_the_sentence_proper_ends_the_names(self):
+        # "continued" is the rest of a catchphrase, not another name
+        self.assertEqual(aliases(
+            "<p><strong>Yeah, But They Got Him</strong>, continued <strong>What Does "
+            "That Mean?</strong>, is a catchphrase.</p>", "Yeah, But They Got Him"), [])
+
+    def test_real_name_and_a_parenthesis(self):
+        self.assertEqual(aliases(
+            "<p><strong>Pikabu</strong> (<strong>Пикабу</strong>) is a Russian site.</p>",
+            "Pikabu"), ["Пикабу"])
+        self.assertEqual(aliases(
+            "<p><strong>Ice Spice</strong>, real name <strong>Isis Gaston</strong>, "
+            "is a rapper.</p>", "Ice Spice"), ["Isis Gaston"])
+
+    def test_a_first_name_that_is_not_the_title_is_an_alias(self):
+        self.assertEqual(aliases(
+            "<p>The <strong>Sir Toad</strong> or <strong>Frog In Suit Sitting In "
+            "Chair</strong> is an image.</p>", "Colonel Toad"),
+            ["Sir Toad", "Frog In Suit Sitting In Chair"])
+
+    def test_the_title_is_never_its_own_alias(self):
+        self.assertEqual(aliases(
+            '<p><strong>"Who is Paul McCartney?"</strong> (<strong>Only One '
+            'Trolling</strong>) is a joke.</p>', "Who Is Paul McCartney?"),
+            ["Only One Trolling"])
+        self.assertEqual(aliases(
+            "<p><strong>The Slashdot Effect</strong>, also known as <strong>Slashdotting"
+            "</strong>, is traffic.</p>", "Slashdot Effect"), ["Slashdotting"])
+
+    def test_markup_kym_failed_to_render_ends_the_names(self):
+        self.assertEqual(aliases(
+            '<p><strong>Cat Circle</strong> or <strong>I Wake Up / There Is X" also '
+            "known as *Cat Circle Of Life</strong> refers to an image.</p>",
+            "I Wake Up / There Is X"), ["Cat Circle"])
+        self.assertEqual(aliases(                            # a name's own asterisks
+            "<p><strong>*Starts Beatboxing*</strong> or <strong>Please Stop Beatboxing"
+            "</strong> is a video.</p>", "*Starts Beatboxing* / Please Stop Beatboxing"),
+            ["*Starts Beatboxing*", "Please Stop Beatboxing"])
+
+    def test_previously_known_as(self):
+        self.assertEqual(aliases(
+            "<p><strong>Tessa Violet Williams</strong>, previously known as "
+            "<strong>Meekakitty</strong>, is a singer.</p>", "Tessa Violet"),
+            ["Tessa Violet Williams", "Meekakitty"])
+
+    def test_a_lead_that_bolds_a_name_later_gives_none(self):
+        self.assertEqual(aliases(
+            "<p>In 2014, the phrase <strong>Such Wow</strong>, also known as "
+            "<strong>Wow</strong>, spread.</p>", "Doge"), [])
+
+    def test_a_name_split_by_the_markup_is_not_two_names(self):
+        self.assertEqual(aliases(
+            "<p><strong>Don't F</strong><strong>k With Cats</strong> is a series.</p>",
+            "Don't F**k With Cats"), [])
+
+    def test_a_comma_inside_the_bold_still_separates_names(self):
+        self.assertEqual(aliases(
+            "<p><strong>Dab Pen,</strong> <strong>Cartridges,</strong> or "
+            "<strong>Vape Pen</strong> are devices.</p>", "Dab Pen"),
+            ["Cartridges", "Vape Pen"])
+
+    def test_a_name_inside_a_link_counts(self):
+        self.assertEqual(aliases(
+            '<p><a href="/memes/pepe-the-frog"><strong>Pepe the Frog</strong></a>, '
+            "a.k.a. <strong>Pepe</strong>, is a frog.</p>", "Pepe the Frog"), ["Pepe"])
+
+    def test_no_about_section(self):
+        soup = BeautifulSoup("<h2 id='origin'>Origin</h2><p><strong>X</strong></p>",
+                             "html.parser")
+        self.assertEqual(kym_parse._aliases(soup, "Y"), [])
 
 
 class ModelGuardTests(unittest.TestCase):

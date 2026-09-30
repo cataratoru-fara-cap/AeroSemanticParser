@@ -10,7 +10,9 @@ Selector map (verified against a live 2026 confirmed-meme page, Doge):
     canonical url    link[rel=canonical]
     title            h1.entry-title  (fallback h1.content-title, og:title)
     details sidebar  aside dl > dt/dd pairs: Status / Type: / Year / Origin
-                     / Region / Also Known As / Additional References
+                     / Region / Badges / Additional References
+    aliases          the bold names that open the About (see _aliases): KYM
+                     has no alias row in the sidebar
     entry types      dd a[href*="/types/"]     (model slugifies)
     tags             dl#entry_tags a
     body             section.bodycopy: h2[id] = level-2 section anchors with
@@ -115,7 +117,11 @@ def infer_namespace_from_url(url: str) -> str:
 # embedded posts (Section.embeds), for the event layer; see kym_models.
 # 1.6.1: anchors on the same words as the previous anchor get a position too
 # (see _locate).
-PARSER_VERSION = "1.6.1"
+# 1.7.0: aliases from the bold names that open the About (the sidebar row
+# the parser looked for exists on no page); scraped_at from the stored
+# page's fetch time (it was never passed in); template_image_url dropped (it
+# was og:image again on every page, and KYM has no other page image). Gap 03.
+PARSER_VERSION = "1.7.0"
 
 # h2 id -> kind. Live pages give sections STABLE anchor ids, so this is the
 # primary classifier; the text alias table below is the fallback for older
@@ -423,6 +429,122 @@ def _external_refs(soup) -> list[dict]:
     return refs
 
 
+# The words that may join one bold name in the About's lead to the next and
+# still mean "another name for the same thing": "**Distracted Boyfriend**,
+# also known as **Man Looking at Other Woman**", "**Glowing Eyes** or
+# **Laser Eyes**", "**Ice Spice**, real name **Isis Gaston**". Read on the
+# 23,879 corpus pages (2026-09-30), where these cover the joins between bold
+# names; ", continued" (the rest of a catchphrase) and anything that starts
+# the sentence proper ("is a") are deliberately absent.
+_ALIAS_JOIN_RE = re.compile(
+    r"(?:(?:or|and)\s+)?"
+    r"(?:(?:also|sometimes|commonly|better|otherwise|often|originally|previously"
+    r"|formerly|popularly|widely)\s+)?"
+    r"(?:known|referred\s+to|called|titled|named|written|spelled|stylized|styled"
+    r"|dubbed|abbreviated)(?:\s+simply)?(?:\s+as)?"
+    r"|a\.?k\.?a\.?|real\s+name|short\s+for|or(?:\s+simply)?|and",
+    re.IGNORECASE)
+_QUOTE_CHARS = "\"'“”‘’"
+
+
+def _alias_join(between: str) -> bool:
+    """Whether the text between two bold names makes the second one another
+    name for the entry. A bare comma or parenthesis continues a list of
+    names; nothing at all (two bold runs touching) is a split name, not two."""
+    core = " ".join(between.split()).strip(" ,;:(")
+    core = re.sub(r"(?i)\s*\bthe$", "", core).strip()   # "also known as the X"
+    if not core:
+        return "," in between or "(" in between
+    return bool(_ALIAS_JOIN_RE.fullmatch(core))
+
+
+def _name_text(text: str) -> str:
+    name = " ".join(text.split()).strip(" ,;:")
+    if len(name) > 1 and name[0] in _QUOTE_CHARS and name[-1] in _QUOTE_CHARS:
+        name = name[1:-1].strip()
+    return name
+
+
+def _label_key(text: str) -> str:
+    """Case, punctuation and a leading "The" aside: "The Slashdot Effect"
+    is the title "Slashdot Effect", not an alias of it."""
+    key = re.sub(r"[^\w]+", " ", text.casefold()).strip()
+    return key[4:] if key.startswith("the ") else key
+
+
+def _aliases(soup, title: str | None) -> list[str]:
+    """The entry's other names, from the bold names that open its About.
+
+    KYM has no alias field: the sidebar row this parser used to look for
+    ("Also Known As") exists on none of the 23,879 corpus pages. Its editors
+    name the subject in bold at the start of the About instead, as Wikipedia
+    does ("**X**, also known as **Y** or **Z**, is ..."; 21,377 of the
+    21,402 pages with a bold name open the About with it). The run of bold
+    names from the paragraph's start, each joined to the one before it by
+    _alias_join, is every name the page gives the entry; the title is not
+    an alias of itself. The first join that is not a naming word ends the
+    run, so a name bolded later in the paragraph is never read as one.
+    """
+    from bs4 import Comment
+
+    about = next((h for h in soup.find_all("h2")
+                  if _classify(h.get("id"), h.get_text(" ", strip=True)) == "about"), None)
+    if about is None:
+        return []
+    lead = None
+    for sib in about.find_next_siblings():
+        if sib.name in ("h1", "h2"):
+            break
+        if sib.name == "p":
+            lead = sib
+            break
+    if lead is None:
+        return []
+
+    pieces: list[tuple[bool, str]] = []          # (is a bold name, text), in order
+
+    def walk(node) -> None:
+        for child in node.children:
+            if child.name is None:
+                if not isinstance(child, Comment):
+                    pieces.append((False, str(child)))
+            elif child.name in ("strong", "b"):
+                pieces.append((True, child.get_text(" ")))
+            else:
+                walk(child)
+    walk(lead)
+
+    names: list[str] = []
+    between = ""
+    for is_name, text in pieces:
+        name = _name_text(text) if is_name else ""
+        if not name:
+            between += text
+            continue
+        if name.count("*") % 2:
+            # Markdown KYM failed to render: the bold swallowed the words
+            # after it ('I Wake Up / There Is X" also known as *Cat Circle
+            # Of Life'). Nothing from here on is a clean name. (A matched
+            # pair is a name's own: "*Starts Beatboxing*".)
+            break
+        if not names:
+            if len(between.strip()) > 3:         # "The **X**" opens with a name;
+                return []                        # a sentence that bolds one later does not
+        elif not between.strip():
+            # Two bold runs touching are ONE name KYM's markup split ("Don't
+            # F" + "k With Cats" from "F**k"): neither half is a name.
+            names.pop()
+            break
+        elif not _alias_join(between):
+            break
+        names.append(name)
+        # A comma typed inside the bold ("**Wax Pen,** **Cartridges**") still
+        # separates the names.
+        between = text.rstrip()[-1:] if text.rstrip()[-1:] in ",;" else ""
+    own = _label_key(title or "")
+    return [n for n in names if _label_key(n) != own]
+
+
 def _locate(para: str, needle: str, cursor: int, outer: int | None) -> int:
     """Where an anchor's text sits in its paragraph, searching in order.
 
@@ -584,8 +706,6 @@ def parse_entry(html: str, url: str | None = None,
         if side.get("type") is not None else []
     region_raw = dd_text("region")
     region = [r.strip() for r in region_raw.split(",")] if region_raw else []
-    aka_raw = dd_text("also known as") or dd_text("aka")
-    aliases = [a.strip() for a in aka_raw.split(",")] if aka_raw else []
 
     tags = _tags(soup)  # [] is valid now — gated by CorpusPolicy, not schema-required
 
@@ -595,7 +715,6 @@ def parse_entry(html: str, url: str | None = None,
         series_parent = _clean_url(_abs(parent_el["href"]))
 
     updated, added = _timestamps(soup)
-    og_image = meta.get("og:image")
 
     return KYMEntryScrape.model_validate({
         "url": page_url,
@@ -606,11 +725,13 @@ def parse_entry(html: str, url: str | None = None,
         "year": dd_text("year"),
         "origin": dd_text("origin"),
         "region": region,
-        "aliases": aliases,
+        "aliases": _aliases(soup, title),
         "tags": tags,
         "badges": _badges(soup),
-        "template_image_url": og_image,
-        "og_image": og_image,
+        # The page's own image. IMKG's scraper also kept the header photo's
+        # link as "template_image_url"; on every corpus page it is this same
+        # file (2026-09-30), so it is not carried twice.
+        "og_image": meta.get("og:image"),
         "series_parent": series_parent,
         "additional_references": _additional_refs(soup),
         "external_references": _external_refs(soup),
