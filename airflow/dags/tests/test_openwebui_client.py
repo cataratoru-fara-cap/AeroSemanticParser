@@ -497,6 +497,30 @@ class OutputAndProtocolTests(unittest.TestCase):
         self.assertEqual((res.ok, res.error_kind, res.attempts, len(s.posts()), sleeps),
                          (False, "invalid", 2, 2, []))
 
+    def test_a_generation_the_host_aborts_is_the_answers_fault(self):
+        aborted = Resp(500, {"error": "prediction aborted, token repeat limit reached"})
+        seen = []
+
+        def route(body):
+            seen.append(body["options"]["temperature"])
+            return aborted if len(seen) == 1 else chat_ok('{"a": 1}')
+        s = StubSession({("POST", CCDD, owc.CHAT_PATH): route})
+        c, sleeps = client(s)
+        res = c.chat([{"role": "user", "content": "x"}], owc.ModelRequest(model="gpt-oss:120b"),
+                     options={"temperature": 0}, validate=json.loads, retry_temperature=0.4)
+        self.assertEqual((res.ok, res.parsed, seen, sleeps), (True, {"a": 1}, [0, 0.4], []))
+        # aborted every time: a failed ANSWER — no exception, no other host tried
+        s = StubSession({("POST", CCDD, owc.CHAT_PATH): aborted})
+        c, _ = client(s)
+        res = c.chat([{"role": "user", "content": "x"}], owc.ModelRequest(model="gpt-oss:120b"),
+                     options={"temperature": 0}, validate=json.loads, retry_temperature=0.4)
+        self.assertEqual((res.ok, res.error_kind, len(s.posts())), (False, "invalid", 2))
+        s = StubSession({("POST", CCDD, owc.CHAT_PATH): aborted})
+        c, _ = client(s)
+        res = c.chat([{"role": "user", "content": "x"}], owc.ModelRequest(model="gpt-oss:120b"))
+        self.assertEqual((res.ok, res.error_kind), (False, "invalid"))
+        self.assertEqual(s.posts(), [("ollama-ccdd", "gpt-oss:120b")] * 3)   # no failover
+
     def test_a_grammar_answer_filed_as_thinking_is_the_answer(self):
         # Ollama 0.34.1 + qwen3-vl:32b with think=false and a format grammar
         filed = Resp(200, {"message": {"role": "assistant", "content": "",

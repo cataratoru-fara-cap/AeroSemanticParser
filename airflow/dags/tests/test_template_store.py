@@ -219,6 +219,9 @@ class EndToEndTests(unittest.TestCase):
         again = ts.run_assignment(self.s, "run-2")      # nothing changed
         self.assertEqual((again["written"], again["unchanged"]), (0, 1))
 
+        # a frame's own imgflip link, resolved during the search, reads the
+        # template's page without its image: still needs its details step
+        self.s.save_details(10, {"name": "Distracted Boyfriend"})
         self.assertIn(10, self.s.templates_needing_details())
         got = ts.fetch_details([10], self.io)
         self.assertEqual((got["details"], got["blanks"]), (1, 1))

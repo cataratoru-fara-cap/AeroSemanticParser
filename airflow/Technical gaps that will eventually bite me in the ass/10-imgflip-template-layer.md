@@ -121,3 +121,17 @@ matched.
 | qwen3-vl:8b | 1.56x faster, but a different reader: 144 names vs 89, many lifted from the frame's text ("Super Bowl LIV", "Red Table Talk") | no (Gabi's choice stands) |
 | Worker slots 4 -> 8, memory 3 -> 6 GiB | the curation judge, search, reader and event extraction fit side by side | yes |
 | Pool size: a 500-frame random sample, stratified by priority (`sample_seed`) | running | -- |
+
+Found in the full run (2026-09-30), each a way ONE template failed a whole
+batch of 25 or never got read. All three are fixed and tested:
+
+- **A generation stuck repeating itself.** Ollama aborts it with "500
+  prediction aborted, token repeat limit reached". The client took that
+  for a host failure and failed 42 chunks. It is now a rejected answer:
+  one retry at temperature 0.4, then a dead letter.
+- **Gold templates with no image.** Resolving a frame's own imgflip link
+  read the template's page without its image, and the details step keyed
+  on "page read", so 739 kept templates were never fetched. It now keys on
+  the image.
+- **An image Pillow cannot decode.** One PNG of 26,719. It raised out of
+  the reader; it is now a dead letter (`error_kind` "image").

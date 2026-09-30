@@ -341,8 +341,26 @@ def detect(client, request: ModelRequest, unit: dict, image: bytes, *,
     ``unit``: {template_id, image_sha256, image_source, context, frames}.
     The blind re-read runs for templates in the audit sample.
     """
+    from modules.kg.visual import ImageDecodeError   # numpy: loaded only to read
+
     started = time.monotonic()
-    image_b64, width, height = prepare_image(image)
+    stamps = {
+        "template_id": unit["template_id"], "image_sha256": unit["image_sha256"],
+        "image_source": unit.get("image_source"),
+        "context_sha": context_sha(unit["context"]),
+        "extractor_version": EXTRACTOR_VERSION, "prompt_version": PROMPT_VERSION,
+        "schema_sha": schema_sha, "requested_model": request.model,
+    }
+    try:
+        image_b64, width, height = prepare_image(image)
+    except ImageDecodeError as exc:
+        # The stored file is not an image Pillow can read. A property of this
+        # template, not of the run: dead-lettered (retried when the image
+        # changes), never a failed chunk — that skipped 24 other templates
+        # and left this one to fail every later run (2026-09-30).
+        return {**stamps, "detected_at": _now(), "ok": False, "error_kind": "image",
+                "error": str(exc), "attempts": 0,
+                "elapsed_s": round(time.monotonic() - started, 2)}
     validate = make_validator(schema)
     fmt = request_format(schema)
 
@@ -354,14 +372,8 @@ def detect(client, request: ModelRequest, unit: dict, image: bytes, *,
                            retry_temperature=RETRY_TEMPERATURE)
 
     result = call(unit["context"])
-    record: dict[str, Any] = {
-        "template_id": unit["template_id"], "image_sha256": unit["image_sha256"],
-        "image_source": unit.get("image_source"), "image_size": [width, height],
-        "context_sha": context_sha(unit["context"]),
-        "extractor_version": EXTRACTOR_VERSION, "prompt_version": PROMPT_VERSION,
-        "schema_sha": schema_sha, "requested_model": request.model,
-        "detected_at": _now(),
-    }
+    record: dict[str, Any] = {**stamps, "image_size": [width, height],
+                              "detected_at": _now()}
     if not result.ok:
         return {**record, "ok": False, "error_kind": result.error_kind,
                 "error": result.error, "attempts": result.attempts,

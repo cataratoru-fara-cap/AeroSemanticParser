@@ -188,6 +188,11 @@ _FAMILY_SPECIALIZATIONS: tuple[tuple[str, re.Pattern[str]], ...] = (
 _AUTH_STATUSES = {401, 403}
 _PERMANENT_STATUSES = {400, 405, 413, 422}
 _RETRYABLE_STATUSES = {408, 409, 425, 429}
+# A 5xx that is about the ANSWER, not the host: Ollama stops a generation
+# that keeps repeating itself ("prediction aborted, token repeat limit
+# reached"; qwen3-vl:32b on some meme templates, 2026-09-30). Treated like a
+# rejected answer — never as a host failure, which failed whole batches.
+_OUTPUT_ABORT_MARKERS = ("token repeat limit", "prediction aborted")
 
 
 # ---------------------------------------------------------------------------
@@ -961,6 +966,19 @@ class OpenWebUIClient:
                     return _Attempt("protocol", attempt, error=str(exc))
 
             detail = _detail(resp)
+            if status >= 500 and any(m in detail.lower() for m in _OUTPUT_ABORT_MARKERS):
+                last = f"output rejected: {status} {detail}"
+                self._log_retry(model, attempt, last)
+                if retry_temperature is not None:
+                    if warmed:
+                        break
+                    warmed = True
+                    body = {**body, "options": {**(body.get("options") or {}),
+                                                "temperature": retry_temperature}}
+                    continue
+                if attempt < self.cfg.max_attempts:
+                    self._backoff(attempt)
+                continue
             if status == 404 or (status == 403 and "model not found" in detail.lower()):
                 return _Attempt("missing", attempt, error=f"{status} {detail}")
             if status in _AUTH_STATUSES:

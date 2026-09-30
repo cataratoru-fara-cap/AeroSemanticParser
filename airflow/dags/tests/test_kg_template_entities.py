@@ -221,6 +221,15 @@ class DetectTests(unittest.TestCase):
         self.assertEqual(rec["blind"]["regions"][0]["name"], "man")
         self.assertEqual(client.calls[1]["messages"][1]["content"], te.BLIND_USER_TMPL)
 
+    def test_an_unreadable_image_is_a_failed_template_not_a_crash(self):
+        client = FakeClient([])
+        rec = te.detect(client, self.request, self.unit(), b"<html>not an image</html>",
+                        schema=self.schema, schema_sha=self.sha)
+        self.assertEqual((rec["ok"], rec["error_kind"]), (False, "image"))
+        self.assertEqual((rec["template_id"], rec["schema_sha"], rec["prompt_version"]),
+                         (121, self.sha, te.PROMPT_VERSION))
+        self.assertEqual(client.calls, [])                       # the model is not asked
+
     def test_a_failure_is_data(self):
         rec = te.detect(FakeClient(["nope"]), self.request, self.unit(), jpeg(),
                         schema=self.schema, schema_sha=self.sha)

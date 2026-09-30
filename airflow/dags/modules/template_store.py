@@ -363,15 +363,22 @@ class TemplateStore(MongoStoreBase):
     # -- details ------------------------------------------------------------
 
     def templates_needing_details(self, limit: int = 0) -> list[int]:
-        """Kept templates some frame selects, whose /memetemplate page has
-        not been read, in id order."""
+        """Kept templates some frame selects whose blank image has not been
+        fetched (nor has failed to be), in id order.
+
+        Keyed on the IMAGE, not on the page having been read: resolving a
+        frame's own imgflip link during the search reads the template's page
+        (details) without fetching its image, and keying on the page left
+        739 kept templates — frames' own links among them — with no image
+        for the reader (2026-09-30)."""
         selected: set[int] = set()
         for doc in self.frames.find({"status": "selected"}, {"selected.template_id": 1}):
             selected.update(int(s["template_id"]) for s in doc.get("selected") or [])
         if not selected:
             return []
         have = {int(d["_id"]) for d in self.templates.find(
-            {"_id": {"$in": sorted(selected)}, "detail_fetched_at": {"$ne": None}},
+            {"_id": {"$in": sorted(selected)},
+             "$or": [{"blank_path": {"$exists": True}}, {"blank_error": {"$exists": True}}]},
             {"_id": 1})}
         todo = sorted(selected - have)
         return todo[:limit] if limit else todo
