@@ -663,7 +663,11 @@ services:
       # the entrypoint skips creation once it exists, so it cannot be
       # converted later by changing this.
       TDB: "2"
-      JVM_ARGS: -Xmx1500m -Xms512m
+      # Heap below the container limit: TDB2 reads its data through memory-
+      # mapped files, outside the heap, and they need the rest. At 2 GiB /
+      # -Xmx1500m the 6.5.0 graph (7.4M triples) compacted in 73 min with the
+      # container pinned at its limit (2026-10-02); 25 min the same morning.
+      JVM_ARGS: -Xmx2560m -Xms512m
     ports:
       - "127.0.0.1:3030:3030"
     volumes:
@@ -675,8 +679,8 @@ services:
       retries: 5
       start_period: 60s
     restart: always
-    mem_limit: 2048m
-    mem_reservation: 1024m
+    mem_limit: 4096m
+    mem_reservation: 2048m
     networks:
       - Practice
 
