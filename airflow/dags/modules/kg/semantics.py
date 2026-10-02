@@ -321,7 +321,9 @@ def embed(client: OpenWebUIClient, definitions_path: str, out_path: str,
         keep = {s for s, v in old["vectors"].items()
                 if s in shas and old["text_sha256"].get(s) == shas[s]}
         if keep:
-            doc.update({k: old[k] for k in ("model", "digest", "dim", "hosts")})
+            # produced_at too: it dates the vectors kept, and moves only when
+            # a new one is embedded below.
+            doc.update({k: old[k] for k in ("model", "digest", "dim", "hosts", "produced_at")})
             doc["vectors"] = {s: old["vectors"][s] for s in keep}
             doc["text_sha256"] = {s: shas[s] for s in keep}
             progress(f"Resuming: {len(keep)} vectors reusable ({doc['model']})")
@@ -350,7 +352,7 @@ def embed(client: OpenWebUIClient, definitions_path: str, out_path: str,
         _write_json(out_path, doc)                     # after EVERY batch
         progress(f"  embedded {len(doc['vectors'])}/{len(texts)}")
 
-    if dropped or not todo:
+    if dropped:                       # nothing new and nothing dropped: leave the file be
         _write_json(out_path, doc)
     progress(f"Done: {len(doc['vectors'])} vectors ({doc['dim']} dims, "
              f"{doc['model']}) in {out_path}")

@@ -229,6 +229,19 @@ class EmbedTests(Tmp):
         self.assertEqual(calls, [["film: new", "song: changed"]])
         self.assertEqual(c2.pins[sem.EMBED_PURPOSE].dim, 3)
 
+    def test_a_run_with_nothing_to_embed_leaves_the_file_untouched(self):
+        calls = []
+        c, _ = client(self.session(calls))
+        defs = self.definitions(meme="a")
+        sem.embed(c, defs, self.path("emb.json"), EMBED_REQ, progress=silent)
+        before = self.read("emb.json")
+        self.assertTrue(before["produced_at"])
+        calls.clear()
+        c2, _ = client(self.session(calls))
+        summary = sem.embed(c2, defs, self.path("emb.json"), EMBED_REQ, progress=silent)
+        self.assertEqual((calls, summary["embedded"]), ([], 0))
+        self.assertEqual(self.read("emb.json"), before)       # produced_at kept
+
     def test_legacy_file_without_text_hashes_is_re_embedded(self):
         self.write("emb.json", {"model": "qwen3-embedding:0.6b",
                                 "vectors": {"meme": [1.0, 0.0, 0.0]}})
