@@ -64,5 +64,11 @@ and each one gets worse the longer it sits.
   the stored page, base64-encoded in `data-nsfw-src`: a parser fix and an
   offline re-parse, no scraping.
 
+- [13-mongo-schemas-are-hard-to-read.md](13-mongo-schemas-are-hard-to-read.md) —
+  raised by Riccardo: the collections grew one stage at a time and are hard
+  to read by hand: hash ids, packed-string keys, cryptic names, three time
+  formats, JSON stored as a string, one curation decision recorded four
+  ways. The fix is a staged rewrite of the store layer.
+
 Update the status line at the top of a file when a gap is closed; leave the
 file (don't delete it) so the decision trail survives.
