@@ -85,7 +85,7 @@ EDGES = [
     # 6.6.0: a sibling pair, once, src < dst (kg/siblings.py derives it; the
     # serializer only projects what it is given).
     {"src": F2, "type": "sharesSameSeries", "dst": F1},
-    {"src": F1, "type": "relatesToMeme", "dst": F2, "occurrences": [
+    {"src": F1, "type": "citesMediaFrame", "dst": F2, "occurrences": [
         {"anchor_text": "Cheems", "in_section": "Notes"}]},
     {"src": F1, "type": "citesExternal", "dst": EXT, "occurrences": [
         {"citation_text": 'The "Doge" article', "citation_index": 1},
@@ -220,7 +220,7 @@ class RmlValueMappingTests(Built):
         images = self.rml("image_occurrences.csv")
         self.assertEqual([(r["dst"], r["role"], r["caption"]) for r in images],
                          [(IMG, "page", ""), (IMG, "section", "wow")])
-        self.assertEqual(self.rml("relates_occurrences.csv")[0]["anchor_text"], "Cheems")
+        self.assertEqual(self.rml("cites_frame_occurrences.csv")[0]["anchor_text"], "Cheems")
 
     def test_occurrence_rows_are_counted_in_the_manifest(self):
         self.assertEqual(self.manifest["files"]["cites_occurrences.csv"]["rows"], 2)

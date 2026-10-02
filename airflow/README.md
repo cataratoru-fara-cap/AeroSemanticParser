@@ -332,7 +332,8 @@ measures against IMKG: [`KG_QUERIES.md`](KG_QUERIES.md).
 
 **MemeAtlas extends IMKG.** Where IMKG models something, its terms are
 used as is (`m4s:MediaFrame`, `m4s:title`, `m4s:tag`, `kymt:` entry-type
-classes, `skos:broader` for series), so IMKG queries run here. The rest of
+classes, `skos:broader` for series and, since 7.0.0, `rdfs:seeAlso` between
+the frames of one series), so IMKG queries run here. The rest of
 the parsed record — sections, links, references, images, regions, corpus
 grading — uses `mk:` terms declared in `dags/kg_config/memeatlas.ttl`.
 `dags/kg_config/MODEL.md` has the full crosswalk. As of 5.1.0 every field

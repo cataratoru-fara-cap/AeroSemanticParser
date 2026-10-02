@@ -292,7 +292,7 @@ EDGE_PREDICATES: dict[str, tuple[str, bool, str | None]] = {
     # pair once (kg/siblings.py, src < dst) and RDF states both directions,
     # as IMKG's data does (each page lists the others).
     "sharesSameSeries": (RDFS + "seeAlso", False, RDFS + "seeAlso"),
-    "relatesToMeme": (MK + "relatesToMeme", False, None),
+    "citesMediaFrame": (MK + "citesMediaFrame", False, None),   # relatesToMeme until 7.0.0
     "citesExternal": (MK + "citesExternal", False, None),
     "subTypeOf": (RDFS + "subClassOf", False, None),
     "hasImage": (MK + "hasImage", False, None),

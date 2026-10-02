@@ -16,8 +16,9 @@ that box (kym_parse.py: truncated, and fragile across layouts) and keeps
 ``series_parent`` alone, so here the relation is DERIVED from
 ``series_parent``, complete rather than truncated.
 
-``relatesToMeme`` is no substitute: in 6.5.0 only 3,602 of the 679,392
-sibling pairs are linked by it, in either direction.
+The links between pages (``citesMediaFrame``, ``relatesToMeme`` until
+7.0.0) are no substitute: in 6.5.0 only 3,602 of the 679,392 sibling
+pairs are linked by one, in either direction.
 
 Shape
 -----

@@ -193,7 +193,7 @@ class DiffTests(unittest.TestCase):
         a = self.write("a.nt", TRIPLES)
         b = self.write("b.nt", TRIPLES[:1] + [
             f'{S} {P} "different" .',
-            f'{S} <https://meme4.science/atlas/relatesToMeme> '
+            f'{S} <https://meme4.science/atlas/citesMediaFrame> '
             f'<https://knowyourmeme.com/memes/cheems> .'])
         report = ntdiff.diff(a, b, buckets=8)
         self.assertFalse(report["equal"])
@@ -202,7 +202,7 @@ class DiffTests(unittest.TestCase):
         self.assertEqual(
             report["by_predicate"]["partOfSeries"]["only_in_in-process"], 1)
         self.assertEqual(
-            report["by_predicate"]["relatesToMeme"]["only_in_rml"], 1)
+            report["by_predicate"]["citesMediaFrame"]["only_in_rml"], 1)
 
     def test_samples_are_captured_and_capped(self):
         a = self.write("a.nt", [f'{S} {P} "t{i}" .' for i in range(40)])

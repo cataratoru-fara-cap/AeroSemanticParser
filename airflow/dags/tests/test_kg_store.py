@@ -151,6 +151,15 @@ class MaterializeStubsTests(unittest.TestCase):
         node = self.store.nodes.find_one({"node_id": {"$regex": "wikipedia"}})
         self.assertEqual(node["kind"], "external_ref")
 
+    def test_kym_page_that_is_not_an_entry_becomes_an_external_ref(self):
+        # 7.0.0, the same rule as build.py's: a photo page is not a frame.
+        photo = "https://knowyourmeme.com/photos/1220637-who-would-win"
+        self.store.save_graph(BUILD, [frame_node()],
+                              [edge(FRAME, "citesExternal", photo)])
+        self.store.materialize_stubs(BUILD)
+        self.assertEqual(self.store.nodes.find_one({"node_id": photo})["kind"],
+                         "external_ref")
+
     def test_concept_targets_are_not_turned_into_frame_stubs(self):
         self.store.save_graph(BUILD, [frame_node()],
                               [edge(FRAME, "hasTag", "tag:doge")])
@@ -483,7 +492,7 @@ class FacadeContractTests(unittest.TestCase):
         s = fresh_store()
         occ = [{"anchor_text": "Cheems", "in_section": "About"}, {"citation_index": 2}]
         s.save_graph(BUILD, [frame_node()],
-                     [{**edge(FRAME, "relatesToMeme", PARENT), "occurrences": occ}])
+                     [{**edge(FRAME, "citesMediaFrame", PARENT), "occurrences": occ}])
         (full,) = s.iter_edges(BUILD)
         self.assertEqual(full["occurrences"], occ)
         (lean,) = s.iter_edges(BUILD, occurrences=False)

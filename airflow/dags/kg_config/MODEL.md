@@ -73,8 +73,8 @@ Neo4j and Mongo) to its RDF term.
 | node `entry_type_concept` | `kymt:<slug> a rdfs:Class, skos:Concept`; `skos:inScheme mk:EntryTypeScheme`; `skos:prefLabel` | | the entry-type vocabulary |
 | edge `subTypeOf` | `rdfs:subClassOf` between `kymt:` classes | | `entry_type_taxonomy.yaml` |
 | edge `hasRegion` | `mk:region "<name>"` | | `region` |
-| edge `relatesToMeme` | `mk:relatesToMeme` | ⊑ `rdfs:seeAlso` | every KYM link on the page or in its references |
-| edge `citesExternal` | `mk:citesExternal` | ⊑ `rdfs:seeAlso` | every non-KYM link on the page or in its references |
+| edge `citesMediaFrame` (7.0.0; was `relatesToMeme`) | `mk:citesMediaFrame` (was `mk:relatesToMeme`) | ⊑ `rdfs:seeAlso` | every link to a KYM entry on the page or in its references (see Deliberate difference 12) |
+| edge `citesExternal` | `mk:citesExternal` | ⊑ `rdfs:seeAlso` | every link to a page that is not a KYM entry: another site, or since 7.0.0 a KYM photo, video, news or editorial page, listing, profile or forum thread |
 | `frame.description` | `mk:description` | ⊑ `schema:description` | `meta.description` |
 | `frame.aliases` | `skos:altLabel` | | `aliases`: the bold names that open the About, other than the title (parser 1.7.0; KYM has no alias field) |
 | `frame.section_texts` | `mk:sectionText "<heading>\n\n<paragraphs>"` | ⊑ `schema:articleBody` | `sections[]` with text, except the three narrative kinds, each of which has an IMKG term of its own |
@@ -152,11 +152,11 @@ annotation on the quoted edge:
 
 | Occurrence field | RDF-star annotation | Neo4j list property | On edges | Parsed field |
 |---|---|---|---|---|
-| `anchor_text` | `mk:anchorText` | `anchor_texts` | `relatesToMeme`, `citesExternal` | `sections[].links[].text` |
+| `anchor_text` | `mk:anchorText` | `anchor_texts` | `citesMediaFrame`, `citesExternal` | `sections[].links[].text` |
 | `in_section` | `mk:inSection` | `in_sections` | all three | `sections[].heading` |
-| `citation_text` | `mk:citationText` | `citation_texts` | `relatesToMeme`, `citesExternal` | `external_references[].text` |
-| `citation_index` | `mk:citationIndex` (`xsd:integer`) | `citation_indexes` | `relatesToMeme`, `citesExternal` | `external_references[].index` |
-| `site_name` | `mk:siteName` | `site_names` | `relatesToMeme`, `citesExternal` | `additional_references[].name` |
+| `citation_text` | `mk:citationText` | `citation_texts` | `citesMediaFrame`, `citesExternal` | `external_references[].text` |
+| `citation_index` | `mk:citationIndex` (`xsd:integer`) | `citation_indexes` | `citesMediaFrame`, `citesExternal` | `external_references[].index` |
+| `site_name` | `mk:siteName` | `site_names` | `citesMediaFrame`, `citesExternal` | `additional_references[].name` |
 | `role` | `mk:imageRole` (`page` / `section`) | `roles` | `hasImage` | `og_image` / `sections[].images[]` |
 | `alt_text` | `mk:altText` | `alt_texts` | `hasImage` | `sections[].images[].alt` |
 | `caption` | `mk:caption` ⊑ `schema:caption` | `captions` | `hasImage` | `sections[].images[].caption` |
@@ -279,11 +279,11 @@ inside morph-kgc). It is minted once, in `kg/events.py`, and stored.
    emits: `kym:Meme`, `kym:Event`, `kym:Subculture`, `kym:Person`,
    `kym:Site`, `kym:Culture` (`rdf.CATEGORY_CLASSES`). Kept in this list so
    the numbering the other sections cite stays stable.
-4. **`mk:relatesToMeme` is broader than IMKG's `rdfs:seeAlso`.** IMKG's
+4. **`mk:citesMediaFrame` is broader than IMKG's `rdfs:seeAlso`.** IMKG's
    `rdfs:seeAlso` covers only the Related Entries box: other entries of
    the same series, which MemeAtlas emits as `rdfs:seeAlso` too
-   (difference 11). `mk:relatesToMeme` covers every KYM link on the page,
-   and is declared a sub-property of `rdfs:seeAlso`.
+   (difference 11). `mk:citesMediaFrame` covers every link to a KYM entry
+   on the page, and is declared a sub-property of `rdfs:seeAlso`.
 5. **`mk:badge` changed type in 5.0.0.** It was `owl:DatatypeProperty` (a
    literal) in 4.0.0; badges are now `badge_concept` resources, so it is
    `owl:ObjectProperty`. A documented ontology break, not a silent one —
@@ -317,7 +317,8 @@ inside morph-kgc). It is minted once, in `kg/events.py`, and stored.
    (`mk:imgflipPage`) and IMKG's `imgflip:templateId` is kept as a plain
    literal, so both graphs still join — on the id, or in one hop.
 11. **Siblings are IMKG's `rdfs:seeAlso`, derived from the series parent**
-   (6.6.0; Riccardo's review, 2026-10-02). IMKG's spider read each page's
+   (6.6.0, first published in 7.0.0; Riccardo's review, 2026-10-02).
+   IMKG's spider read each page's
    Related Entries box — other entries of the same series, as many as the
    box shows — into `siblings`, and its mapping emits them as
    `rdfs:seeAlso` (`kym/mappings/kym.media.frames.yaml`). MemeAtlas's
@@ -328,9 +329,10 @@ inside morph-kgc). It is minted once, in `kg/events.py`, and stored.
    directions. IMKG's sibling queries run unchanged, and return the whole
    series rather than the box's part of it. In the property graph the
    edge is `sharesSameSeries`, as `partOfSeries` is `skos:broader`.
-   `relatesToMeme` was no substitute: it links only 3,602 of the 679,392
-   sibling pairs in 6.5.0's corpus.
-   - Nothing else emits `rdfs:seeAlso`. `mk:relatesToMeme`,
+   The links between pages were no substitute: in 6.5.0's corpus
+   `relatesToMeme` (now `citesMediaFrame`) linked only 3,602 of the
+   679,392 sibling pairs.
+   - Nothing else emits `rdfs:seeAlso`. `mk:citesMediaFrame`,
      `mk:citesExternal` and the `mk:event*` links are declared
      sub-properties of it, so only an endpoint that applies RDFS
      entailment widens `?a rdfs:seeAlso ?b` beyond siblings; the
@@ -342,6 +344,18 @@ inside morph-kgc). It is minted once, in `kg/events.py`, and stored.
    - It is left out of the IMKG-comparable core metrics: it is derived from
      `partOfSeries`, and connects nothing the core does not already
      connect.
+12. **`mk:relatesToMeme` was renamed `mk:citesMediaFrame` in 7.0.0**
+   (property graph: `relatesToMeme` → `citesMediaFrame`). Not a difference
+   from IMKG, which has no such term, but a documented break like
+   difference 5: a query naming the old term finds nothing in 7.0.0. The
+   new name says what the edge is, the counterpart of `mk:citesExternal`,
+   with IMKG's own word for its target. The same release made the name
+   true: until 6.5.0 any link to the knowyourmeme.com host counted, so
+   2,841 links (1.3%) pointed at photo, video, news and editorial pages,
+   `/types/` listings, profiles, forums, `/login` and searches, and minted
+   1,945 `frame_stub`s for them. A link is `citesMediaFrame` only when its
+   path is an entry's (`build._is_kym_entry`); every other page is
+   `citesExternal`.
 
 ## Events: drawn from EventKG, not copied from it
 
@@ -584,6 +598,7 @@ IMKG's authors' agreement) like every other `mk:` term.
 | A Wikidata item is an object only — never typed, never a predicate — and `fromAbout`/`fromTags` are IMKG's own | `tests/test_kg_vocabulary.py` |
 | A re-link replaces a frame's mentions; every staleness stamp re-queues on its own | `tests/test_entity_store.py` |
 | A template's two directions and IMKG's terms; the template IRI | `tests/test_kg_vocabulary.py` |
+| A link to a KYM entry is `citesMediaFrame`; a link to any other page, on KYM or not, is `citesExternal` and mints no `frame_stub` | `tests/test_kg_build.py` |
 | Every two frames with one series parent get one `sharesSameSeries` edge (`src < dst`) and nothing else does; RDF states it both ways with IMKG's `rdfs:seeAlso`, and mints no `mk:` term for it | `tests/test_kg_siblings.py`, `tests/test_kg_rdf.py`, `tests/test_kg_vocabulary.py` |
 | Template nodes, edges and annotations; a template two frames chose is emitted identically; the build reads at its snapshot | `tests/test_kg_template_graph.py` |
 | Duplicates: resize, re-encode, mirror and letterboxing are one picture, no chaining; selection is 0 or 1–10 | `tests/test_kg_visual.py`, `tests/test_kg_templates.py` |

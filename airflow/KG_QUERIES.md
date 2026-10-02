@@ -1,14 +1,39 @@
 # Querying the knowledge graph, and what 6.5.0 shows
 
-The live graph is **KG 6.5.0**, build `kg_20261002T122858Z_manual`, published
+The live graph is **KG 7.0.0**, build `kg_20261002T170459Z_manual`, published
 2026-10-02. It adds four layers to the IMKG-style core: events (6.0.0),
 Wikidata links from each frame's text (6.1.0, curated in 6.5.0), imgflip
-templates and what their images show (6.4.0).
+templates and what their images show (6.4.0). The conclusions below were
+measured on 6.5.0; [what 7.0.0 changed](#what-700-changed) comes first.
 
 - **Neo4j Browser:** `http://<host>:8080/browser/` (the property graph; needs
   the neo4j password).
 - **SPARQL:** `http://<host>:8080/sparql/` (read-only; the default graph is the
   live build).
+
+## What 7.0.0 changed
+
+Two changes to the core:
+
+- **The frames of one series are linked to each other**, as Riccardo asked
+  when reviewing the model. Until 6.5.0 two frames of a series were
+  connected only through the parent they share. 7.0.0 adds an edge for
+  every two frames with the same series parent:
+  679,392 pairs from 2,077 series. In Neo4j it is `sharesSameSeries`, one
+  relationship per pair. In RDF it is `rdfs:seeAlso`, in both directions
+  (1,358,784 triples). That is IMKG's own term for an entry's siblings, so
+  IMKG's queries run unchanged and now get the whole series (query 4).
+- **`relatesToMeme` is renamed `citesMediaFrame`** (`mk:citesMediaFrame`),
+  beside `citesExternal`. A query that names the old term finds nothing.
+  A link now counts only when it points at a KYM entry. 2,841 links to
+  other KYM pages (photos, videos, news, editorials, listings, profiles,
+  forums, `/login`, searches) are `citesExternal` now, and their 1,945
+  `FrameStub`s are `ExternalRef`s.
+
+The whole graph has 795,711 nodes (unchanged), 2,564,089 edges (+679,392),
+26 relation types and 8,790,369 triples. The siblings are left out of the
+IMKG-comparable core: they are derived from `partOfSeries` and connect
+nothing the core does not already connect.
 
 ## How the graph sits in Neo4j
 
@@ -24,6 +49,9 @@ through `(:KGPointer {name: 'current'})`, as every query below does.
 | `hasTemplate` | `Frame` → `Template` | `template_scores`, `template_matches` |
 | `fromImage` | `Template` → `WikidataEntity` | `depiction_kinds`, `bounding_boxes`, `mention_texts` |
 | `partOfSeries` | `Frame` → its series parent (`Frame`, or `FrameStub` when the parent is not in the corpus) | — |
+| `sharesSameSeries` | `Frame` — `Frame`, two frames with the same series parent (7.0.0). Stored once per pair, so match it without an arrow: `(f)-[:sharesSameSeries]-(s)` | — |
+| `citesMediaFrame` | `Frame` → a KYM entry it links to, on its page or in its references (`Frame`, or `FrameStub` when not in the corpus). Called `relatesToMeme` until 7.0.0 | `anchor_texts`, `in_sections`, `citation_texts` |
+| `citesExternal` | `Frame` → any other page it links to, on another site or on KYM (`ExternalRef`) | the same |
 
 A relationship's properties are lists, one entry per mention, index-aligned:
 position *i* of `mention_texts` and of `relevance_bases` describe the same
@@ -34,9 +62,10 @@ mention. A `FrameStub` has no title, only its KYM URL (`id`).
 ### 1. One frame as a graph
 
 For Neo4j Browser, which draws every path returned. It shows the frame's
-Wikidata items, its templates and what each template's image shows, and
-its chain of series parents (up to five levels). Change the title on the
-first line.
+Wikidata items, its templates and what each template's image shows, its
+chain of series parents (up to five levels), and the other frames of its
+series. Change the title on the first line. (A frame of a big series has
+hundreds of siblings, TikTok's 542; drop that line for those.)
 
 ```cypher
 WITH 'Tung Tung Tung Sahur' AS title
@@ -46,12 +75,14 @@ RETURN f,
   COLLECT { MATCH p = (f)-[:fromTitle|fromTags|fromAbout]->(:WikidataEntity) RETURN p } AS frame_entities,
   COLLECT { MATCH p = (f)-[:hasTemplate]->(:Template)-[:fromImage]->(:WikidataEntity) RETURN p }
     + COLLECT { MATCH p = (f)-[:hasTemplate]->(t:Template) WHERE NOT (t)-[:fromImage]->() RETURN p } AS templates,
-  COLLECT { MATCH p = (f)-[:partOfSeries*1..5]->(:KGNode) RETURN p } AS series_parents
+  COLLECT { MATCH p = (f)-[:partOfSeries*1..5]->(:KGNode) RETURN p } AS series_parents,
+  COLLECT { MATCH p = (f)-[:sharesSameSeries]-(:Frame) RETURN p } AS siblings
 ```
 
 For "Tung Tung Tung Sahur" this draws 22 Wikidata links, 10 templates with
-the items their images show, and the series chain Italian Brainrot / AI
-Italian Animals → Brain Rot / Brainrot → Internet Slang → The Internet.
+the items their images show, the series chain Italian Brainrot / AI
+Italian Animals → Brain Rot / Brainrot → Internet Slang → The Internet,
+and its 13 siblings in Italian Brainrot.
 
 ### 2. One row per frame
 
@@ -82,7 +113,39 @@ whose images show man, woman and a backpack. Fifty rows take about 7 s. For
 the whole corpus, drop the `LIMIT` or add
 `WHERE f.label STARTS WITH '…'`.
 
-### 3. Which build is live (SPARQL)
+### 3. A frame's siblings, and which of them its page links to
+
+One row per sibling, and whether either page links to the other.
+
+```cypher
+WITH 'Tung Tung Tung Sahur' AS title
+MATCH (cur:KGPointer {name: 'current'})
+MATCH (f:Frame {build_id: cur.build_id, label: title})-[:sharesSameSeries]-(s:Frame)
+RETURN s.label AS sibling,
+       EXISTS { (f)-[:citesMediaFrame]->(s) } AS links_to_it,
+       EXISTS { (s)-[:citesMediaFrame]->(f) } AS linked_from_it
+ORDER BY sibling
+```
+
+Tung Tung Tung Sahur has 13 siblings. Its page and theirs link 8 of them,
+either way; the other 5 are linked only by the series. The links between
+pages and the series are different relations: only 3,602 of the 679,392
+sibling pairs are linked by `citesMediaFrame`.
+
+### 4. A frame's series, as IMKG queries it (SPARQL)
+
+IMKG's own term for an entry's siblings, `rdfs:seeAlso`, unchanged.
+
+```sparql
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX m4s:  <https://meme4.science/>
+SELECT ?sibling ?title WHERE {
+  <https://knowyourmeme.com/memes/tung-tung-tung-sahur> rdfs:seeAlso ?sibling .
+  ?sibling m4s:title ?title .
+}
+```
+
+### 5. Which build is live (SPARQL)
 
 ```sparql
 SELECT ?version ?build WHERE {

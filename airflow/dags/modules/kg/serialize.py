@@ -157,7 +157,8 @@ EDGE_TYPE_TO_RML_FILE: dict[str, tuple[str, tuple[str, str]]] = {
     "partOfSeries":  ("series_edges.csv",     ("url", "parent_url")),
     # 6.6.0: one row per pair; the mapping reads it in both directions.
     "sharesSameSeries": ("sibling_edges.csv", ("url", "sibling_url")),
-    "relatesToMeme": ("relates_edges.csv",    ("url", "target_url")),
+    # 7.0.0: was relatesToMeme, in relates_edges.csv / relates_occurrences.csv.
+    "citesMediaFrame": ("cites_frame_edges.csv", ("url", "target_url")),
     "citesExternal": ("cites_edges.csv",      ("url", "target_url")),
     "subTypeOf":     ("subtype_edges.csv",    ("narrower", "broader")),
     "hasImage":      ("image_edges.csv",      ("url", "image")),
@@ -185,7 +186,7 @@ EDGE_TYPE_TO_RML_FILE: dict[str, tuple[str, tuple[str, str]]] = {
 # occurrence field a column (empty when absent). The mapping reads each as
 # a quotedNonAsserted edge plus one annotation per column.
 OCCURRENCE_RML_FILES: dict[str, tuple[str, tuple[str, ...]]] = {
-    "relatesToMeme": ("relates_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
+    "citesMediaFrame": ("cites_frame_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
     "citesExternal": ("cites_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
     "hasImage": ("image_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),
     "fromTitle": ("entity_title_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS),

@@ -414,7 +414,7 @@ class KGStore(MongoStoreBase):
         ``$lookup`` (mongomock's support is too thin to test against).
         """
         from pymongo import ReplaceOne
-        from modules.kg.build import guess_stub_node, _is_kym_url
+        from modules.kg.build import guess_stub_node, _is_kym_entry
 
         have: set[str] = {d["node_id"] for d in self.nodes.find(
             {"build_id": build_id}, {"_id": 0, "node_id": 1})}
@@ -439,8 +439,9 @@ class KGStore(MongoStoreBase):
                 # triples in kg/rdf.py.
                 node = {"id": node_id, "kind": concept_kind,
                        "label": node_id.split(":", 1)[1]}
-            elif node_id.startswith("image:") or not _is_kym_url(node_id):
-                # Not a KYM page: an outbound citation target.
+            elif node_id.startswith("image:") or not _is_kym_entry(node_id):
+                # Not a KYM entry (7.0.0: any page that is not one, on KYM
+                # or elsewhere): an outbound citation target.
                 node = {"id": node_id, "kind": "external_ref", "label": None}
             else:
                 node = guess_stub_node(node_id)

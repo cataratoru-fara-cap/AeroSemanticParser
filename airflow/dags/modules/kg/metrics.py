@@ -98,7 +98,7 @@ ATTR_FIELDS = ("label", "category", "status")
 # scope counts it.
 CORE_NODE_KINDS = ("frame", "frame_stub", "entry_type_concept", "tag_concept",
                    "external_ref")
-CORE_EDGE_TYPES = ("hasEntryType", "hasTag", "partOfSeries", "relatesToMeme",
+CORE_EDGE_TYPES = ("hasEntryType", "hasTag", "partOfSeries", "citesMediaFrame",
                    "citesExternal", "subTypeOf")
 SCOPES = ("core", "full")
 

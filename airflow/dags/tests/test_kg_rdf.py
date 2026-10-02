@@ -252,7 +252,7 @@ class OccurrenceAnnotationTests(unittest.TestCase):
 
     def test_repeats_are_collapsed_even_without_global_dedupe(self):
         # dedupe=False is what the DAG passes; per-edge repeats must still go.
-        edge = {"src": FRAME, "type": "relatesToMeme", "dst": PARENT,
+        edge = {"src": FRAME, "type": "citesMediaFrame", "dst": PARENT,
                 "occurrences": [{"anchor_text": "x"}, {"anchor_text": "x"}]}
         self.assertEqual(len(triples([], [edge], dedupe=False)), 2)
 
@@ -265,7 +265,7 @@ class OccurrenceAnnotationTests(unittest.TestCase):
         self.assertIn(f'{q} <{MK}caption> "wow" .', got)
 
     def test_empty_values_and_unknown_fields_emit_nothing(self):
-        edge = {"src": FRAME, "type": "relatesToMeme", "dst": PARENT,
+        edge = {"src": FRAME, "type": "citesMediaFrame", "dst": PARENT,
                 "occurrences": [{"anchor_text": "", "nonsense": "x", "citation_index": None}]}
         self.assertEqual(len(triples([], [edge])), 1)
 
@@ -300,9 +300,9 @@ class EdgeTripleTests(unittest.TestCase):
                                f"<{FRAME}> <{see_also}> <{other}> ."])
 
     def test_relations_become_iri_objects(self):
-        got = triples([], [{"src": FRAME, "type": "relatesToMeme",
+        got = triples([], [{"src": FRAME, "type": "citesMediaFrame",
                             "dst": PARENT}])
-        self.assertEqual(got, [f"<{FRAME}> <{MK}relatesToMeme> <{PARENT}> ."])
+        self.assertEqual(got, [f"<{FRAME}> <{MK}citesMediaFrame> <{PARENT}> ."])
 
     def test_entry_type_is_rdf_type(self):
         got = triples([], [{"src": FRAME, "type": "hasEntryType",

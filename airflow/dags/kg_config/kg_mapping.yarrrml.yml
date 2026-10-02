@@ -65,6 +65,11 @@
 # property graph calls the edge sharesSameSeries). One CSV row per pair,
 # read in both directions.
 #
+# 7.0.0: mk:relatesToMeme is renamed mk:citesMediaFrame, beside
+# mk:citesExternal, and a link to a KYM page that is not an entry (photo,
+# video, news, editorial, listing, profile, forum, login, search) is
+# mk:citesExternal.
+#
 # RDF-star: each *_occurrences.csv has a row per mention. Its *_edge mapping
 # is quotedNonAsserted (morph-kgc still asserts it; the same triple already
 # comes from the edge CSV, and RDF is a set), and the annotation mapping over
@@ -278,12 +283,14 @@ mappings:
     po:
       - [mk:region, $(region)]
 
-  relates_to_meme:
+  # 7.0.0: was mk:relatesToMeme. Only links to a KYM entry; any other page,
+  # on KYM or elsewhere, is mk:citesExternal.
+  cites_media_frame:
     sources:
-      - [rml_data/relates_edges.csv~csv]
+      - [rml_data/cites_frame_edges.csv~csv]
     subjects: $(url)
     po:
-      - [mk:relatesToMeme, $(target_url)~iri]
+      - [mk:citesMediaFrame, $(target_url)~iri]
 
   cites_external:
     sources:
@@ -506,18 +513,18 @@ mappings:
 
   # ---- MemeAtlas: occurrences, as RDF-star annotations -----------------------
 
-  relates_occurrence_edge:
+  cites_frame_occurrence_edge:
     sources:
-      - [rml_data/relates_occurrences.csv~csv]
+      - [rml_data/cites_frame_occurrences.csv~csv]
     subjects: $(src)
     po:
-      - [mk:relatesToMeme, $(dst)~iri]
+      - [mk:citesMediaFrame, $(dst)~iri]
 
-  relates_occurrence:
+  cites_frame_occurrence:
     sources:
-      - [rml_data/relates_occurrences.csv~csv]
+      - [rml_data/cites_frame_occurrences.csv~csv]
     subjects:
-      - quotedNonAsserted: relates_occurrence_edge
+      - quotedNonAsserted: cites_frame_occurrence_edge
     po:
       - [mk:anchorText, $(anchor_text)]
       - [mk:inSection, $(in_section)]

@@ -32,7 +32,7 @@ not earn their place:
   * every Link node had exactly one ``hasLink`` in and one ``linksTo`` out
     (148,542 of each), and every Reference one ``hasReference`` and one
     ``refersTo`` (224,843) — a two-edge detour around the frame-level
-    ``relatesToMeme`` / ``citesExternal`` edges that already existed, kept
+    ``citesMediaFrame`` / ``citesExternal`` edges that already existed, kept
     only to hold anchor or citation text;
   * an image's alt text and caption sat on the SHARED image node, so the
     last page to be written overwrote the others (187 images).
@@ -45,7 +45,7 @@ So now:
   * what was particular to ONE occurrence — anchor text, the heading it sat
     under, citation text and number, a reference's site name, an image's
     role, alt text and caption — is an entry in the ``occurrences`` list
-    of the frame-level edge it qualifies (``relatesToMeme``,
+    of the frame-level edge it qualifies (``citesMediaFrame``,
     ``citesExternal``, ``hasImage``). Neo4j stores those as edge
     properties, RDF as RDF-star annotations on the quoted edge.
 
@@ -92,7 +92,7 @@ the pipeline rather than of the meme and stay in ``entries``.
 Until 5.1.0 the Origin and Spread SECTIONS were the standing exception,
 deferred to the event-extraction task: their text, their images, and the
 anchor text of links inside them were all withheld, while the links
-themselves still fed the frame-level ``relatesToMeme`` /
+themselves still fed the frame-level ``citesMediaFrame`` /
 ``citesExternal`` edges. All three are now carried like any other
 section's — the text as ``origin_text`` / ``spread_text``
 (``NARRATIVE_SECTION_PROPERTIES``), the rest by simply no longer being
@@ -129,7 +129,8 @@ Node kinds
 
 Edge types
     hasEntryType  hasTag  hasRegion  hasOrigin  hasBadge  partOfSeries
-    relatesToMeme  citesExternal  hasImage  hasEvent
+    citesMediaFrame  citesExternal  hasImage  hasEvent   (citesMediaFrame was
+                                                        relatesToMeme until 7.0.0)
     fromTitle  fromTags  fromAbout                      (6.1.0, to a wikidata_entity)
     hasTemplate                                         (6.4.0, to a template)
   and, from a template node: templateImage  imgflipPage  fromImage   (6.4.0)
@@ -174,6 +175,14 @@ from . import tag_normalize
 
 _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 
+# 7.0.0: relatesToMeme is renamed citesMediaFrame — RDF mk:citesMediaFrame,
+# and its RML files cites_frame_*.csv — the counterpart of citesExternal,
+# naming what it points at with IMKG's class. A link to a KYM page that is
+# not an entry (a photo, video, news or editorial page, a /types/ listing, a
+# profile, a forum thread, /login, a search) is citesExternal now, not an
+# edge to a frame_stub: 2,841 edges and 1,945 stubs in 6.5.0. MAJOR: a
+# published term is renamed, so queries naming relatesToMeme break.
+# Includes 6.6.0, which was never published on its own.
 # 6.6.0: frames of one series are linked to each other explicitly, with
 # `sharesSameSeries` (Riccardo's review, 2026-10-02) — until now only
 # through the parent both point to. Derived after every entry is built,
@@ -230,7 +239,7 @@ _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 # and origin promoted from frame literals / a literal string to concepts
 # (badge_concept/hasBadge, origin_concept/hasOrigin); tags plural-folded
 # (kg/tag_normalize.py). Bumping this makes the staleness gate rebuild.
-KG_BUILD_VERSION = "6.6.0"
+KG_BUILD_VERSION = "7.0.0"
 
 NODE_KINDS: tuple[str, ...] = (
     "frame", "frame_stub", "entry_type_concept", "tag_concept",
@@ -239,7 +248,7 @@ NODE_KINDS: tuple[str, ...] = (
 )
 EDGE_TYPES: tuple[str, ...] = (
     "hasEntryType", "hasTag", "hasRegion", "hasOrigin", "hasBadge",
-    "partOfSeries", "relatesToMeme", "citesExternal", "hasImage", "hasEvent",
+    "partOfSeries", "citesMediaFrame", "citesExternal", "hasImage", "hasEvent",
     "eventLink", "eventCitation", "eventEmbed", "eventImage",
     "eventDateAnchor", "nextInStory", "fromTitle", "fromTags", "fromAbout",
     "hasTemplate", "templateImage", "imgflipPage", "fromImage",
@@ -301,7 +310,7 @@ EVENT_PROPERTIES: tuple[str, ...] = (
 # Edges FROM an event node (6.0.0, extraction 2.0.0) to what kg/events.py
 # attached to it by position — never chosen by the model. Every target is
 # already a node: section links and references produce frame-level
-# relatesToMeme/citesExternal targets, embeds likewise (parser 1.6.0), and
+# citesMediaFrame/citesExternal targets, embeds likewise (parser 1.6.0), and
 # section photos are image nodes.
 EVENT_MEDIA_EDGES: dict[str, str] = {
     "link": "eventLink",          # a hyperlink inside the event's sentences
@@ -343,7 +352,7 @@ TEMPLATE_LIST_PROPERTIES: frozenset[str] = frozenset({"alt_names"})
 # occurrence may hold. kg/rdf.py, kg/serialize.py and kg/loaders.py all
 # render from these two tables.
 OCCURRENCE_EDGE_TYPES: tuple[str, ...] = (
-    "relatesToMeme", "citesExternal", "hasImage",
+    "citesMediaFrame", "citesExternal", "hasImage",
     "fromTitle", "fromTags", "fromAbout",          # 6.1.0: one per mention
     "hasTemplate", "fromImage")                    # 6.4.0
 OCCURRENCE_FIELDS: tuple[str, ...] = (
@@ -365,7 +374,9 @@ OCCURRENCE_FIELDS: tuple[str, ...] = (
 )
 
 # Coarse URL-path -> category guess for stub nodes we haven't scraped yet.
-# Longest/most-specific prefixes first.
+# Longest/most-specific prefixes first. The prefixes are also what makes a
+# KYM url an entry (_is_kym_entry); the bare ones are KYM's older paths
+# (/people/elon-musk, /sites/Reddit), still linked from pages.
 _CATEGORY_PATH_PATTERNS: tuple[tuple[str, str], ...] = (
     ("/memes/subcultures/", "subculture"),
     ("/memes/people/", "person"),
@@ -381,8 +392,18 @@ _CATEGORY_PATH_PATTERNS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _is_kym_url(url: str) -> bool:
-    return urlparse(url).netloc in _KYM_HOSTS
+def _is_kym_entry(url: str) -> bool:
+    """A Know Your Meme entry — what IMKG calls a media frame — as opposed
+    to any other page on the site (7.0.0). The path has an entry prefix and
+    something after it: ``/memes/`` alone, or ``/memes/subcultures/``, is a
+    listing."""
+    parsed = urlparse(url)
+    if parsed.netloc not in _KYM_HOSTS:
+        return False
+    for prefix, _ in _CATEGORY_PATH_PATTERNS:
+        if parsed.path.startswith(prefix):
+            return bool(parsed.path[len(prefix):].strip("/"))
+    return False
 
 
 def _guess_category(url: str) -> str | None:
@@ -899,11 +920,11 @@ def build_nodes_and_edges(
     for link_url, occurrence in _iter_links(entry):
         if link_url == url or link_url == sp:
             continue  # a self-link, or the series parent (partOfSeries says it)
-        if _is_kym_url(link_url):
-            if ("relatesToMeme", link_url) not in by_key:
+        if _is_kym_entry(link_url):
+            if ("citesMediaFrame", link_url) not in by_key:
                 nodes.append(guess_stub_node(link_url))
-            edge("relatesToMeme", link_url, occurrence)
-        else:
+            edge("citesMediaFrame", link_url, occurrence)
+        else:   # another site, or a KYM page that is not an entry (7.0.0)
             if ("citesExternal", link_url) not in by_key:
                 nodes.append({"id": link_url, "kind": "external_ref", "label": None})
             edge("citesExternal", link_url, occurrence)

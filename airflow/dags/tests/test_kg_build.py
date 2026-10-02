@@ -4,7 +4,7 @@ This module is the single producer: both the property-graph and the RDF
 projections are generated from its output, so anything asserted here is
 asserted about both representations at once.
 
-``test_series_parent_is_not_also_a_relates_edge`` pins a real defect. The
+``test_series_parent_is_not_also_a_frame_citation`` pins a real defect. The
 RML exporter re-implemented this loop and started its per-entry ``seen``
 set empty, where this module seeds it with ``series_parent``. The result
 was 14,571 ``mk:relatesToMeme`` triples in the published kg_output.nt that
@@ -80,7 +80,7 @@ class VocabularyTests(unittest.TestCase):
                           "wikidata_entity", "template"})
         self.assertEqual(set(build.EDGE_TYPES),
                          {"hasEntryType", "hasTag", "hasRegion", "hasOrigin",
-                          "hasBadge", "partOfSeries", "relatesToMeme",
+                          "hasBadge", "partOfSeries", "citesMediaFrame",
                           "citesExternal", "hasImage", "hasEvent",
                           "eventLink", "eventCitation", "eventEmbed",
                           "eventImage", "eventDateAnchor", "nextInStory",
@@ -89,7 +89,7 @@ class VocabularyTests(unittest.TestCase):
         self.assertLessEqual(set(build.OCCURRENCE_EDGE_TYPES), set(build.EDGE_TYPES))
 
     def test_version_is_stamped(self):
-        self.assertEqual(build.KG_BUILD_VERSION, "6.6.0")
+        self.assertEqual(build.KG_BUILD_VERSION, "7.0.0")
 
     def test_emitted_kinds_types_and_occurrence_fields_stay_in_the_vocabulary(self):
         nodes, edges = build.build_nodes_and_edges(entry(
@@ -247,14 +247,15 @@ class ConceptTests(unittest.TestCase):
 
 
 class LinkClassificationTests(unittest.TestCase):
-    """Classification is by the link's HOST, never by the field it came from."""
+    """Classification is by what the link points at — a KYM entry, or any
+    other page — never by the field it came from."""
 
     def test_series_parent_becomes_a_stub_and_a_series_edge(self):
         nodes, edges = build.build_nodes_and_edges(entry(series_parent=PARENT))
         self.assertEqual(nodes_by_id(nodes)[PARENT]["kind"], "frame_stub")
         self.assertIn((URL, "partOfSeries", PARENT), edge_set(edges))
 
-    def test_series_parent_is_not_also_a_relates_edge(self):
+    def test_series_parent_is_not_also_a_frame_citation(self):
         # THE REGRESSION. The parent is linked in the body too, as it always
         # is on a real page; it must produce partOfSeries and nothing else.
         _, edges = build.build_nodes_and_edges(entry(
@@ -262,9 +263,9 @@ class LinkClassificationTests(unittest.TestCase):
             sections=[section(links=[{"url": PARENT, "text": "Shiba"}])]))
         self.assertEqual({e["type"] for e in edges if e["dst"] == PARENT}, {"partOfSeries"})
 
-    def test_kym_link_in_external_references_is_still_relatesToMeme(self):
+    def test_kym_link_in_external_references_is_still_citesMediaFrame(self):
         _, edges = build.build_nodes_and_edges(entry(external_references=[{"url": OTHER}]))
-        self.assertIn((URL, "relatesToMeme", OTHER), edge_set(edges))
+        self.assertIn((URL, "citesMediaFrame", OTHER), edge_set(edges))
 
     def test_outside_link_in_a_body_section_is_still_citesExternal(self):
         nodes, edges = build.build_nodes_and_edges(entry(
@@ -290,7 +291,7 @@ class LinkClassificationTests(unittest.TestCase):
         _, edges = build.build_nodes_and_edges(entry(
             sections=[section(kind="origin", heading="Origin",
                               links=[{"url": OTHER, "text": "x"}])]))
-        e = the_edge(edges, "relatesToMeme", OTHER)
+        e = the_edge(edges, "citesMediaFrame", OTHER)
         self.assertEqual(e["occurrences"],
                          [{"anchor_text": "x", "in_section": "Origin"}])
 
@@ -298,7 +299,40 @@ class LinkClassificationTests(unittest.TestCase):
         www = "https://www.knowyourmeme.com/memes/pepe"
         _, edges = build.build_nodes_and_edges(entry(
             sections=[section(links=[{"url": www, "text": "pepe"}])]))
-        self.assertIn((URL, "relatesToMeme", www), edge_set(edges))
+        self.assertIn((URL, "citesMediaFrame", www), edge_set(edges))
+
+    def test_every_entry_path_is_a_media_frame(self):
+        # KYM's older paths are still linked from pages, and are entries.
+        targets = ["https://knowyourmeme.com/memes/subcultures/akira",
+                   "https://knowyourmeme.com/sensitive/memes/goatse",
+                   "https://knowyourmeme.com/people/elon-musk",
+                   "https://knowyourmeme.com/sites/Reddit",
+                   "https://knowyourmeme.com/memes/assassins-creed-logo?ref=related-entries"]
+        nodes, edges = build.build_nodes_and_edges(entry(sections=[section(
+            links=[{"url": t, "text": "x"} for t in targets])]))
+        self.assertEqual({e["dst"] for e in edges if e["type"] == "citesMediaFrame"},
+                         set(targets))
+        self.assertEqual({nodes_by_id(nodes)[t]["kind"] for t in targets}, {"frame_stub"})
+
+    def test_a_kym_page_that_is_not_an_entry_is_citesExternal(self):
+        # 7.0.0: 2,841 such links in 6.5.0 were relatesToMeme, each to a
+        # frame_stub. They are pages, not media frames.
+        targets = ["https://knowyourmeme.com/photos/1220637-who-would-win",
+                   "https://knowyourmeme.com/videos/14824-abandon-thread",
+                   "https://knowyourmeme.com/news/some-story",
+                   "https://knowyourmeme.com/editorials/guides/whats-the-41-meme",
+                   "https://knowyourmeme.com/types/remix?status=all",
+                   "https://knowyourmeme.com/users/olivia-gulin",
+                   "https://knowyourmeme.com/forums/general/topics/3937-faq",
+                   "https://knowyourmeme.com/login",
+                   "https://knowyourmeme.com/search?q=japan",
+                   "https://knowyourmeme.com/memes",
+                   "https://knowyourmeme.com/memes/subcultures/"]
+        nodes, edges = build.build_nodes_and_edges(entry(sections=[section(
+            links=[{"url": t, "text": "x"} for t in targets])]))
+        self.assertEqual({e["type"] for e in edges}, {"citesExternal"})
+        self.assertEqual({e["dst"] for e in edges}, set(targets))
+        self.assertEqual({nodes_by_id(nodes)[t]["kind"] for t in targets}, {"external_ref"})
 
 
 class OccurrenceTests(unittest.TestCase):
@@ -309,7 +343,7 @@ class OccurrenceTests(unittest.TestCase):
                               links=[{"url": OTHER, "text": "the dog"}])],
             additional_references=[{"url": OTHER, "name": "KYM"}],
             external_references=[{"url": OTHER, "index": 4, "text": "Cheems – KYM"}]))
-        e = the_edge(edges, "relatesToMeme", OTHER)
+        e = the_edge(edges, "citesMediaFrame", OTHER)
         self.assertEqual(e["occurrences"], [
             {"anchor_text": "Cheems", "in_section": "About"},
             {"anchor_text": "the dog", "in_section": "Spread"},
@@ -427,7 +461,7 @@ class FullRecordTests(unittest.TestCase):
         self.assertTrue(embeds)
         got = {(o["in_section"], o["site_name"])
                for o in (self.occurrences("citesExternal")
-                         + self.occurrences("relatesToMeme"))
+                         + self.occurrences("citesMediaFrame"))
                if "site_name" in o and "in_section" in o}
         for s in self.live:
             for e in s.get("embeds", []):
@@ -436,7 +470,7 @@ class FullRecordTests(unittest.TestCase):
     def test_every_section_link_carries_its_anchor_text(self):
         # The count that the deferral suppressed: links inside Origin and
         # Spread yielded their edge but no occurrence.
-        in_sections = [o for o in (self.occurrences("relatesToMeme")
+        in_sections = [o for o in (self.occurrences("citesMediaFrame")
                                    + self.occurrences("citesExternal"))
                        if "in_section" in o]
         headings = {o["in_section"] for o in in_sections}
@@ -446,7 +480,7 @@ class FullRecordTests(unittest.TestCase):
             self.assertIn(heading, headings, kind)
 
     def test_every_reference_is_an_occurrence(self):
-        refs = (self.occurrences("relatesToMeme") + self.occurrences("citesExternal"))
+        refs = (self.occurrences("citesMediaFrame") + self.occurrences("citesExternal"))
         cited = [o for o in refs if "citation_text" in o or "citation_index" in o]
         # An additional reference is a site name with NO section: since
         # parser 1.6.0 an embedded post also carries a site name (its

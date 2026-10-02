@@ -141,11 +141,11 @@ class Neo4jLoadTests(unittest.TestCase):
     def test_edges_use_the_vocabulary_as_relationship_types(self):
         d = StubDriver()
         L.neo4j_load(d, CFG, BUILD, [],
-                     [{"src": F1, "type": "relatesToMeme", "dst": F2},
+                     [{"src": F1, "type": "citesMediaFrame", "dst": F2},
                       {"src": "type:model", "type": "subTypeOf", "dst": "type:influencer"}])
         types = {c[0].split("[e:`")[1].split("`")[0] for c in d.calls if "[e:`" in c[0]}
-        self.assertEqual(types, {"relatesToMeme", "subTypeOf"})
-        cypher, params = [c for c in d.calls if "relatesToMeme" in c[0]][0]
+        self.assertEqual(types, {"citesMediaFrame", "subTypeOf"})
+        cypher, params = [c for c in d.calls if "citesMediaFrame" in c[0]][0]
         self.assertEqual(params["rows"][0], {"suid": f"{BUILD}|{F1}",
                                              "duid": f"{BUILD}|{F2}", "props": {}})
         self.assertIn("SET e += r.props", cypher)

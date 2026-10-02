@@ -60,7 +60,7 @@ class SiblingEdgeTests(unittest.TestCase):
 
     def test_other_edge_types_and_self_loops_are_ignored(self):
         got = pairs([series(A, SERIES), series(B, SERIES),
-                     {"src": C, "type": "relatesToMeme", "dst": SERIES},
+                     {"src": C, "type": "citesMediaFrame", "dst": SERIES},
                      series(SERIES, SERIES)])
         self.assertEqual(got, [(A, B)])
 

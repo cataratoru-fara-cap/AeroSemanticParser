@@ -179,13 +179,13 @@ class DefectDetectionTests(unittest.TestCase):
 
     def test_duplicate_edge_is_reported(self):
         nodes = {n["id"]: n for n in [node("f1", "frame"), node("f2", "frame")]}
-        e = edge("f1", "relatesToMeme", "f2")
+        e = edge("f1", "citesMediaFrame", "f2")
         m = metrics.compute_metrics(nodes, [e, dict(e)])
         self.assertEqual(m["integrity"]["duplicate_edges"], 1)
 
     def test_self_loop_is_reported(self):
         nodes = {"f1": node("f1", "frame")}
-        m = metrics.compute_metrics(nodes, [edge("f1", "relatesToMeme", "f1")])
+        m = metrics.compute_metrics(nodes, [edge("f1", "citesMediaFrame", "f1")])
         self.assertEqual(m["integrity"]["self_loops"], 1)
 
     def test_isolated_node_is_reported(self):
