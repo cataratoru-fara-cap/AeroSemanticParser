@@ -36,7 +36,8 @@ Trigger-time params:
     confirmed_only restrict to sitemap-confirmed URLs
     force_reparse  ignore staleness checks, re-parse every candidate
     trigger_entities trigger kym_entities at the end (off for a bare re-parse);
-                   it triggers kym_events, which triggers kym_kg
+                   it starts the rest of the monthly chain: curation, events,
+                   templates, template entities, kym_kg
 """
 
 from __future__ import annotations
@@ -83,11 +84,11 @@ DEFAULT_ARGS = {
         "force_reparse": Param(False, type="boolean",
                                description="Ignore staleness checks; re-parse everything selected"),
         "trigger_entities": Param(True, type="boolean",
-                                  description="Trigger kym_entities (then "
-                                              "kym_events, then kym_kg) when "
+                                  description="Trigger kym_entities (and the "
+                                              "rest of the chain to kym_kg) when "
                                               "done. Turn OFF for a re-parse "
                                               "that should not cascade into "
-                                              "linking, LLM extraction and a "
+                                              "linking, LLM work and a "
                                               "graph rebuild."),
     },
 )
@@ -199,17 +200,18 @@ def kym_parse_dag():
             stage="parse", dag_id="kym_parse",
             run_id=run_id or "manual", summary=summary)
 
-    # Two derived layers sit between parse and kg, each reading `entries`:
-    # kym_entities (local NLP + the Wikidata lexicon, minutes) and then
-    # kym_events (LLM, hours). Entities go first because they are cheap and
-    # never wait on a GPU; each stage triggers the next, and kym_events
-    # triggers kym_kg.
+    # The derived layers between parse and kg, each triggering the next:
+    # kym_entities (local NLP + the Wikidata lexicon, minutes) ->
+    # kym_entity_curation (rules, then the LLM judge on new items) ->
+    # kym_events (LLM, on new or changed sections) -> kym_templates (imgflip,
+    # new or changed frames) -> kym_template_entities (VLM, newly kept
+    # templates) -> kym_kg. Each selects only what is missing or stale.
     @task.short_circuit(trigger_rule="all_done")
     def should_trigger_entities(params: dict | None = None) -> bool:
         """A re-parse of the whole corpus (a parser version bump) changes
         every entry — and with the default on, would cascade into a full
         re-link, a full LLM extraction run and a graph rebuild. Same switch
-        as kym_entities' trigger_events and kym_events' trigger_kg."""
+        as kym_entities' trigger_curation and kym_events' trigger_templates."""
         wanted = bool((params or {}).get("trigger_entities", True))
         if not wanted:
             log.info("trigger_entities=false — leaving the cascade alone this run")

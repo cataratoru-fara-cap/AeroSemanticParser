@@ -33,7 +33,8 @@ Pipeline:
     select_links        templates whose links are missing or stale
     link_chunk          (mapped, 4 at a time) lexicon -> Mongo
     summarize / record_summary   -> run_summaries, stage="template_entities"
-    trigger_kym_kg      only if trigger_kg=true
+    trigger_kym_kg      only if trigger_kg=true (kym_templates passes it in the
+                        monthly chain, which ends here)
 
 Trigger-time params:
     batch_size       templates read this run (0 = all pending)
@@ -84,7 +85,7 @@ DEFAULT_ARGS = {
 
 @dag(
     dag_id="kym_template_entities",
-    schedule=None,
+    schedule=None,          # triggered by kym_templates (the monthly chain), or by hand
     catchup=False,
     max_active_runs=1,
     default_args=DEFAULT_ARGS,
@@ -244,7 +245,7 @@ def kym_template_entities_dag():
     def should_trigger_kg(params: dict | None = None) -> bool:
         wanted = bool((params or {}).get("trigger_kg", False))
         if not wanted:
-            log.info("trigger_kg=false — the graph is built and published by hand")
+            log.info("trigger_kg=false — leaving kym_kg alone this run")
         return wanted
 
     trigger_kg = TriggerDagRunOperator(

@@ -30,7 +30,8 @@ Pipeline:
     select_judge      frames with items the judge has not answered
     judge_chunk       (mapped, 2 at a time) the LLMs -> JSONL -> Mongo
     summarize / record_summary   -> run_summaries, stage="entity_curation"
-    trigger_kym_kg    only if trigger_kg=true
+    trigger_kym_events  the monthly chain (kym_entities -> here -> kym_events),
+                        unless trigger_events=false
 
 Trigger-time params:
     judge          ask the judge (false = rules only)
@@ -38,7 +39,7 @@ Trigger-time params:
     chunk_size     frames per judge task
     force_rules    re-run the rules on every frame
     force_judge    re-ask the judge about every rule-pending item
-    trigger_kg     trigger kym_kg when done
+    trigger_events trigger kym_events when done (all pending sections)
 """
 
 from __future__ import annotations
@@ -77,7 +78,7 @@ def _judge_stamps() -> dict[str, str]:
 
 @dag(
     dag_id="kym_entity_curation",
-    schedule=None,
+    schedule=None,          # triggered by kym_entities (the monthly chain), or by hand
     catchup=False,
     max_active_runs=1,
     default_args=DEFAULT_ARGS,
@@ -91,7 +92,8 @@ def _judge_stamps() -> dict[str, str]:
         "force_rules": Param(False, type="boolean", description="Re-run the rules on every frame."),
         "force_judge": Param(False, type="boolean",
                              description="Re-ask the judge about every rule-pending item."),
-        "trigger_kg": Param(False, type="boolean", description="Trigger kym_kg when done."),
+        "trigger_events": Param(True, type="boolean",
+                                description="Trigger kym_events when done (the monthly chain)."),
     },
 )
 def kym_entity_curation_dag():
@@ -101,6 +103,10 @@ def kym_entity_curation_dag():
         from modules.kg.wikidata import Lexicon
 
         p = params or {}
+        if not os.path.exists(LEXICON_PATH):
+            # As kym_entities: say so and go on, so the chain is never blocked.
+            log.warning("No lexicon at %s — the rules wait for it this run", LEXICON_PATH)
+            return {"stamps": None, "chunks": []}
         lists = kc.load_lists(LISTS_PATH)
         with Lexicon(LEXICON_PATH) as lexicon:
             stamps = kc.rule_stamps(lists, lexicon.version)
@@ -205,18 +211,27 @@ def kym_entity_curation_dag():
                                           run_id=run_id or "manual", summary=summary)
 
     @task.short_circuit(trigger_rule="none_failed")
-    def should_trigger_kg(params: dict | None = None) -> bool:
-        return bool((params or {}).get("trigger_kg", False))
+    def should_trigger_events(params: dict | None = None) -> bool:
+        wanted = bool((params or {}).get("trigger_events", True))
+        if not wanted:
+            log.info("trigger_events=false — leaving kym_events alone this run")
+        return wanted
 
-    trigger_kg = TriggerDagRunOperator(task_id="trigger_kym_kg", trigger_dag_id="kym_kg",
-                                       wait_for_completion=False, trigger_rule="none_failed")
+    # batch_size 0: a chained run extracts every pending section, not
+    # kym_events' manual default of 500. Pending means new or changed text
+    # (or a new prompt/schema), so nothing already extracted is re-asked.
+    trigger_events = TriggerDagRunOperator(task_id="trigger_kym_events",
+                                           trigger_dag_id="kym_events",
+                                           conf={"batch_size": 0},
+                                           wait_for_completion=False,
+                                           trigger_rule="none_failed")
 
     selected = select_rules()
     ruled = rules_chunk.partial(selected=selected).expand(chunk=rule_chunks(selected))
     to_judge = select_judge(ruled)
     judged = judge_chunk.partial(selected=to_judge).expand(chunk=judge_chunks(to_judge))
     summary = summarize(ruled, judged)
-    record_summary(summary) >> should_trigger_kg() >> trigger_kg
+    record_summary(summary) >> should_trigger_events() >> trigger_events
 
 
 kym_entity_curation_dag()

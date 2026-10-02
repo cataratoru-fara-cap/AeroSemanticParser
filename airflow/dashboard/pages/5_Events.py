@@ -27,7 +27,7 @@ if not reachable:
     st.stop()
 
 st.title("Events")
-st.caption("`kym_events`, triggered by parse · owns `events` and "
+st.caption("`kym_events`, triggered by curation · owns `events` and "
            "`event_failures` · one LLM call per Origin/Spread section")
 
 state = data.event_state()

@@ -5,29 +5,32 @@ structured corpus, orchestrated by Airflow, with a Streamlit dashboard
 over the results.
 
 ```
-kym_discovery ─▶ kym_scrape ─▶ kym_parse ─▶ kym_entities ─▶ kym_events ─▶ kym_kg   (each triggers the next)
-   urls           doms          entries      entities         events         kg_nodes / kg_edges / kg_builds
-                                parse_       (NLP + local     event_         data/kg/builds/<build_id>/
-                                failures     Wikidata         failures          graph.nt  rml_data/*.csv
-                                             lexicon)         data/kg/events/   kg_view_*.csv  manifest.json
-                                                              (LLM, JSONL)            ▲
-                                                               kym_kg_validate ───────┘  (weekly: re-derive
-                                                                                         the RDF via RML, diff it)
-
-   kym_templates ─▶ kym_template_entities ─▶ (kym_kg)      manual; neither triggers by default
-   imgflip_pages     template_entities                     (6.4.0: imgflip meme templates
-   imgflip_templates template_entity_failures                per frame, what they show)
-   frame_templates   data/kg/templates/entities/ (JSONL)
-
-   kym_entity_curation ─▶ (kym_kg)                          manual; 6.5.0: which Wikidata links
-   entity_curation        entity_curation_failures            reach the graph (rules + LLM judge)
-   data/kg/entity_curation/ (JSONL)
+kym_discovery ─▶ kym_scrape ─▶ kym_parse ─▶ kym_entities ─▶ kym_entity_curation ─▶ kym_events ─┐
+   urls           doms          entries      entities         entity_curation         events     │
+                                parse_       (NLP + local     (rules + LLM judge:     (LLM,      │
+                                failures     Wikidata         which links reach       JSONL)     │
+                                             lexicon)         the graph, 6.5.0)                  │
+   ┌─────────────────────────────────────────────────────────────────────────────────────────────┘
+   └▶ kym_templates ─▶ kym_template_entities ─▶ kym_kg              each triggers the next
+      imgflip_pages     template_entities          kg_nodes / kg_edges / kg_builds
+      imgflip_templates (VLM, JSONL; 6.4.0)        data/kg/builds/<build_id>/
+      frame_templates                              graph.nt  rml_data/*.csv  kg_view_*.csv
+                                                         ▲
+                                     kym_kg_validate ────┘  (weekly: re-derive the RDF via RML, diff it)
 
                      run_summaries  ◀── every stage records its run
                             │
                             ▼
                      dashboard (:8501)
 ```
+
+Every stage selects only what is missing or stale (new or changed text, or
+a new version of its code, prompt, schema or lexicon), so the monthly chain does
+the month's new and changed frames and nothing else; kym_kg's gate skips the
+build when nothing that affects the graph moved. Each trigger param
+(`trigger_curation`, `trigger_events`, `trigger_templates`,
+`trigger_template_entities`, `trigger_kg`) can cut the chain for a manual
+or backfill run.
 
 ## Quick start
 
@@ -104,7 +107,7 @@ Twitter only where the text says so). With no lexicon the stage links
 nothing and triggers the next one anyway. MODEL.md's "Entities" section
 has what was taken from IMKG and what was changed.
 
-**`kym_entity_curation`** (manual) — decides which of those links reach
+**`kym_entity_curation`** (triggered by entities) — decides which of those links reach
 the graph (6.5.0, gap 09): most of what the linker finds is incidental
 ("hair", "mug", "popularity"). Title links are always kept; About and tag
 links go through local rules first (`kg/curation.py`,
@@ -122,7 +125,7 @@ reach the graph. Measured with `python -m modules.kg.entity_review draw`
 / `score` against the bar: of the kept, ≥ 0.85 relevant; of the dropped,
 ≤ 0.15.
 
-**`kym_events`** (triggered by entities) — extracts spatio-temporal events
+**`kym_events`** (triggered by curation) — extracts spatio-temporal events
 from every Origin and Spread section (36,011 of them), one LLM call per
 section through `modules/openwebui_client.py`, validated against
 `dags/kg_config/event_extraction_schema.json`. **Extractive only**: the
@@ -154,8 +157,8 @@ event dates. Beyond `audit()`, the sample was swept for every invariant a
 record should hold internally — precision against date format, relative
 chains pointing backwards in time, citations present in the text they are
 attached to, values that name nobody — and that sweep is what found four
-of the five bugs fixed on 2026-09-22 (see `kg/events.py`'s changelog). Run the backfill
-with `trigger_kg=false`, and build the graph once at the end. The model is a
+of the five bugs fixed on 2026-09-22 (see `kg/events.py`'s changelog). Run a backfill
+with `trigger_templates=false`, and build the graph once at the end. The model is a
 policy, not a name: never a reasoning model; `ministral-3:14b` on
 ollama-ccdd by default (`kg/events.py`, "Model policy"). Four models were
 measured on the same 99 sections before settling there — a bigger one is
@@ -170,7 +173,7 @@ left 15.3% of them out — and `audit()` refuses a record that does not. In the 
 events are one chain, Origin then Spread, in the order the page tells them
 (`mk:nextInStory`) — page order, not time order; time order is in the dates.
 
-**`kym_templates`** (manual) — finds the **imgflip meme templates** each
+**`kym_templates`** (triggered by events) — finds the **imgflip meme templates** each
 frame is made with. Eligible: every `meme`, plus any frame that links to
 imgflip or has a KYM *Template* section (18,479). For each, imgflip's
 public search is queried with the title (`/memesearch`, server-rendered, no
@@ -193,7 +196,7 @@ on 50 + 50 random frames (2026-09-28, read by Claude from contact sheets,
 ~2 page requests per frame; `kg/templates.py` has the calibration and the
 residual (a crop of the same photo still counts as its own template).
 
-**`kym_template_entities`** (manual) — reads each kept template's image
+**`kym_template_entities`** (triggered by templates) — reads each kept template's image
 with the lab's vision model (**qwen3-vl:32b**, one call at a time, like
 `kym_events`): named people and characters, animals, objects, logos,
 artworks and printed text, each with a box; every box and name is checked
@@ -351,7 +354,7 @@ with the fit (`mk:templateScore`); what a template's image shows is linked
 with IMKG's `m4s:fromImage`, each region annotated with its box
 (`mk:boundingBox`, a Media Fragments literal) and the model that read it.
 
-**`kym_kg`** (triggered by events) — lifts `entries`, the events
+**`kym_kg`** (triggered by template entities) — lifts `entries`, the events
 extracted from them and their Wikidata links, into a knowledge graph
 and publishes it in every representation at once:
 

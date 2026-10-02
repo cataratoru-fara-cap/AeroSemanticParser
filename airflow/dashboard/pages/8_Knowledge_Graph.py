@@ -24,7 +24,7 @@ if not reachable:
     st.stop()
 
 st.title("Knowledge graph")
-st.caption("`kym_kg`, triggered by parse · owns `kg_nodes`, `kg_edges` and "
+st.caption("`kym_kg`, triggered by template entities · owns `kg_nodes`, `kg_edges` and "
            "`kg_builds` · publishes into Neo4j, Fuseki and `data/kg/` · "
            "MemeAtlas extends IMKG: IMKG's `m4s:` terms where IMKG models a "
            "thing, `mk:` (`kg_config/memeatlas.ttl`) for the rest")

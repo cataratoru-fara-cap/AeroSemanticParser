@@ -17,7 +17,8 @@ The lexicon is a FILE, not a service: ``WIKIDATA_LEXICON`` (default
 data/wikidata/lexicon.sqlite), built from a downloaded Wikidata dump by
 ``python -m modules.kg.wikidata build`` (see kg/wikidata.py). When it is not
 there, this DAG links nothing and says so — and still triggers the next
-stage, so a missing lexicon never blocks the event layer or the graph.
+stage, whose rules skip the same way, so a missing lexicon never blocks the
+event layer or the graph.
 
 Why this is its own DAG, and not a task inside kym_kg
 -----------------------------------------------------
@@ -30,22 +31,23 @@ The event layer's reasons, most of which still hold at a smaller scale:
     graph build; here it only skips the linking.
   * **Curation needs the rows.** The `entities` collection keeps every
     link's features, and the NER spans nothing was found for — the input
-    the planned curation step (gap 09) works from, which a graph build
+    the curation step (kym_entity_curation) works from, which a graph build
     would throw away.
 
-Pipeline (kym_parse -> kym_entities -> kym_events -> kym_kg):
+Pipeline (the monthly chain: kym_parse -> kym_entities -> kym_entity_curation
+-> kym_events -> kym_templates -> kym_template_entities -> kym_kg):
     select_frames    entries -> frames whose linking is missing or stale
     chunk_frames     split into mapped workloads (frame IDS, not bodies)
     link_chunk       (mapped) re-filter, then spaCy + lexicon -> Mongo
     summarize / record_summary   -> run_summaries, stage="entities"
-    trigger_kym_events           the cascade, unless trigger_events=false
+    trigger_kym_entity_curation  the cascade, unless trigger_curation=false
 
 Trigger-time params:
     batch_size      frames this run (0 = everything pending)
     chunk_size      frames per mapped task
     ready_only      restrict to corpus_status == "ready"
     force_relink    ignore staleness; re-link everything selected
-    trigger_events  trigger kym_events at the end
+    trigger_curation  trigger kym_entity_curation at the end
 """
 
 from __future__ import annotations
@@ -96,8 +98,8 @@ DEFAULT_ARGS = {
                             description="Only corpus_status == 'ready' entries."),
         "force_relink": Param(False, type="boolean",
                               description="Re-link even up-to-date frames."),
-        "trigger_events": Param(True, type="boolean",
-                                description="Trigger kym_events when done."),
+        "trigger_curation": Param(True, type="boolean",
+                                  description="Trigger kym_entity_curation when done."),
     },
 )
 def kym_entities_dag():
@@ -209,18 +211,20 @@ def kym_entities_dag():
             run_id=run_id or "manual", summary=summary)
 
     @task.short_circuit(trigger_rule="none_failed")
-    def should_trigger_events(params: dict | None = None) -> bool:
+    def should_trigger_curation(params: dict | None = None) -> bool:
         """The cascade switch, as kym_parse's and kym_events' are. none_failed:
         a run with a failed chunk must LOOK failed (kym_events explains the
         silent-success trap), and what did land is durable either way."""
-        wanted = bool((params or {}).get("trigger_events", True))
+        wanted = bool((params or {}).get("trigger_curation", True))
         if not wanted:
-            log.info("trigger_events=false — leaving kym_events alone this run")
+            log.info("trigger_curation=false — leaving kym_entity_curation alone this run")
         return wanted
 
-    trigger_events = TriggerDagRunOperator(
-        task_id="trigger_kym_events",
-        trigger_dag_id="kym_events",
+    # Curation reads these links: the rules re-run for frames whose links
+    # moved, and the judge is asked only about items it has not answered.
+    trigger_curation = TriggerDagRunOperator(
+        task_id="trigger_kym_entity_curation",
+        trigger_dag_id="kym_entity_curation",
         wait_for_completion=False,
         trigger_rule="none_failed",
     )
@@ -229,7 +233,7 @@ def kym_entities_dag():
     chunks = chunk_frames(selected)
     stats = link_chunk.partial(selected=selected).expand(chunk=chunks)
     summary = summarize(selected, stats)
-    record_summary(summary) >> should_trigger_events() >> trigger_events
+    record_summary(summary) >> should_trigger_curation() >> trigger_curation
 
 
 kym_entities_dag()

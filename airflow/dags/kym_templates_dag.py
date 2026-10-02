@@ -42,6 +42,10 @@ Pipeline:
     summarize / record_summary     -> run_summaries, stage="templates"
     trigger_kym_template_entities  only if trigger_template_entities=true
 
+In the monthly chain kym_events triggers this DAG with batch_size 0,
+research_after_days 0 (a frame is searched again only when its text or a
+version stamp changed), trigger_template_entities and trigger_kg.
+
 Trigger-time params:
     batch_size                 frames searched this run (0 = all pending)
     chunk_size                 frames per mapped task
@@ -51,7 +55,9 @@ Trigger-time params:
     details_limit              kept templates to fetch details for (0 = all)
     sample_seed                non-zero: a random sample stratified by priority
     trigger_template_entities  trigger kym_template_entities when done (all
-                               pending templates, never the KG)
+                               pending templates)
+    trigger_kg                 ...and have it trigger kym_kg in turn (the chain's
+                               end; off for a manual search batch)
 """
 
 from __future__ import annotations
@@ -83,7 +89,7 @@ DEFAULT_ARGS = {
 
 @dag(
     dag_id="kym_templates",
-    schedule=None,          # manual until the template layer is in the graph
+    schedule=None,          # triggered by kym_events (the monthly chain), or by hand
     catchup=False,
     max_active_runs=1,
     default_args=DEFAULT_ARGS,
@@ -110,6 +116,9 @@ DEFAULT_ARGS = {
         "trigger_template_entities": Param(False, type="boolean",
                                            description="Trigger kym_template_entities "
                                                        "when done."),
+        "trigger_kg": Param(False, type="boolean",
+                            description="With trigger_template_entities: have it "
+                                        "trigger kym_kg when done (the chain's end)."),
     },
 )
 def kym_templates_dag():
@@ -241,13 +250,19 @@ def kym_templates_dag():
             log.info("trigger_template_entities=false — leaving the entity stage alone")
         return wanted
 
-    # Every template this batch kept, and never the KG: batches of the search
-    # feed the reader as they finish (kym_template_entities runs one at a time,
-    # so triggered runs queue), and publishing stays a separate decision.
+    @task
+    def template_entities_conf(params: dict | None = None) -> dict:
+        """Every pending template; the KG only when this run is the chain's
+        (trigger_kg). A manual search batch feeds the reader as it finishes
+        (kym_template_entities runs one at a time, so triggered runs queue)
+        and leaves publishing to a separate decision."""
+        return {"batch_size": 0, "trigger_kg": bool((params or {}).get("trigger_kg", False))}
+
+    entities_conf = template_entities_conf()
     trigger_entities = TriggerDagRunOperator(
         task_id="trigger_kym_template_entities",
         trigger_dag_id="kym_template_entities",
-        conf={"batch_size": 0, "trigger_kg": False},
+        conf=entities_conf,     # an XComArg: resolved to the dict at run time
         wait_for_completion=False,
         trigger_rule="none_failed",
     )
@@ -260,7 +275,7 @@ def kym_templates_dag():
     detail_chunks = chunk_details(assigned)
     details = fetch_details.expand(chunk=detail_chunks)
     summary = summarize(selected, assigned, searched, details)
-    record_summary(summary) >> should_trigger_template_entities() >> trigger_entities
+    record_summary(summary) >> should_trigger_template_entities() >> entities_conf
 
 
 kym_templates_dag()

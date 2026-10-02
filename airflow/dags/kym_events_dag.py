@@ -39,11 +39,13 @@ Four reasons, in order of how much they hurt:
   * It is the shape the repo already has: one stage, one collection, one
     owner module — exactly as kym_parse owns `entries`.
 
-During the initial backfill every kym_events run moves the KG's event
-stamps, so kym_kg rebuilds the whole graph afterwards. That is correct but
-expensive — and kym_kg publishes by default — so the backfill should run
-with ``trigger_kg=false`` and build once at the end. Outside a backfill
-(parse -> entities -> events -> kg on new pages) the default stays on.
+This DAG is one link of the monthly chain (kym_parse -> kym_entities ->
+kym_entity_curation -> kym_events -> kym_templates -> kym_template_entities
+-> kym_kg), which ends in a graph build and, by kym_kg's default, a
+PUBLISH. During a backfill every kym_events run moves the KG's event
+stamps, so each would end in a full rebuild: run backfill batches with
+``trigger_templates=false`` and build once at the end. Outside a backfill
+the default stays on.
 
 Pipeline:
     select_units     entries -> pending (frame, section) units
@@ -58,7 +60,8 @@ Trigger-time params:
     sections          which narrative sections to extract from
     ready_only        restrict to corpus_status == "ready"
     force_reextract   ignore staleness; re-ask for everything selected
-    trigger_kg        trigger kym_kg at the end (turn OFF for backfill batches)
+    trigger_templates trigger kym_templates, and through it the rest of the
+                      chain to kym_kg (turn OFF for backfill batches)
 """
 
 from __future__ import annotations
@@ -108,7 +111,7 @@ def _slug(run_id: str) -> str:
 
 @dag(
     dag_id="kym_events",
-    schedule=None,          # triggered by kym_entities (parse -> entities -> events)
+    schedule=None,          # triggered by kym_entity_curation (the monthly chain)
     catchup=False,
     max_active_runs=1,
     default_args=DEFAULT_ARGS,
@@ -126,11 +129,13 @@ def _slug(run_id: str) -> str:
                             description="Only corpus_status == 'ready' entries."),
         "force_reextract": Param(False, type="boolean",
                                  description="Re-ask even for up-to-date units."),
-        "trigger_kg": Param(True, type="boolean",
-                            description="Trigger kym_kg when done. Turn OFF "
-                                        "for backfill batches: every batch moves "
-                                        "the event stamps, so each would force a "
-                                        "full graph rebuild (and publish)."),
+        "trigger_templates": Param(True, type="boolean",
+                                   description="Trigger kym_templates when done, and "
+                                               "through it the rest of the chain to "
+                                               "kym_kg. Turn OFF for backfill batches: "
+                                               "every batch moves the event stamps, so "
+                                               "each would force a full graph rebuild "
+                                               "(and publish)."),
     },
 )
 def kym_events_dag():
@@ -288,7 +293,7 @@ def kym_events_dag():
             run_id=run_id or "manual", summary=summary)
 
     @task.short_circuit(trigger_rule="none_failed")
-    def should_trigger_kg(params: dict | None = None) -> bool:
+    def should_trigger_templates(params: dict | None = None) -> bool:
         """The backfill switch.
 
         Every kym_events run that lands anything moves the KG's event
@@ -297,7 +302,8 @@ def kym_events_dag():
         backfill that is tens of rebuilds, and a published graph where a
         few percent of frames have events, which a consumer cannot tell
         apart from "those frames have no events". Run the batches with
-        trigger_kg=false and let the last one (or a manual kym_kg) build.
+        trigger_templates=false and let the last one (or a manual kym_kg)
+        build.
 
         none_failed, NOT all_done: a run with a failed extraction chunk must
         LOOK failed. With all_done here and on the trigger, the only leaf
@@ -307,17 +313,27 @@ def kym_events_dag():
         What DID land is durable in Mongo and the next run resumes from it,
         so nothing is lost by failing loudly and re-running.
         """
-        wanted = bool((params or {}).get("trigger_kg", True))
+        wanted = bool((params or {}).get("trigger_templates", True))
         if not wanted:
-            log.info("trigger_kg=false — leaving kym_kg alone this run")
+            log.info("trigger_templates=false — leaving the rest of the chain alone")
         return wanted
 
-    trigger_kg = TriggerDagRunOperator(
-        task_id="trigger_kym_kg",
-        trigger_dag_id="kym_kg",
+    # The chain's settings for the template stages:
+    #   batch_size 0                     every pending frame, not 500
+    #   research_after_days 0            a frame is searched again only when its
+    #                                    text or a version stamp changed, never
+    #                                    for its age (nothing is recomputed
+    #                                    that has not changed)
+    #   trigger_template_entities True   read the newly kept templates...
+    #   trigger_kg True                  ...then build (and publish) the graph
+    trigger_templates = TriggerDagRunOperator(
+        task_id="trigger_kym_templates",
+        trigger_dag_id="kym_templates",
+        conf={"batch_size": 0, "research_after_days": 0,
+              "trigger_template_entities": True, "trigger_kg": True},
         wait_for_completion=False,
         # none_failed: the graph is built from a COMPLETE extraction run.
-        # A failed chunk leaves a hole in coverage that a later kym_kg
+        # A failed chunk leaves a hole in coverage that the chain's kym_kg
         # build would silently bake in; fix it and re-run (the sections
         # that landed are durable, so a re-run only redoes the rest).
         trigger_rule="none_failed",
@@ -327,7 +343,7 @@ def kym_events_dag():
     chunks = chunk_units(selected)
     stats = extract_chunk.partial(selected=selected).expand(chunk=chunks)
     summary = summarize(selected, stats)
-    record_summary(summary) >> should_trigger_kg() >> trigger_kg
+    record_summary(summary) >> should_trigger_templates() >> trigger_templates
 
 
 kym_events_dag()

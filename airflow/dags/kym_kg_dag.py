@@ -213,7 +213,7 @@ def _files_current() -> str | None:
 
 @dag(
     dag_id="kym_kg",
-    schedule=None,  # triggered by kym_events (parse -> entities -> events -> kg)
+    schedule=None,  # triggered by kym_template_entities, the end of the monthly chain
     catchup=False,
     max_active_runs=1,
     default_args=DEFAULT_ARGS,
