@@ -51,5 +51,18 @@ and each one gets worse the longer it sits.
   pilot were read and fixed; no pool cap (Gabi). Throughput and its
   mitigations are in the note.
 
+- [11-entities-without-wikidata-item.md](11-entities-without-wikidata-item.md) —
+  every entity in the graph is a Wikidata item, so whatever has none is
+  left out: 22,614 names in frame text and 4,418 named regions in template
+  images (a fifth of them), because the lexicon holds only items with a
+  Wikipedia article or the linker did not commit. In RDF an item is only a
+  label: no type, no description.
+
+- [12-nsfw-placeholder-image-is-a-node.md](12-nsfw-placeholder-image-is-a-node.md) —
+  KYM's NSFW cover image stands in for 5,211 section images in 2,553 frames
+  and is cited by 3,125 events, making it a PageRank hub. The real URL is in
+  the stored page, base64-encoded in `data-nsfw-src`: a parser fix and an
+  offline re-parse, no scraping.
+
 Update the status line at the top of a file when a gap is closed; leave the
 file (don't delete it) so the decision trail survives.

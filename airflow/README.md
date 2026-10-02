@@ -327,6 +327,9 @@ can be run headless with Streamlit's `AppTest` inside the dashboard image.
 
 ## The KG stage
 
+Querying the live graph (Neo4j and SPARQL), and what the 6.5.0 graph
+measures against IMKG: [`KG_QUERIES.md`](KG_QUERIES.md).
+
 **MemeAtlas extends IMKG.** Where IMKG models something, its terms are
 used as is (`m4s:MediaFrame`, `m4s:title`, `m4s:tag`, `kymt:` entry-type
 classes, `skos:broader` for series), so IMKG queries run here. The rest of
