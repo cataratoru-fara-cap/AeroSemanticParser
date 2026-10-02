@@ -141,13 +141,6 @@ ONTOLOGY_PATH = os.path.join(KG_CONFIG_DIR, "memeatlas.ttl")
 # connectivity, and would not fit in the worker's memory besides. Every
 # node a core edge touches is a core kind (kg/build.py emits frame-level
 # edges for every body link and reference), so the core is closed.
-METRICS_NODE_KINDS = ("frame", "frame_stub", "entry_type_concept",
-                      "tag_concept", "external_ref")
-METRICS_EDGE_TYPES = ("hasEntryType", "hasTag", "partOfSeries",
-                      "relatesToMeme", "citesExternal", "subTypeOf")
-METRICS_NODE_FIELDS = ("label", "category", "status")
-
-
 def _build_dir(build_id: str) -> str:
     return os.path.join(KG_DATA_DIR, "builds", build_id)
 
@@ -694,27 +687,17 @@ def kym_kg_dag():
     @task(execution_timeout=timedelta(minutes=30), retries=1)
     def compute_metrics(published: dict, pruned: dict) -> dict:
         """kg/metrics.py needs its graph in memory (~0.6 GB for the core:
-        ~350k nodes / ~713k edges), which is why it runs after publish: a
+        ~390k nodes / ~740k edges), which is why it runs after publish: a
         metrics OOM must never block a verified graph from going live. Only
-        the core subgraph (METRICS_*) and only the fields metrics reads are
-        loaded — section text alone would not fit."""
+        the core subgraph (metrics.CORE_*) and only the fields metrics reads are
+        loaded — section text alone would not fit. The whole graph (scope
+        "full", ~2 GB for 6.5.0) is measured by hand: kg/metrics.py --scope full."""
         import json
         from modules.kg import metrics
         bid = published["build_id"]
-        nodes = {n["id"]: n for n in store.iter_nodes(
-            bid, kinds=METRICS_NODE_KINDS, fields=METRICS_NODE_FIELDS)}
-        # subTypeOf is ONE property-graph edge type shared by entry_type's
-        # curated hierarchy (in the core) and origin's (5.0.0, NOT part of
-        # the IMKG-comparable core — origin_concept isn't in
-        # METRICS_NODE_KINDS). types=METRICS_EDGE_TYPES can't tell the two
-        # apart by type name alone, so origin:-prefixed subTypeOf edges are
-        # dropped here — otherwise they'd show up as dangling (their
-        # origin_concept endpoints were never loaded into `nodes`) and
-        # inflate edge/degree counts the core is supposed to stay stable
-        # against.
-        edges = [e for e in store.iter_edges(bid, types=METRICS_EDGE_TYPES, occurrences=False)
-                if not (e["type"] == "subTypeOf" and e["src"].startswith("origin:"))]
+        nodes, edges = metrics.load_build(bid, scope="core")
         m = metrics.compute_metrics(nodes, edges)
+        m["scope"], m["build_id"] = "core", bid
         del nodes, edges
         out = os.path.join(_build_dir(bid), "metrics.json")
         with open(out + ".tmp", "w", encoding="utf-8") as fh:

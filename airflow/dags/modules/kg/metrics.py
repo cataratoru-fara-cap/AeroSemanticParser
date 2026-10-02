@@ -17,8 +17,20 @@ Two blocks of output:
                  connected components, series-chain depth and cycles,
                  duplicate/self edges, label completeness.
 
-Reads kg_nodes/kg_edges from Mongo (same env vars as parse_store.py), or
-the exported CSVs with --from-csv for a laptop run with no container.
+Reads one build's kg_nodes/kg_edges from Mongo (the published build unless
+--build names another; same env vars as kg_store.py), or the exported CSVs
+with --from-csv for a laptop run with no container.
+
+Two scopes:
+
+  core   the IMKG-comparable core: frames, their entry types, tags, series
+         and links (CORE_NODE_KINDS / CORE_EDGE_TYPES) — the KYM row of
+         IMKG's Table 2. kym_kg computes it after every publish.
+  full   the whole graph, side by side with IMKG's full graph, plus LAYERS:
+         what the 6.x layers add per frame (Wikidata entities from the text
+         and from template images, imgflip templates, events). About three
+         times the core's memory (~2 GB for 6.5.0), so it runs by hand, not
+         in the worker.
 
 Pure stdlib: no numpy, no networkx, no pymongo unless --from-csv is absent.
 PageRank is power iteration by hand so this cannot fail on a missing dep
@@ -27,6 +39,10 @@ five minutes before a meeting.
 Run inside the Airflow container:
     docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
         python -m modules.kg.metrics --out /opt/airflow/data/kg_metrics.json
+
+The whole graph, from the host (the venv, MONGODB_URI pointing at Mongo):
+    python -m modules.kg.metrics --scope full \
+        --out ../data/kg/current/metrics_full.json
 
 Or against exported CSVs:
     python kg_metrics.py --from-csv --nodes kg_view_nodes.csv \
@@ -71,21 +87,55 @@ IMKG_FULL = {
 # Node attributes treated as triples under --triple-equivalent.
 ATTR_FIELDS = ("label", "category", "status")
 
+# The IMKG-comparable core (the KYM row of IMKG's Table 2). kym_kg's
+# compute_metrics measures this scope after every publish.
+CORE_NODE_KINDS = ("frame", "frame_stub", "entry_type_concept", "tag_concept",
+                   "external_ref")
+CORE_EDGE_TYPES = ("hasEntryType", "hasTag", "partOfSeries", "relatesToMeme",
+                   "citesExternal", "subTypeOf")
+SCOPES = ("core", "full")
+
+# 6.1.0: a frame's links to Wikidata items, one edge type per field.
+ENTITY_FRAME_EDGES = ("fromTitle", "fromTags", "fromAbout")
+
 
 # ---------------------------------------------------------------- loading ---
 
-def load_from_mongo() -> tuple[dict, list]:
-    from pymongo import MongoClient
-    uri = os.getenv("MONGODB_URI")
-    if not uri:
-        raise SystemExit(
-            "MONGODB_URI is not set. Refusing to silently default to "
-            "localhost:27017 and report metrics for the wrong database."
-        )
-    db = MongoClient(uri)[os.getenv("MONGODB_DB", "memes")]
-    nodes = {n["id"]: n for n in db.kg_nodes.find({}, {"_id": 0})}
-    edges = list(db.kg_edges.find({}, {"_id": 0}))
-    return nodes, edges
+def in_scope(edge: dict, scope: str) -> bool:
+    """subTypeOf is ONE edge type shared by entry_type's curated hierarchy
+    (in the core) and origin's (5.0.0, not in it): origin's start at an
+    ``origin:`` node, which the core never loads, so they would show up as
+    dangling and inflate the core's edge and degree counts."""
+    if scope == "full":
+        return True
+    return (edge["type"] in CORE_EDGE_TYPES
+            and not (edge["type"] == "subTypeOf" and edge["src"].startswith("origin:")))
+
+
+def restrict_to_scope(nodes: dict, edges: list, scope: str) -> dict:
+    """In the core, a node other than a frame counts only if a core edge
+    touches it. A KIND does not say which layer a node belongs to: since
+    6.4.0 every template's imgflip page is an ``external_ref`` reached only
+    by ``imgflipPage``, and counting those put 26,745 isolated nodes into
+    6.5.0's core (5.0.1 had none). A frame always counts: a frame with no
+    edges is a finding."""
+    if scope == "full":
+        return nodes
+    touched = {e["src"] for e in edges} | {e["dst"] for e in edges}
+    return {nid: n for nid, n in nodes.items()
+            if n.get("kind") == "frame" or nid in touched}
+
+
+def load_build(build_id: str, scope: str = "core") -> tuple[dict, list]:
+    """One build's graph at a scope: only the fields metrics reads (section
+    text alone would not fit) and no per-mention occurrence lists."""
+    from modules import kg_store as store
+    kinds = CORE_NODE_KINDS if scope == "core" else None
+    types = CORE_EDGE_TYPES if scope == "core" else None
+    nodes = {n["id"]: n for n in store.iter_nodes(build_id, kinds=kinds, fields=ATTR_FIELDS)}
+    edges = [e for e in store.iter_edges(build_id, types=types, occurrences=False)
+             if in_scope(e, scope)]
+    return restrict_to_scope(nodes, edges, scope), edges
 
 
 def load_from_csv(nodes_path: str, edges_path: str) -> tuple[dict, list]:
@@ -471,6 +521,85 @@ def compute_metrics(nodes: dict, edges: list, triple_equivalent: bool = False,
     }
 
 
+def layer_metrics(nodes: dict, edges: list, top_k: int = 20) -> dict:
+    """What the layers beyond the IMKG core add, per frame (6.x): Wikidata
+    items linked from the frame's text (6.1.0, curated in 6.5.0) and from its
+    templates' images (6.4.0), imgflip templates, events (6.0.0). Pure."""
+    kind = {nid: n.get("kind") for nid, n in nodes.items()}
+    frames = {nid for nid, k in kind.items() if k == "frame"}
+    templates = {nid for nid, k in kind.items() if k == "template"}
+    entities = {nid for nid, k in kind.items() if k == "wikidata_entity"}
+
+    linked_by_field: dict[str, set[str]] = {t: set() for t in ENTITY_FRAME_EDGES}
+    entity_frames: dict[str, set[str]] = defaultdict(set)
+    entity_templates: dict[str, set[str]] = defaultdict(set)
+    frame_templates: dict[str, set[str]] = defaultdict(set)
+    template_frames: dict[str, set[str]] = defaultdict(set)
+    events_per_frame: Counter[str] = Counter()
+    for e in edges:
+        typ, src, dst = e["type"], e["src"], e["dst"]
+        if typ in linked_by_field:
+            linked_by_field[typ].add(src)
+            entity_frames[dst].add(src)
+        elif typ == "fromImage":
+            entity_templates[dst].add(src)
+        elif typ == "hasTemplate":
+            frame_templates[src].add(dst)
+            template_frames[dst].add(src)
+        elif typ == "hasEvent":
+            events_per_frame[src] += 1
+
+    with_entity = set().union(*linked_by_field.values()) & frames
+    with_template = set(frame_templates) & frames
+    templates_reading = set().union(*entity_templates.values())  # templates showing an item
+    with_template_entity = {f for f in with_template if frame_templates[f] & templates_reading}
+    with_events = set(events_per_frame) & frames
+    from_text, from_images = set(entity_frames), set(entity_templates)
+    n_frames = max(len(frames), 1)
+
+    def pct(k: int, n: int = n_frames) -> float:
+        return round(100 * k / max(n, 1), 2)
+
+    def label(nid: str) -> str:
+        return (nodes.get(nid, {}).get("label") or nid)[:60]
+
+    def top(by: dict[str, set[str]], key: str) -> list[dict]:
+        ranked = sorted(by.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:top_k]
+        return [{"id": nid, "label": label(nid), key: len(v)} for nid, v in ranked]
+
+    counts = sorted(events_per_frame[f] for f in with_events)
+    return {
+        "frames": len(frames),
+        "frames_with_entity_link": len(with_entity),
+        "frames_with_entity_link_pct": pct(len(with_entity)),
+        "frames_with_entity_link_by_field": {
+            t: len(linked_by_field[t] & frames) for t in ENTITY_FRAME_EDGES},
+        "frames_with_template": len(with_template),
+        "frames_with_template_pct": pct(len(with_template)),
+        "frames_with_template_entity": len(with_template_entity),
+        "frames_with_template_entity_pct": pct(len(with_template_entity)),
+        "frames_with_events": len(with_events),
+        "frames_with_events_pct": pct(len(with_events)),
+        "frames_with_all_three": len(with_entity & with_template & with_events),
+        "frames_with_none": len(frames - with_entity - with_template - with_events),
+        "events_per_frame_mean": round(sum(counts) / max(len(counts), 1), 2),
+        "events_per_frame_median": counts[len(counts) // 2] if counts else 0,
+        "templates_per_frame_mean": round(
+            sum(len(frame_templates[f]) for f in with_template) / max(len(with_template), 1), 2),
+        "wikidata_entities": len(entities),
+        "entities_from_text_only": len(from_text - from_images),
+        "entities_from_images_only": len(from_images - from_text),
+        "entities_from_both": len(from_text & from_images),
+        "templates": len(templates),
+        "templates_with_entity": len(templates_reading & templates),
+        "templates_with_entity_pct": pct(len(templates_reading & templates), len(templates)),
+        "templates_shared_by_frames": sum(1 for t in templates if len(template_frames[t]) > 1),
+        "top_entities_by_frames": top(entity_frames, "frames"),
+        "top_entities_by_templates": top(entity_templates, "templates"),
+        "top_templates_by_frames": top(template_frames, "frames"),
+    }
+
+
 # ----------------------------------------------------------------- report ---
 
 def format_report(m: dict) -> str:
@@ -481,6 +610,8 @@ def format_report(m: dict) -> str:
     add("=" * 74)
     add("REPLICATION — IMKG (ESWC 2023) Table 2 columns")
     add("=" * 74)
+    if m.get("scope"):
+        add(f"scope: {m['scope']}   build: {m.get('build_id') or '-'}")
     add(f"counting mode: {r['counting_mode']}")
     add("")
     add(f"{'':22} {'MemeAtlas':>14} {'IMKG (KYM)':>14} {'IMKG (full)':>14}")
@@ -561,6 +692,43 @@ def format_report(m: dict) -> str:
     add("frame status distribution:")
     for k, v in list(g["status_distribution"].items())[:12]:
         add(f"  {k:24} {v:>10,}")
+
+    lay = m.get("layers")
+    if lay:
+        add("")
+        add("=" * 74)
+        add("LAYERS — what 6.x adds beyond the IMKG core, per frame")
+        add("=" * 74)
+        by_field = lay["frames_with_entity_link_by_field"]
+        rows = [
+            ("frames", f"{lay['frames']:,}"),
+            ("with a Wikidata link", f"{lay['frames_with_entity_link']:,} "
+                                     f"({lay['frames_with_entity_link_pct']}%)"),
+            ("  by field (title/tags/About)", " / ".join(f"{by_field[t]:,}" for t in ENTITY_FRAME_EDGES)),
+            ("with a template", f"{lay['frames_with_template']:,} ({lay['frames_with_template_pct']}%)"),
+            ("  whose image shows an item", f"{lay['frames_with_template_entity']:,} "
+                                            f"({lay['frames_with_template_entity_pct']}%)"),
+            ("with events", f"{lay['frames_with_events']:,} ({lay['frames_with_events_pct']}%)"),
+            ("with all three / none", f"{lay['frames_with_all_three']:,} / {lay['frames_with_none']:,}"),
+            ("events per frame mean / median", f"{lay['events_per_frame_mean']} / "
+                                               f"{lay['events_per_frame_median']}"),
+            ("templates per frame (mean)", f"{lay['templates_per_frame_mean']}"),
+            ("Wikidata items", f"{lay['wikidata_entities']:,}"),
+            ("  from text only / images only / both", f"{lay['entities_from_text_only']:,} / "
+                                                      f"{lay['entities_from_images_only']:,} / "
+                                                      f"{lay['entities_from_both']:,}"),
+            ("templates", f"{lay['templates']:,}"),
+            ("  showing an item", f"{lay['templates_with_entity']:,} ({lay['templates_with_entity_pct']}%)"),
+            ("  kept by more than one frame", f"{lay['templates_shared_by_frames']:,}"),
+        ]
+        for label, val in rows:
+            add(f"  {label:38} {val}")
+        add("top Wikidata items by frames linking them:")
+        for row in lay["top_entities_by_frames"][:10]:
+            add(f"  {row['frames']:>8,}  {row['label']}")
+        add("top Wikidata items by templates showing them:")
+        for row in lay["top_entities_by_templates"][:10]:
+            add(f"  {row['templates']:>8,}  {row['label']}")
     return "\n".join(L)
 
 
@@ -574,15 +742,28 @@ def main():
                     help="Count populated node attributes as edges, for a "
                          "like-for-like comparison with IMKG's RDF counts.")
     ap.add_argument("--top-k", type=int, default=20)
+    ap.add_argument("--build", default=None,
+                    help="Build id to measure (default: the published one).")
+    ap.add_argument("--scope", choices=SCOPES, default="core",
+                    help="core = the IMKG-comparable core (what kym_kg measures); "
+                         "full = the whole graph, plus the LAYERS block.")
     ap.add_argument("--out", default=None, help="Write full metrics JSON here.")
     args = ap.parse_args()
 
+    build_id = None
     if args.from_csv:
         nodes, edges = load_from_csv(args.nodes, args.edges)
     else:
-        nodes, edges = load_from_mongo()
+        from modules import kg_store
+        build_id = args.build or kg_store.current_build_id()
+        if not build_id:
+            raise SystemExit("No published build and no --build given.")
+        nodes, edges = load_build(build_id, args.scope)
 
     m = compute_metrics(nodes, edges, args.triple_equivalent, args.top_k)
+    m["scope"], m["build_id"] = args.scope, build_id
+    if args.scope == "full":
+        m["layers"] = layer_metrics(nodes, edges, args.top_k)
     print(format_report(m))
 
     if args.out:
