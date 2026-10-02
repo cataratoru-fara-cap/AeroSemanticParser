@@ -355,6 +355,15 @@ class JudgeTests(unittest.TestCase):
         self.assertEqual(set(C.rule_stamps(LISTS, "lex")),
                          {"curation_version", "curation_lists_version", "lexicon_version"})
 
+    def test_the_judge_never_falls_back_to_another_model(self):
+        # A verdict is stamped with the model REQUESTED; another model's answer
+        # would be filed under its name and never re-asked.
+        for req in (C.model_request({}), C.confirm_request({}),
+                    C.model_request({"KG_CURATION_MODEL": "x"})):
+            self.assertFalse(req.allow_fallback)
+        self.assertEqual(C.model_request({}).model, C.DEFAULT_JUDGE_MODEL)
+        self.assertEqual(C.model_request({"KG_CURATION_MODEL": "x"}).model, "x")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -90,7 +90,7 @@ import copy
 import hashlib
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 CURATION_VERSION = "1.1.0"
@@ -395,8 +395,13 @@ def request_format(schema: dict[str, Any], n_items: int) -> dict[str, Any]:
 
 
 def model_request(env: Mapping[str, str] | None = None):
+    """No fallback to another model: a verdict is stamped with the model
+    REQUESTED (judge_stamps), so another model's answer would be filed under
+    this one's name and never re-asked. The same weights on another host
+    serve; when no host has them the run fails, loudly, and the chain stops."""
     from modules.openwebui_client import ModelRequest
-    return ModelRequest.from_env("KG_CURATION", default_model=DEFAULT_JUDGE_MODEL, env=env)
+    return replace(ModelRequest.from_env("KG_CURATION", default_model=DEFAULT_JUDGE_MODEL,
+                                         env=env), allow_fallback=False)
 
 
 def render_items(items: Sequence[dict]) -> str:
@@ -535,9 +540,11 @@ def judge_frame(client, request, context: Mapping[str, str], items: Sequence[dic
 
 
 def confirm_request(env: Mapping[str, str] | None = None):
+    """No fallback, for model_request's reason (judge_confirm_model)."""
     from modules.openwebui_client import ModelRequest
-    return ModelRequest.from_env("KG_CURATION_CONFIRM", default_model=DEFAULT_CONFIRM_MODEL,
-                                 env=env)
+    return replace(ModelRequest.from_env("KG_CURATION_CONFIRM",
+                                         default_model=DEFAULT_CONFIRM_MODEL, env=env),
+                   allow_fallback=False)
 
 
 def judge_stamps(request, schema_sha: str, confirm=None) -> dict[str, str]:
