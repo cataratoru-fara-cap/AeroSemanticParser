@@ -62,6 +62,8 @@ Pipeline:
                         (6.0.0, kym_events) + their Wikidata links (6.1.0,
                         kym_entities) -> kg/build.py -> kg_store.save_graph
     materialize_stubs   one pass: a stub node for every edge target with no node
+    write_sibling_edges sharesSameSeries between every two frames of one series
+                        (6.6.0, kg/siblings.py), from the build's partOfSeries
     census              entry_type frequency + co-occurrence for the taxonomy
     load_taxonomy       kg_config/entry_type_taxonomy.yaml, validated against it
     write_concept_edges subTypeOf edges (rdfs:subClassOf) into the same generation
@@ -401,6 +403,24 @@ def kym_kg_dag():
     def materialize_stubs(proceed: dict, chunk_stats: list[dict]) -> dict:
         return store.materialize_stubs(proceed["build_id"])
 
+    @task(execution_timeout=timedelta(minutes=30))
+    def write_sibling_edges(proceed: dict, chunk_stats: list[dict]) -> dict:
+        """6.6.0: ``sharesSameSeries`` between every two frames of one series
+        (kg/siblings.py), derived from this build's ``partOfSeries`` — so it
+        waits for every chunk. ~680k edges on 6.5.0's corpus, saved in
+        slices so the store's per-call dedupe set stays small; the pairs are
+        unique by construction, so slicing loses nothing."""
+        from itertools import islice
+        from modules.kg import siblings
+        bid = proceed["build_id"]
+        pairs = siblings.sibling_edges(
+            store.iter_edges(bid, types=["partOfSeries"], occurrences=False))
+        written = 0
+        while batch := list(islice(pairs, 50_000)):
+            written += store.save_concept_edges(bid, batch)["concept_edges_written"]
+        log.info("sharesSameSeries: %d edges written", written)
+        return {"edges_written": written}
+
     # -- Phase 3: the concept layer -------------------------------------------
     @task
     def census(proceed: dict) -> dict:
@@ -479,7 +499,7 @@ def kym_kg_dag():
     @task(execution_timeout=timedelta(minutes=30))
     def write_exports(snap: dict, proceed: dict, stubs: dict, concepts: dict,
                       origin_concepts: dict, cooccurs_written: dict,
-                      params: dict | None = None) -> dict:
+                      siblings_written: dict, params: dict | None = None) -> dict:
         from modules.kg import serialize
         p = params or {}
         bid = proceed["build_id"]
@@ -516,7 +536,8 @@ def kym_kg_dag():
 
     @task(execution_timeout=timedelta(minutes=45))
     def load_neo4j(proceed: dict, stubs: dict, concepts: dict,
-                   origin_concepts: dict, cooccurs_written: dict) -> dict:
+                   origin_concepts: dict, cooccurs_written: dict,
+                   siblings_written: dict) -> dict:
         if not _neo4j_enabled():
             raise AirflowSkipException("NEO4J_PASSWORD unset — Neo4j follower disabled")
         bid = proceed["build_id"]
@@ -716,7 +737,8 @@ def kym_kg_dag():
                   published: dict | None = None,
                   metrics: dict | None = None,
                   origin_tax: dict | None = None,
-                  cooccurs_written: dict | None = None) -> dict:
+                  cooccurs_written: dict | None = None,
+                  siblings_written: dict | None = None) -> dict:
         if not snap["stale"]:
             summary = {"skipped": True, "reason": snap["reason"],
                        "build": {"build_id": None, "stamps": snap["stamps"]}}
@@ -763,6 +785,8 @@ def kym_kg_dag():
                 "edges_encoded", "slugs_missing_from_census", "buckets")},
             "cooccurs": {"edges_written":
                         (cooccurs_written or {}).get("concept_edges_written")},
+            "siblings": {"edges_written":
+                        (siblings_written or {}).get("edges_written")},
             "stores": {
                 "fuseki": ({"triples": fuseki.get("triples"), "graph": fuseki.get("graph")}
                            if fuseki else None),
@@ -796,6 +820,7 @@ def kym_kg_dag():
     chunks = chunk_entries(snap, proceed, reconciled)
     built = build_chunk.partial(proceed=proceed).expand(chunk=chunks)
     stubs = materialize_stubs(proceed, built)
+    siblings_written = write_sibling_edges(proceed, built)
     cen = census(proceed)
     tax = load_taxonomy(proceed, cen)
     concepts = write_concept_edges(proceed, tax)
@@ -805,9 +830,10 @@ def kym_kg_dag():
     tags_cen = census_tags(proceed)
     cooccurs_written = write_cooccurs_edges(proceed, tags_cen)
     manifest = write_exports(snap, proceed, stubs, concepts, origin_concepts,
-                             cooccurs_written)
+                             cooccurs_written, siblings_written)
     fus = load_fuseki(proceed, manifest)
-    neo = load_neo4j(proceed, stubs, concepts, origin_concepts, cooccurs_written)
+    neo = load_neo4j(proceed, stubs, concepts, origin_concepts, cooccurs_written,
+                     siblings_written)
     verified = verify(proceed, manifest, fus, neo)
     published = publish(proceed, manifest, verified)
     pruned = prune(published, verified)
@@ -815,7 +841,8 @@ def kym_kg_dag():
     measured = compute_metrics(published, pruned)
     summary = summarize(snap, built, stubs, tax, manifest, fus, neo, verified,
                         published, measured, origin_tax=origin_tax,
-                        cooccurs_written=cooccurs_written)
+                        cooccurs_written=cooccurs_written,
+                        siblings_written=siblings_written)
     record_summary(summary)
 
 

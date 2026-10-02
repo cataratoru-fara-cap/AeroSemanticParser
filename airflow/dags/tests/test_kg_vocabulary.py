@@ -30,7 +30,7 @@ import re
 import unittest
 from pathlib import Path
 
-from modules.kg import build, cooccurs, rdf, serialize, taxonomy
+from modules.kg import build, cooccurs, rdf, serialize, siblings, taxonomy
 
 CONFIG = Path(__file__).resolve().parents[1] / "kg_config"
 # .yarrrml.yml, not .yarrrml: yatter refuses any extension but .yml/.yaml.
@@ -209,17 +209,17 @@ class MappingCrosswalkTests(unittest.TestCase):
         # source (entry_type's was removed) and tag_concept has no RDF
         # resource, so it has no RML file and no rdf.py predicate at all —
         # property-graph-only, checked separately in test_kg_loaders.py.
-        ours = set(build.EDGE_TYPES) | set(taxonomy.CONCEPT_EDGE_TYPES)
+        ours = (set(build.EDGE_TYPES) | set(taxonomy.CONCEPT_EDGE_TYPES)
+                | set(siblings.SIBLING_EDGE_TYPES))
         self.assertEqual(set(serialize.EDGE_TYPE_TO_RML_FILE), ours)
         self.assertEqual(set(rdf.EDGE_PREDICATES), ours)
 
     def test_edge_types_and_concept_types_do_not_overlap(self):
-        self.assertEqual(
-            set(build.EDGE_TYPES) & set(taxonomy.CONCEPT_EDGE_TYPES), set())
-        self.assertEqual(
-            set(build.EDGE_TYPES) & set(cooccurs.COOCCURS_EDGE_TYPES), set())
-        self.assertEqual(
-            set(taxonomy.CONCEPT_EDGE_TYPES) & set(cooccurs.COOCCURS_EDGE_TYPES), set())
+        groups = [set(build.EDGE_TYPES), set(taxonomy.CONCEPT_EDGE_TYPES),
+                  set(cooccurs.COOCCURS_EDGE_TYPES), set(siblings.SIBLING_EDGE_TYPES)]
+        for i, a in enumerate(groups):
+            for b in groups[i + 1:]:
+                self.assertEqual(a & b, set())
 
 
 class ImkgAlignmentTests(unittest.TestCase):
@@ -253,6 +253,20 @@ class ImkgAlignmentTests(unittest.TestCase):
         self.assertEqual(rdf.EDGE_PREDICATES["partOfSeries"],
                          (skos + "broader", False, skos + "narrower"))
         self.assertNotIn("skos", rdf.EDGE_PREDICATES["subTypeOf"][0])
+
+    def test_siblings_are_imkgs_see_also_both_ways(self):
+        """6.6.0. IMKG's sibling triples are rdfs:seeAlso (kym/mappings/
+        kym.media.frames.yaml: ``siblings``, from the Related Entries box),
+        so MemeAtlas emits exactly that — both ways, as each page lists the
+        others — and mints no mk: term an IMKG query would not know."""
+        see_also = rdf.PREFIXES["rdfs"] + "seeAlso"
+        self.assertEqual(rdf.EDGE_PREDICATES["sharesSameSeries"],
+                         (see_also, False, see_also))
+        self.assertNotIn(rdf.PREFIXES["mk"] + "sharesSameSeries", declared_mk_terms())
+        # The only edge type that emits it: the mk: link predicates are
+        # declared sub-properties of rdfs:seeAlso, never emitted as it.
+        self.assertEqual({t for t, (p, _, inv) in rdf.EDGE_PREDICATES.items()
+                          if see_also in (p, inv)}, {"sharesSameSeries"})
 
     def test_no_extension_term_shadows_an_imkg_one(self):
         mk_locals = {t[len(rdf.PREFIXES["mk"]):] for t in declared_mk_terms()}

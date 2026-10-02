@@ -136,8 +136,9 @@ Edge types
   and, from an event node: eventLink  eventCitation  eventEmbed  eventImage
   eventDateAnchor  nextInStory                         (6.3.0, event -> event)
   plus the concept edges ``subTypeOf`` (kg/taxonomy.py, kg/origin.py) and
-  ``coOccursWith`` (kg/cooccurs.py, tags only as of 5.0.1) — neither
-  emitted by this function.
+  ``coOccursWith`` (kg/cooccurs.py, tags only as of 5.0.1), and 6.6.0's
+  frame-to-frame ``sharesSameSeries`` (kg/siblings.py, from every
+  entry's ``partOfSeries``) — none of them emitted by this function.
 
 6.1.0: Wikidata entities
 ------------------------
@@ -173,6 +174,12 @@ from . import tag_normalize
 
 _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 
+# 6.6.0: frames of one series are linked to each other explicitly, with
+# `sharesSameSeries` (Riccardo's review, 2026-10-02) — until now only
+# through the parent both point to. Derived after every entry is built,
+# from the partOfSeries edges (kg/siblings.py), so not emitted here. RDF
+# uses IMKG's own sibling term, rdfs:seeAlso, both directions, so IMKG's
+# queries run unchanged. MINOR: additive.
 # 6.5.0: the entity layer is CURATED (gap 09). Only the Wikidata links
 # kym_entity_curation keeps reach the graph — by a rule (the title, the
 # frame's own item, a platform, a meme format, the title or both a tag and
@@ -223,7 +230,7 @@ _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 # and origin promoted from frame literals / a literal string to concepts
 # (badge_concept/hasBadge, origin_concept/hasOrigin); tags plural-folded
 # (kg/tag_normalize.py). Bumping this makes the staleness gate rebuild.
-KG_BUILD_VERSION = "6.5.0"
+KG_BUILD_VERSION = "6.6.0"
 
 NODE_KINDS: tuple[str, ...] = (
     "frame", "frame_stub", "entry_type_concept", "tag_concept",

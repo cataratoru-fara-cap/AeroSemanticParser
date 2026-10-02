@@ -24,6 +24,7 @@ reused VERBATIM, so an IMKG query runs unchanged against MemeAtlas:
     added / last_updated    m4s:added / m4s:last_update_source
     hasTag                  m4s:tag "<literal>"
     partOfSeries            skos:broader  (+ skos:narrower, as IMKG emits)
+    sharesSameSeries        rdfs:seeAlso, both ways (6.6.0; IMKG's siblings)
     fromAbout / fromTags    m4s:fromAbout / m4s:fromTags -> a Wikidata item
                             (6.1.0; IMKG's textual-enrichment predicates)
 
@@ -84,6 +85,10 @@ Scope rules that keep this path and the RML path in agreement:
     (6.1.0) gets its ``rdfs:label`` and NO class: the resource is
     Wikidata's, and asserting a MemeAtlas class on it would be a statement
     about somebody else's item.
+  * ``sharesSameSeries`` (6.6.0, kg/siblings.py) is stored once per pair
+    and emitted in both directions, so the DAG's dedupe-free path stays
+    injective only while the store holds each pair once — which
+    kg/siblings.py's ``src < dst`` guarantees.
   * ``coOccursWith`` (kg/cooccurs.py) never reaches RDF (5.0.1): tags are
     its only source now (entry_type's was removed — needless alongside
     its curated subTypeOf hierarchy) and tag_concept has no RDF resource
@@ -280,6 +285,13 @@ EDGE_PREDICATES: dict[str, tuple[str, bool, str | None]] = {
     "hasOrigin": (MK + "hasOrigin", False, None),
     "hasBadge": (MK + "badge", False, None),      # was a literal; see memeatlas.ttl
     "partOfSeries": (SKOS + "broader", False, SKOS + "narrower"),
+    # 6.6.0. IMKG's own sibling term, verbatim (kym/mappings/
+    # kym.media.frames.yaml: ``rdfs:seeAlso`` <- ``siblings``), so IMKG's
+    # sibling queries run unchanged; nothing else here emits rdfs:seeAlso.
+    # Symmetric, so its "inverse" is itself: the property graph keeps each
+    # pair once (kg/siblings.py, src < dst) and RDF states both directions,
+    # as IMKG's data does (each page lists the others).
+    "sharesSameSeries": (RDFS + "seeAlso", False, RDFS + "seeAlso"),
     "relatesToMeme": (MK + "relatesToMeme", False, None),
     "citesExternal": (MK + "citesExternal", False, None),
     "subTypeOf": (RDFS + "subClassOf", False, None),

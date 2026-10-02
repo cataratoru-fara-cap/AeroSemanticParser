@@ -13,6 +13,8 @@ orchestration to `dags/kym_kg_dag.py`.
                    exist.
     taxonomy.py    the curated entry_type taxonomy (kg_config/*.yaml), loaded,
                    validated, and turned into skos:broader concept edges.
+    siblings.py    a build's partOfSeries edges -> sharesSameSeries between
+                   every two frames of one series (6.6.0).
     census.py      frequency + co-occurrence census over a corpus field.
     serialize.py   one build's (nodes, edges) -> graph.nt + the RML CSVs +
                    the property-graph view CSVs + a manifest, atomically.

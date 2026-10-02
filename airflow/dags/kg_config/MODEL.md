@@ -59,6 +59,7 @@ Neo4j and Mongo) to its RDF term.
 | edge `hasEntryType` | `rdf:type kymt:<slug>` | `entry_type` |
 | edge `hasTag` | `m4s:tag "<tag>"` | `tags` |
 | edge `partOfSeries` | `skos:broader` plus the inverse `skos:narrower` | `series_parent` |
+| edge `sharesSameSeries` (6.6.0) | `rdfs:seeAlso` (IMKG's `siblings`), stated in both directions | derived from `series_parent`: every two frames with the same parent (`kg/siblings.py`; see Deliberate difference 11) |
 | edge `fromAbout` (6.1.0) | `m4s:fromAbout` → a Wikidata item | entities recognised in the About section (see [Entities](#entities-linked-to-wikidata-as-imkg-did-61)) |
 | edge `fromTags` (6.1.0) | `m4s:fromTags` → a Wikidata item | `tags`, each looked up whole |
 | edge `hasTemplate`, inverse (6.4.0) | `m4s:templateOf` (template → frame; IMKG's mapping) | `frame_templates.selected` (see [Templates](#templates-imgflip-beyond-imkg-640)) |
@@ -279,9 +280,10 @@ inside morph-kgc). It is minted once, in `kg/events.py`, and stored.
    `kym:Site`, `kym:Culture` (`rdf.CATEGORY_CLASSES`). Kept in this list so
    the numbering the other sections cite stays stable.
 4. **`mk:relatesToMeme` is broader than IMKG's `rdfs:seeAlso`.** IMKG's
-   `rdfs:seeAlso` covers only the Related Entries box. `mk:relatesToMeme`
-   covers every KYM link on the page, and is declared a sub-property of
-   `rdfs:seeAlso`.
+   `rdfs:seeAlso` covers only the Related Entries box: other entries of
+   the same series, which MemeAtlas emits as `rdfs:seeAlso` too
+   (difference 11). `mk:relatesToMeme` covers every KYM link on the page,
+   and is declared a sub-property of `rdfs:seeAlso`.
 5. **`mk:badge` changed type in 5.0.0.** It was `owl:DatatypeProperty` (a
    literal) in 4.0.0; badges are now `badge_concept` resources, so it is
    `owl:ObjectProperty`. A documented ontology break, not a silent one —
@@ -314,6 +316,32 @@ inside morph-kgc). It is minted once, in `kg/events.py`, and stored.
    not the imgflip page URL IMKG's memes point to. The page is linked
    (`mk:imgflipPage`) and IMKG's `imgflip:templateId` is kept as a plain
    literal, so both graphs still join — on the id, or in one hop.
+11. **Siblings are IMKG's `rdfs:seeAlso`, derived from the series parent**
+   (6.6.0; Riccardo's review, 2026-10-02). IMKG's spider read each page's
+   Related Entries box — other entries of the same series, as many as the
+   box shows — into `siblings`, and its mapping emits them as
+   `rdfs:seeAlso` (`kym/mappings/kym.media.frames.yaml`). MemeAtlas's
+   parser does not read that box (truncated, and fragile across KYM's
+   layouts; see `kym_parse.py`), so until 6.5.0 two frames of a series
+   were linked only through their shared parent. 6.6.0 emits IMKG's term,
+   verbatim, for every two frames with the same `series_parent`, in both
+   directions. IMKG's sibling queries run unchanged, and return the whole
+   series rather than the box's part of it. In the property graph the
+   edge is `sharesSameSeries`, as `partOfSeries` is `skos:broader`.
+   `relatesToMeme` was no substitute: it links only 3,602 of the 679,392
+   sibling pairs in 6.5.0's corpus.
+   - Nothing else emits `rdfs:seeAlso`. `mk:relatesToMeme`,
+     `mk:citesExternal` and the `mk:event*` links are declared
+     sub-properties of it, so only an endpoint that applies RDFS
+     entailment widens `?a rdfs:seeAlso ?b` beyond siblings; the
+     Fuseki here does not.
+   - The count is quadratic in a series' size. 6.5.0's corpus gives
+     679,392 pairs, so 1,358,784 triples; TikTok alone (543 frames) gives
+     147,153 pairs. The property graph keeps each pair once (`src < dst`):
+     in Neo4j, match it undirected, `(a)-[:sharesSameSeries]-(b)`.
+   - It is left out of the IMKG-comparable core metrics: it is derived from
+     `partOfSeries`, and connects nothing the core does not already
+     connect.
 
 ## Events: drawn from EventKG, not copied from it
 
@@ -556,6 +584,7 @@ IMKG's authors' agreement) like every other `mk:` term.
 | A Wikidata item is an object only — never typed, never a predicate — and `fromAbout`/`fromTags` are IMKG's own | `tests/test_kg_vocabulary.py` |
 | A re-link replaces a frame's mentions; every staleness stamp re-queues on its own | `tests/test_entity_store.py` |
 | A template's two directions and IMKG's terms; the template IRI | `tests/test_kg_vocabulary.py` |
+| Every two frames with one series parent get one `sharesSameSeries` edge (`src < dst`) and nothing else does; RDF states it both ways with IMKG's `rdfs:seeAlso`, and mints no `mk:` term for it | `tests/test_kg_siblings.py`, `tests/test_kg_rdf.py`, `tests/test_kg_vocabulary.py` |
 | Template nodes, edges and annotations; a template two frames chose is emitted identically; the build reads at its snapshot | `tests/test_kg_template_graph.py` |
 | Duplicates: resize, re-encode, mirror and letterboxing are one picture, no chaining; selection is 0 or 1–10 | `tests/test_kg_visual.py`, `tests/test_kg_templates.py` |
 | Every image region stored is a real box with a real name; the blind audit's arithmetic; what reaches the graph | `tests/test_kg_template_entities.py` |

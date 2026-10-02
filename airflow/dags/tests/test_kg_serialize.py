@@ -20,6 +20,7 @@ from pathlib import Path
 
 from modules.kg import ntdiff, rdf, serialize
 from modules.kg.build import EDGE_TYPES
+from modules.kg.siblings import SIBLING_EDGE_TYPES
 from modules.kg.taxonomy import CONCEPT_EDGE_TYPES
 
 F1 = "https://knowyourmeme.com/memes/doge"
@@ -81,6 +82,9 @@ EDGES = [
     {"src": F1, "type": "hasTag", "dst": "tag:dog"},
     {"src": F2, "type": "hasTag", "dst": "tag:doge"},
     {"src": F1, "type": "partOfSeries", "dst": STUB},
+    # 6.6.0: a sibling pair, once, src < dst (kg/siblings.py derives it; the
+    # serializer only projects what it is given).
+    {"src": F2, "type": "sharesSameSeries", "dst": F1},
     {"src": F1, "type": "relatesToMeme", "dst": F2, "occurrences": [
         {"anchor_text": "Cheems", "in_section": "Notes"}]},
     {"src": F1, "type": "citesExternal", "dst": EXT, "occurrences": [
@@ -240,6 +244,11 @@ class RmlValueMappingTests(Built):
     def test_subtype_edges_strip_both_sides(self):
         self.assertEqual(self.rml("subtype_edges.csv"),
                          [{"narrower": "image-macro", "broader": "meme"}])
+
+    def test_sibling_pairs_are_one_row_each(self):
+        # 6.6.0: the mapping reads each row in both directions.
+        self.assertEqual(self.rml("sibling_edges.csv"),
+                         [{"url": F2, "sibling_url": F1}])
 
     def test_url_edges_pass_through(self):
         self.assertEqual(self.rml("series_edges.csv"),
@@ -548,7 +557,7 @@ class VocabularyTests(unittest.TestCase):
         # representation for any pair -- see EDGE_TYPE_TO_RML_FILE's
         # module-level assert in serialize.py for the same equality.
         self.assertEqual(set(serialize.EDGE_TYPE_TO_RML_FILE),
-                         set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES))
+                         set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES) | set(SIBLING_EDGE_TYPES))
 
 
 if __name__ == "__main__":

@@ -456,7 +456,9 @@ class KGStore(MongoStoreBase):
 
     def save_concept_edges(self, build_id: str,
                            edges: Iterable[dict]) -> dict[str, int]:
-        """Concept-to-concept edges (subTypeOf -> rdfs:subClassOf)."""
+        """Edges derived after the per-entry build: the concept-to-concept
+        subTypeOf and coOccursWith, and (6.6.0) sharesSameSeries between
+        frames."""
         return {"concept_edges_written":
                 self.save_graph(build_id, (), edges)["edges_written"]}
 

@@ -291,6 +291,14 @@ class EdgeTripleTests(unittest.TestCase):
         self.assertEqual(got, [f"<{FRAME}> <{skos}broader> <{PARENT}> .",
                                f"<{PARENT}> <{skos}narrower> <{FRAME}> ."])
 
+    def test_siblings_are_imkgs_see_also_in_both_directions(self):
+        # 6.6.0: stored once per pair; IMKG's sibling term, both ways.
+        other = "https://knowyourmeme.com/memes/cheems"
+        see_also = rdf.PREFIXES["rdfs"] + "seeAlso"
+        got = triples([], [{"src": other, "type": "sharesSameSeries", "dst": FRAME}])
+        self.assertEqual(got, [f"<{other}> <{see_also}> <{FRAME}> .",
+                               f"<{FRAME}> <{see_also}> <{other}> ."])
+
     def test_relations_become_iri_objects(self):
         got = triples([], [{"src": FRAME, "type": "relatesToMeme",
                             "dst": PARENT}])
@@ -364,8 +372,9 @@ class EdgeTripleTests(unittest.TestCase):
                                        "dst": PARENT}]), [])
 
     def test_every_build_edge_type_has_a_predicate(self):
-        from modules.kg import build, taxonomy
-        for etype in set(build.EDGE_TYPES) | set(taxonomy.CONCEPT_EDGE_TYPES):
+        from modules.kg import build, siblings, taxonomy
+        for etype in (set(build.EDGE_TYPES) | set(taxonomy.CONCEPT_EDGE_TYPES)
+                      | set(siblings.SIBLING_EDGE_TYPES)):
             self.assertIn(etype, rdf.EDGE_PREDICATES)
 
     def test_every_node_kind_is_either_classed_or_deliberately_not(self):

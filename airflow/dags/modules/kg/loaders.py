@@ -65,6 +65,7 @@ from typing import Any, Iterable, Iterator
 from modules.kg.build import EDGE_TYPES, NODE_KINDS, OCCURRENCE_FIELDS
 from modules.kg.cooccurs import COOCCURS_EDGE_TYPES
 from modules.kg.rdf import PREFIXES
+from modules.kg.siblings import SIBLING_EDGE_TYPES
 from modules.kg.taxonomy import CONCEPT_EDGE_TYPES
 
 __all__ = [
@@ -292,7 +293,8 @@ def neo4j_load(driver, cfg: Neo4jConfig, build_id: str,
     for kind, rows in by_kind.items():
         flush_nodes(kind, rows)
 
-    allowed = set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES) | set(COOCCURS_EDGE_TYPES)
+    allowed = (set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES) | set(COOCCURS_EDGE_TYPES)
+               | set(SIBLING_EDGE_TYPES))
     by_type: dict[str, list[dict]] = {t: [] for t in allowed}
 
     def flush_edges(etype: str, rows: list[dict]) -> None:

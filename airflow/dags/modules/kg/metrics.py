@@ -89,6 +89,13 @@ ATTR_FIELDS = ("label", "category", "status")
 
 # The IMKG-comparable core (the KYM row of IMKG's Table 2). kym_kg's
 # compute_metrics measures this scope after every publish.
+#
+# sharesSameSeries (6.6.0) is left out of it. It is derived entirely from
+# partOfSeries — two frames with one parent — so its ~680k edges would
+# nearly double the core's edge count and average degree while connecting
+# nothing the core does not already connect, and the core's figures would
+# stop being comparable with those published for 5.0.1 and 6.5.0. The full
+# scope counts it.
 CORE_NODE_KINDS = ("frame", "frame_stub", "entry_type_concept", "tag_concept",
                    "external_ref")
 CORE_EDGE_TYPES = ("hasEntryType", "hasTag", "partOfSeries", "relatesToMeme",

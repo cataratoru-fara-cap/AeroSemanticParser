@@ -17,6 +17,7 @@ import unittest
 from modules.kg import loaders as L
 from modules.kg.build import EDGE_TYPES
 from modules.kg.cooccurs import COOCCURS_EDGE_TYPES
+from modules.kg.siblings import SIBLING_EDGE_TYPES
 from modules.kg.taxonomy import CONCEPT_EDGE_TYPES
 
 BUILD = "kg_20260916T134720Z_manual"
@@ -174,7 +175,8 @@ class Neo4jLoadTests(unittest.TestCase):
     def test_every_vocabulary_type_is_accepted(self):
         d = StubDriver()
         edges = [{"src": F1, "type": t, "dst": F2}
-                 for t in set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES) | set(COOCCURS_EDGE_TYPES)]
+                 for t in set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES) | set(COOCCURS_EDGE_TYPES)
+                 | set(SIBLING_EDGE_TYPES)]
         self.assertEqual(L.neo4j_load(d, CFG, BUILD, [], edges)["edges"], len(edges))
 
     def test_cooccurs_with_loads_for_both_type_and_tag_prefixed_uids(self):

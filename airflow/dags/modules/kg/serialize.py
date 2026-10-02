@@ -51,6 +51,7 @@ from typing import Any, Callable, Iterable
 from modules.kg import rdf
 from modules.kg.build import (EDGE_TYPES, NODE_KINDS, OCCURRENCE_EDGE_TYPES,
                               OCCURRENCE_FIELDS)
+from modules.kg.siblings import SIBLING_EDGE_TYPES
 from modules.kg.taxonomy import CONCEPT_EDGE_TYPES
 
 __all__ = [
@@ -154,6 +155,8 @@ EDGE_TYPE_TO_RML_FILE: dict[str, tuple[str, tuple[str, str]]] = {
     "hasOrigin":     ("origin_edges.csv",     ("url", "origin")),
     "hasBadge":      ("badge_edges.csv",      ("url", "badge")),
     "partOfSeries":  ("series_edges.csv",     ("url", "parent_url")),
+    # 6.6.0: one row per pair; the mapping reads it in both directions.
+    "sharesSameSeries": ("sibling_edges.csv", ("url", "sibling_url")),
     "relatesToMeme": ("relates_edges.csv",    ("url", "target_url")),
     "citesExternal": ("cites_edges.csv",      ("url", "target_url")),
     "subTypeOf":     ("subtype_edges.csv",    ("narrower", "broader")),
@@ -211,7 +214,7 @@ PG_NODES_HEADER = ("id", "label", "kind", "category", "status")
 PG_EDGES_HEADER = ("source", "target", "type")
 
 assert set(EDGE_TYPE_TO_RML_FILE) == (
-    set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES)), (
+    set(EDGE_TYPES) | set(CONCEPT_EDGE_TYPES) | set(SIBLING_EDGE_TYPES)), (
     "serialize.py's RML file table drifted from the edge vocabulary")
 assert {k for k, _ in RML_NODE_FILES.values()} | {"frame_stub", "entry_type_concept",
         "tag_concept", "region_concept", "origin_concept", "badge_concept",

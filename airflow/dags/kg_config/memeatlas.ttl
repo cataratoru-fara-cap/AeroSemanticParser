@@ -4,8 +4,9 @@
 # terms wherever the two describe the same thing — m4s:MediaFrame, m4s:title,
 # m4s:status, m4s:year, m4s:from, m4s:about, m4s:added,
 # m4s:last_update_source, m4s:tag, kym:<Category> and kymt:<type> classes,
-# and skos:broader / skos:narrower between frames of a series — and does NOT
-# redeclare them here: they are IMKG's.
+# skos:broader / skos:narrower between frames of a series, and rdfs:seeAlso
+# between the frames of one series (6.6.0) — and does NOT redeclare them
+# here: they are IMKG's.
 #
 # This file declares only what MemeAtlas adds, under mk:, and aligns each
 # addition to IMKG, SKOS or schema.org where one fits, so a consumer that
@@ -63,7 +64,7 @@
 MemeAtlas describes the full parsed record of each Know Your Meme entry —
 its section text, links, references, images, regions and corpus grading —
 on top of IMKG's model of media frames, which it reuses unchanged.""" ;
-    owl:versionInfo "6.5.0" ;
+    owl:versionInfo "6.6.0" ;
     rdfs:seeAlso <https://doi.org/10.1007/978-3-031-33455-9_21> ,
                  <https://github.com/riccardotommasini/imkg> ;
     prov:wasDerivedFrom <https://doi.org/10.5281/zenodo.7457166> .
@@ -97,7 +98,7 @@ mk:relatesToMeme a owl:ObjectProperty ;
     rdfs:subPropertyOf rdfs:seeAlso ;
     rdfs:domain m4s:MediaFrame ;
     rdfs:label "relates to meme" ;
-    rdfs:comment "The entry links to another Know Your Meme entry anywhere on its page or in its references. Broader than IMKG's rdfs:seeAlso, which covers only the Related Entries box. Each mention may be annotated (mk:anchorText, mk:inSection, mk:citationText, ...)." .
+    rdfs:comment "The entry links to another Know Your Meme entry anywhere on its page or in its references. Broader than IMKG's rdfs:seeAlso, which links only the entries of one series (from the Related Entries box; MemeAtlas emits those as rdfs:seeAlso too, as of 6.6.0). Each mention may be annotated (mk:anchorText, mk:inSection, mk:citationText, ...)." .
 
 mk:citesExternal a owl:ObjectProperty ;
     rdfs:subPropertyOf rdfs:seeAlso ;

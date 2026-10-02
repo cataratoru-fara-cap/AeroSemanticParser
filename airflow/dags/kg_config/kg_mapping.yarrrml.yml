@@ -60,6 +60,11 @@
 # rules, then an LLM judge; the dropped ones stay in Mongo). Each kept
 # mention says why it was kept (mk:relevanceBasis).
 #
+# 6.6.0: frames of the same series are linked explicitly, with IMKG's own
+# term for siblings, rdfs:seeAlso, so IMKG's queries run unchanged (the
+# property graph calls the edge sharesSameSeries). One CSV row per pair,
+# read in both directions.
+#
 # RDF-star: each *_occurrences.csv has a row per mention. Its *_edge mapping
 # is quotedNonAsserted (morph-kgc still asserts it; the same triple already
 # comes from the edge CSV, and RDF is a set), and the annotation mapping over
@@ -162,6 +167,24 @@ mappings:
     subjects: $(parent_url)
     po:
       - [skos:narrower, $(url)~iri]
+
+  # IMKG: the other entries of the same series are rdfs:seeAlso (its
+  # `siblings`, from each page's Related Entries box). 6.6.0 derives them
+  # from the series parent (modules/kg/siblings.py): one row per pair,
+  # read in both directions, as each page lists the others.
+  shares_same_series:
+    sources:
+      - [rml_data/sibling_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [rdfs:seeAlso, $(sibling_url)~iri]
+
+  shares_same_series_inverse:
+    sources:
+      - [rml_data/sibling_edges.csv~csv]
+    subjects: $(sibling_url)
+    po:
+      - [rdfs:seeAlso, $(url)~iri]
 
   # ---- MemeAtlas: the entry-type taxonomy ---------------------------------
 
