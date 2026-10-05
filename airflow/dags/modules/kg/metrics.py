@@ -394,6 +394,13 @@ def compute_metrics(nodes: dict, edges: list, triple_equivalent: bool = False,
             series_children.add(e["src"])
             series_parents.add(e["dst"])
     series_nodes = series_children | series_parents
+    # A parent that is not a scraped frame: KYM's "Part of a series on X"
+    # names a page the corpus does not hold. Counted over the parents, not
+    # over every frame_stub — most stubs are only linked to from a page,
+    # and until 2026-10-05 they were all counted here (9,576 in 6.5.0
+    # against 1,061 real ones).
+    unresolved_parents = sorted(p for p in series_parents
+                                if nodes.get(p, {}).get("kind") != "frame")
     # series tops: never a child of anything
     series_roots = [n for n in series_nodes if n not in series_children]
     # traversal starts at leaves (nothing points at them) and walks up.
@@ -478,9 +485,13 @@ def compute_metrics(nodes: dict, edges: list, triple_equivalent: bool = False,
             "top_degree": top_degree,
         },
         "integrity": {
-            "unresolved_series_parents": len(stubs),
+            "series_parents": len(series_parents),
+            "unresolved_series_parents": len(unresolved_parents),
             "unresolved_series_parent_pct": round(
-                100 * len(stubs) / max(n_frames + len(stubs), 1), 2),
+                100 * len(unresolved_parents) / max(len(series_parents), 1), 2),
+            "unresolved_series_parents_sample": unresolved_parents[:10],
+            # KYM entries the graph links to but the corpus does not hold.
+            "frame_stubs": len(stubs),
             "frames_without_entry_type": len(no_type),
             "frames_without_entry_type_pct": round(
                 100 * len(no_type) / max(n_frames, 1), 2),
@@ -653,8 +664,10 @@ def format_report(m: dict) -> str:
     add("INTEGRITY — checks IMKG did not report")
     add("=" * 74)
     rows = [
-        ("unresolved series parents", f"{g['unresolved_series_parents']:,} "
-                                      f"({g['unresolved_series_parent_pct']}%)"),
+        ("series parents not scraped", f"{g['unresolved_series_parents']:,} of "
+                                       f"{g['series_parents']:,} "
+                                       f"({g['unresolved_series_parent_pct']}%)"),
+        ("frame stubs (not scraped)", f"{g['frame_stubs']:,}"),
         ("frames w/o entry_type", f"{g['frames_without_entry_type']:,} "
                                   f"({g['frames_without_entry_type_pct']}%)"),
         ("frames w/o tags", f"{g['frames_without_tags']:,} "

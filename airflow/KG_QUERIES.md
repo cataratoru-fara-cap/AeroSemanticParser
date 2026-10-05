@@ -257,7 +257,11 @@ their statements, so the gap is mostly that import, not coverage of memes.
 - no isolated nodes, duplicate edges, self-loops, dangling edges or series
   cycles;
 - 2 connected components, as in 5.0.1;
-- 28.3% of series parents are not frames in the corpus (9,576 `FrameStub`s);
+- 26.0% of series parents are not frames in the corpus (1,061 of 4,074).
+  This was first published as 28.3% (9,576), a count of every
+  `FrameStub`, most of which are pages linked from an entry rather than
+  series parents; the metric was corrected on 2026-10-05 and 7.0.0 is
+  unchanged;
 - 18.8% of frames have no entry type, and 0.3% have no tags;
 - the longest series chain is 7 steps: Bonk Cheems → Cheems → Dogelore →
   Ironic Doge Memes → Doge → Interior Monologue Captioning → Image Macros →

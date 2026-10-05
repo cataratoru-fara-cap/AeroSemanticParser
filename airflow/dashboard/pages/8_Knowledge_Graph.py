@@ -148,15 +148,26 @@ if integrity:
         ui.meter("Frames with at least one entry type",
                  frames - integrity.get("frames_without_entry_type", 0), frames, pal,
                  good_above=0.85, warn_above=0.6)
+    # Over the series parents, not the frames. Summaries recorded before
+    # 2026-10-05 have no series_parents: their unresolved_series_parents
+    # counted every frame_stub, so they get no meter.
+    parents = integrity.get("series_parents")
     with m2:
-        ui.meter("Series parents that are scraped frames (not stubs)",
-                 frames - integrity.get("unresolved_series_parents", 0)
-                 if integrity.get("unresolved_series_parents") is not None else frames,
-                 frames, pal, good_above=0.8, warn_above=0.5)
+        if parents:
+            ui.meter("Series parents that are scraped frames (not stubs)",
+                     parents - integrity.get("unresolved_series_parents", 0),
+                     parents, pal, good_above=0.8, warn_above=0.5)
+
+    def count(key: str) -> str:
+        value = integrity.get(key)
+        return f"{value:,}" if isinstance(value, int) else "—"
+
     st.caption(
-        f"Longest `partOfSeries` chain: **{integrity.get('series_chain_max_depth', '—')}** · "
-        f"unresolved series parents (stubs): **{integrity.get('unresolved_series_parents', '—'):,}** · "
-        f"isolated nodes: **{integrity.get('isolated_nodes', '—')}**")
+        f"Longest `partOfSeries` chain: **{count('series_chain_max_depth')}** · "
+        f"series parents not scraped: **{count('unresolved_series_parents') if parents else '—'}"
+        f" of {count('series_parents')}** · "
+        f"frame stubs (linked, not scraped): **{count('frame_stubs')}** · "
+        f"isolated nodes: **{count('isolated_nodes')}**")
 
 st.divider()
 

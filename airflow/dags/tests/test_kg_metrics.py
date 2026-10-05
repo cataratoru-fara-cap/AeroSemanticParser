@@ -148,8 +148,23 @@ class IntegrityTests(unittest.TestCase):
     def setUpClass(cls):
         cls.integrity = metrics.compute_metrics(*small_graph())["integrity"]
 
-    def test_unresolved_series_parents_counts_stubs(self):
+    def test_unresolved_series_parents_are_parents_that_are_not_frames(self):
+        # f2, f3 and s1 are parents; only s1 is not a scraped frame.
+        self.assertEqual(self.integrity["series_parents"], 3)
         self.assertEqual(self.integrity["unresolved_series_parents"], 1)
+        self.assertEqual(self.integrity["unresolved_series_parent_pct"], 33.33)
+        self.assertEqual(self.integrity["unresolved_series_parents_sample"], ["s1"])
+
+    def test_a_stub_that_is_only_linked_is_not_an_unresolved_parent(self):
+        # Until 2026-10-05 every frame_stub counted as an unresolved series
+        # parent: 9,576 in 6.5.0, of which 1,061 were parents. A stub that a
+        # page merely links to is counted as a stub, not as a parent.
+        nodes, edges = small_graph()
+        nodes["s2"] = node("s2", "frame_stub", None, "meme", None)
+        edges.append(edge("f1", "citesMediaFrame", "s2"))
+        integrity = metrics.compute_metrics(nodes, edges)["integrity"]
+        self.assertEqual(integrity["unresolved_series_parents"], 1)
+        self.assertEqual(integrity["frame_stubs"], 2)
 
     def test_series_chain_depth(self):
         self.assertEqual(self.integrity["series_chain_max_depth"], 3)
