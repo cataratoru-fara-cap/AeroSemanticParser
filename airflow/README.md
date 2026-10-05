@@ -5,18 +5,23 @@ structured corpus, orchestrated by Airflow, with a Streamlit dashboard
 over the results.
 
 ```
-kym_discovery ─▶ kym_scrape ─▶ kym_parse ─▶ kym_entities ─▶ kym_entity_curation ─▶ kym_events ─┐
+kym_discovery ─▶ kym_scrape ─▶ kym_parse ─▶ kym_entities ─▶ kym_entity_curation ─▶ kym_events ───┐
    urls           doms          entries      entities         entity_curation         events     │
                                 parse_       (NLP + local     (rules + LLM judge:     (LLM,      │
                                 failures     Wikidata         which links reach       JSONL)     │
                                              lexicon)         the graph, 6.5.0)                  │
    ┌─────────────────────────────────────────────────────────────────────────────────────────────┘
-   └▶ kym_templates ─▶ kym_template_entities ─▶ kym_kg              each triggers the next
-      imgflip_pages     template_entities          kg_nodes / kg_edges / kg_builds
-      imgflip_templates (VLM, JSONL; 6.4.0)        data/kg/builds/<build_id>/
-      frame_templates                              graph.nt  rml_data/*.csv  kg_view_*.csv
-                                                         ▲
-                                     kym_kg_validate ────┘  (weekly: re-derive the RDF via RML, diff it)
+   └▶ kym_templates ─▶ kym_template_entities ─▶ kym_frame_image_entities ─▶ kym_wikidata_statements ─┐
+      imgflip_pages     template_entities        frame_image_entities        wikidata_statements     │
+      imgflip_templates (VLM, JSONL; 6.4.0)      (VLM, JSONL; 7.1.0)         wikidata_labels         │
+      frame_templates                                                        (dump; 7.1.0)           │
+   ┌─────────────────────────────────────────────────────────────────────────────────────────────────┘
+   └▶ kym_kg                              each triggers the next
+      kg_nodes / kg_edges / kg_builds
+      data/kg/builds/<build_id>/
+      graph.nt  rml_data/*.csv  kg_view_*.csv
+        ▲
+        └── kym_kg_validate  (weekly: re-derive the RDF via RML, diff it)
 
                      run_summaries  ◀── every stage records its run
                             │
@@ -210,6 +215,24 @@ kept). In the graph: every named entity and printed text, plus the three
 largest generic ones; everything stays in `template_entities`. A new
 lexicon re-links without re-reading.
 
+**`kym_frame_image_entities`** (triggered by template entities) — reads each
+entry's own image (its `og:image`) the same way, with the same model, checks
+and linker, told what the entry is (its title, category and the start of its
+About) so it can name what it sees (`kg/frame_images.py`). The same regions
+reach the graph, linked from the frame itself with IMKG's `m4s:fromImage`:
+the edge the IMKG paper's SpongeBob query reads. ~6.6 s a frame, so a full
+pass is two days of the lab GPU and a month's new frames under an hour.
+
+**`kym_wikidata_statements`** (triggered by frame image entities) — reads every
+truthy, item-valued statement of every Wikidata item a frame's text, a
+template's image or a frame's image links to, from the dated dump the lexicon
+was built from, plus the labels of the statement values the lexicon cannot
+name (`kg/wikidata_statements.py`). `kym_kg` makes them edges named by their
+property (`P31`; `wdt:P31` in RDF): what the paper's people, films and gender
+queries read. Only items not yet read from that dump are read, so a monthly
+run reads the dump only when new items were linked (the first full run took
+about 3 h).
+
 **Reviewing the event layer.** The events are a model's reading, so the
 dashboard has one page that WRITES: `:8080/dashboard/` → *Review*. Draw the
 sample with `python -m modules.kg.review draw` and read the number back
@@ -230,38 +253,68 @@ saying so are warnings, not trivia.
 
 ```
 dags/
-  kym_{discovery,scrape,parse,entities,events,kg}_dag.py   orchestration only — no logic
-  kym_kg_validate_dag.py                   the RDF diff gate, its own DAG
+  kym_*_dag.py           orchestration only — no logic: discovery, scrape,
+                         parse, entities, entity_curation, events, templates,
+                         template_entities, frame_image_entities,
+                         wikidata_statements, kg
+  kym_kg_validate_dag.py the RDF diff gate, its own DAG
   modules/
     mongo_base.py        shared client/_id/UTC plumbing for the stores
     mongo_store.py       owns `urls`      ← kym_store.py is its facade
     dom_store.py         owns `doms`
     parse_store.py       owns `entries`, `parse_failures`
     event_store.py       owns `events`, `event_failures`
+    review_store.py      owns `event_reviews`
     entity_store.py      owns `entities`
+    entity_curation_store.py     owns `entity_curation`, `entity_curation_failures`
+    template_store.py    owns `imgflip_pages`, `imgflip_templates`,
+                         `frame_templates`, `template_assignments`
+    template_entity_store.py     owns `template_entities`, `template_entity_failures`
+    frame_image_store.py owns `frame_image_entities`, `frame_image_entity_failures`
+    wikidata_statement_store.py  owns `wikidata_statements`, `wikidata_labels`
     kg_store.py          owns `kg_nodes`, `kg_edges`, `kg_builds` (generational)
     summary_store.py     owns `run_summaries`
     kym_discover.py      pure discovery library + CLI   (no Mongo, no Airflow)
     scrapingant_client.py pure fetch library + CLI       (no Mongo, no Airflow)
     openwebui_client.py  lab LLM/embedding client + CLI  (no Mongo, no Airflow)
+    imgflip_client.py    polite imgflip HTTP client + CLI (no Mongo, no Airflow)
+    imgflip_parse.py     imgflip pages → plain dicts      (no Mongo, no Airflow)
+    template_search.py   glue: imgflip_client + template_store + kg/templates
     kym_parse.py         pure HTML → model + CLI         (no Mongo, no Airflow)
     kym_models.py        the entry schema and CorpusPolicy
-    kg/                  pure KG libraries (no Mongo, no Airflow):
+    kg/                  KG libraries — no Airflow, and no Mongo except inside
+                         a CLI's own import:
       build.py             one entry → nodes/edges — the only producer
       taxonomy.py          the curated entry-type taxonomy, validated
+      origin.py            the infobox `origin` → canonical platform concepts
+      tag_normalize.py     plural folding for tags
       census.py            frequency + co-occurrence over a corpus field
+      cooccurs.py          statistical coOccursWith edges from a census
+      siblings.py          sharesSameSeries edges between a series' frames
       serialize.py         one stream → graph.nt + RML CSVs + view CSVs
       rdf.py               canonical N-Triples serializer
+      loaders.py           generational load/publish/prune: Neo4j and Fuseki
       ntdiff.py            memory-bounded set diff of two .nt files
       metrics.py           IMKG-comparable graph statistics (pure stdlib)
       semantics.py         LLM definition-embedding analysis of types (CLI)
       events.py            LLM event extraction from Origin/Spread (+ CLI)
+      review.py            drawing and scoring the event review (CLI)
       wikidata.py          the Wikidata dump -> a local entity lexicon (+ CLI)
+      wikidata_statements.py  the linked items' statements, from that dump
       entities.py          NER + linking of title/tags/About to Wikidata (+ CLI)
-  kg_config/             curated KG inputs, tracked: the entry-type taxonomy,
-                         the YARRRML mapping, the MemeAtlas ontology
+      curation.py          which linked entities matter to the meme
+      entity_review.py     measuring entity curation (CLI)
+      templates.py         which imgflip templates fit a frame
+      visual.py            perceptual hashes for near-duplicate templates
+      template_review.py   contact sheets for template selections (CLI)
+      template_entities.py what a template's image shows, linked to Wikidata
+      frame_images.py      what an entry's own image shows, linked to Wikidata
+  kg_config/             curated KG inputs, tracked: the taxonomies and
+                         curation rules, the model output schemas, the
+                         YARRRML mapping, the MemeAtlas ontology
                          (memeatlas.ttl), MODEL.md (the IMKG crosswalk),
-                         the morph-kgc ini template
+                         the morph-kgc ini template, the Neo4j Browser
+                         stylesheet
   tests/                 pytest; conftest.py puts dags/ on sys.path
 dashboard/               Streamlit app, its own image
 ```
@@ -358,9 +411,11 @@ with the fit (`mk:templateScore`); what a template's image shows is linked
 with IMKG's `m4s:fromImage`, each region annotated with its box
 (`mk:boundingBox`, a Media Fragments literal) and the model that read it.
 
-**`kym_kg`** (triggered by template entities) — lifts `entries`, the events
-extracted from them and their Wikidata links, into a knowledge graph
-and publishes it in every representation at once:
+**`kym_kg`** (triggered by the statements stage) — lifts `entries`, the events
+extracted from them, their Wikidata links, their templates, what the
+templates' and their own images show, and the linked items' Wikidata
+statements, into a knowledge graph and publishes it in every representation
+at once:
 
 - **Neo4j** — the property graph: typed nodes (`Frame`, `TagConcept`, …)
   and relationships whose types are the edge vocabulary verbatim
