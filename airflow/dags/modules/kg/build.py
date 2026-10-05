@@ -175,6 +175,14 @@ from . import tag_normalize
 
 _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 
+# 7.1.0: the queries of IMKG's ESWC 2023 paper (Table 4) run. What a
+# frame's OWN image shows is read like a template's (kym_frame_image_entities,
+# the same vision model and linker) and linked with IMKG's m4s:fromImage
+# from the frame itself; and the truthy, item-valued Wikidata statements of
+# every linked item are imported, as IMKG imported them — an edge named by
+# its property (`P31`), wdt:P31 in RDF, one hop (kym_wikidata_statements,
+# added after the per-entry build by kym_kg's write_wikidata_statements).
+# MINOR: additive, and no term is minted.
 # 7.0.0: relatesToMeme is renamed citesMediaFrame — RDF mk:citesMediaFrame,
 # and its RML files cites_frame_*.csv — the counterpart of citesExternal,
 # naming what it points at with IMKG's class. A link to a KYM page that is
@@ -239,7 +247,7 @@ _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 # and origin promoted from frame literals / a literal string to concepts
 # (badge_concept/hasBadge, origin_concept/hasOrigin); tags plural-folded
 # (kg/tag_normalize.py). Bumping this makes the staleness gate rebuild.
-KG_BUILD_VERSION = "7.0.0"
+KG_BUILD_VERSION = "7.1.0"
 
 NODE_KINDS: tuple[str, ...] = (
     "frame", "frame_stub", "entry_type_concept", "tag_concept",
@@ -643,6 +651,7 @@ def build_nodes_and_edges(
         events: Sequence[dict] = (),
         entities: Sequence[dict] = (),
         templates: Sequence[dict] = (),
+        frame_images: Sequence[dict] = (),
 ) -> tuple[list[dict], list[dict]]:
     """One `entries` doc (as stored by parse_store) -> (nodes, edges).
 
@@ -678,6 +687,11 @@ def build_nodes_and_edges(
     kg_store.template_links_for for the record's shape. A template several
     frames selected is emitted by each, identically; the store keys nodes
     and edges by id, so it lands once.
+
+    ``frame_images`` (7.1.0) is what the frame's OWN image shows — the
+    in-graph mentions of modules/frame_image_store.py, the shape a
+    template's ``mentions`` have. They become ``fromImage`` from the frame,
+    IMKG's m4s:fromImage as IMKG used it.
     """
     url = entry.get("url")
     if not url:
@@ -888,6 +902,24 @@ def build_nodes_and_edges(
                 link_method=m.get("method"), depiction_kind=region.get("kind"),
                 bounding_box=media_fragment(region["box"]) if region.get("box") else None,
                 detected_by=m.get("model")))
+
+    # -- what the frame's own image shows (7.1.0) -------------------------------
+    # IMKG's m4s:fromImage on the media frame: one edge per item, one
+    # occurrence per region, the template layer's occurrence fields.
+    for m in frame_images:
+        qid = m.get("qid")
+        if not qid:
+            continue
+        node_id = wikidata_node_id(qid)
+        nodes.append(_compact({"id": node_id, "kind": "wikidata_entity",
+                               "qid": qid, "label": m.get("label"),
+                               "description": m.get("description")}))
+        region = m.get("region") or {}
+        edge("fromImage", node_id, _occurrence(
+            mention_text=m.get("text"), link_score=m.get("score"),
+            link_method=m.get("method"), depiction_kind=region.get("kind"),
+            bounding_box=media_fragment(region["box"]) if region.get("box") else None,
+            detected_by=m.get("model")))
 
     # -- images: the page's own, then those shown in its sections ------------
     # One page image: og:image. (Parser 1.7.0 dropped template_image_url,

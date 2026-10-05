@@ -57,7 +57,8 @@ from modules.kg.taxonomy import CONCEPT_EDGE_TYPES
 __all__ = [
     "EDGE_TYPE_TO_RML_FILE", "RML_NODE_FILES", "RML_LIST_FILES", "RESERVED_COLUMNS",
     "RML_EVENT_LIST_FILES", "RML_TEMPLATE_LIST_FILES",
-    "OCCURRENCE_RML_FILES",
+    "OCCURRENCE_RML_FILES", "FRAME_IMAGE_RML_FILE", "FRAME_IMAGE_OCCURRENCE_RML_FILE",
+    "is_frame_image_edge", "STATEMENTS_RML_FILE",
     "RML_CONCEPT_FILES", "PG_NODES_HEADER", "PG_EDGES_HEADER", "RML_DIR",
     "all_rml_files", "write_build", "load_manifest",
 ]
@@ -211,6 +212,28 @@ RESERVED_COLUMNS = frozenset({"subject", "predicate", "object", "graph"})
 ORIGIN_SUBTYPE_RML_FILE: tuple[str, tuple[str, str]] = (
     "origin_subtype_edges.csv", ("narrower", "broader"))
 
+# 7.1.0: fromImage has two subjects as well — a template (mk:template/<id>)
+# and, since 7.1.0, a frame (its KYM URL; what its own image shows, IMKG's
+# m4s:fromImage as IMKG used it). Two subject templates, so a frame's edges
+# and occurrences go to files of their own.
+FRAME_IMAGE_RML_FILE: tuple[str, tuple[str, str]] = (
+    "frame_image_edges.csv", ("url", "qid"))
+FRAME_IMAGE_OCCURRENCE_RML_FILE: tuple[str, tuple[str, ...]] = (
+    "frame_image_occurrences.csv", ("src", "dst") + OCCURRENCE_FIELDS)
+
+
+# 7.1.0: the linked items' Wikidata statements. Their edge types are data
+# (one per property, P31, P21, ...), so ONE file holds them all, with the
+# property as a column; the mapping makes the predicate from it (wdt:P31).
+STATEMENTS_RML_FILE: tuple[str, tuple[str, str, str]] = (
+    "wikidata_statements.csv", ("qid", "property", "value"))
+
+
+def is_frame_image_edge(edge: dict) -> bool:
+    """A fromImage edge whose subject is a frame, not a template."""
+    return edge.get("type") == "fromImage" and not str(edge.get("src", "")).startswith(
+        "template:")
+
 PG_NODES_HEADER = ("id", "label", "kind", "category", "status")
 PG_EDGES_HEADER = ("source", "target", "type")
 
@@ -231,7 +254,8 @@ def all_rml_files() -> set[str]:
             | set(RML_EVENT_LIST_FILES) | set(RML_TEMPLATE_LIST_FILES)
             | {name for name, _ in EDGE_TYPE_TO_RML_FILE.values()}
             | {name for name, _ in OCCURRENCE_RML_FILES.values()}
-            | {ORIGIN_SUBTYPE_RML_FILE[0]})
+            | {ORIGIN_SUBTYPE_RML_FILE[0], FRAME_IMAGE_RML_FILE[0],
+               FRAME_IMAGE_OCCURRENCE_RML_FILE[0], STATEMENTS_RML_FILE[0]})
 
 
 _ID_PREFIXES = ("type:", "tag:", "region:", "origin:", "badge:", "image:",
@@ -425,10 +449,25 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
         occ_writers = {
             etype: (name, files.open_csv(name, os.path.join(rml, name), header))
             for etype, (name, header) in OCCURRENCE_RML_FILES.items()}
+        frame_image_name, frame_image_header = FRAME_IMAGE_RML_FILE
+        frame_image_writer = files.open_csv(
+            frame_image_name, os.path.join(rml, frame_image_name), frame_image_header)
+        statements_name, statements_header = STATEMENTS_RML_FILE
+        statements_writer = files.open_csv(
+            statements_name, os.path.join(rml, statements_name), statements_header)
+        frame_occ_name, frame_occ_header = FRAME_IMAGE_OCCURRENCE_RML_FILE
+        frame_occ = (frame_occ_name, files.open_csv(
+            frame_occ_name, os.path.join(rml, frame_occ_name), frame_occ_header))
         seen_edges: set[tuple[str, str, str]] = set()
         for edge in edges():
             etype = edge.get("type")
             edges_by_type[etype or "(none)"] += 1
+            if rdf.is_statement_type(etype) and edge.get("src") and edge.get("dst"):
+                # 7.1.0: wd:Q.. -[P31]-> wd:Q.. -> (Q.., P31, Q..)
+                statements_writer.writerow([_rml_id(edge["src"]), etype,
+                                            _rml_id(edge["dst"])])
+                rows[statements_name] += 1
+                continue
             if etype not in writers or not edge.get("src") or not edge.get("dst"):
                 # coOccursWith always lands here now (5.0.1): not in
                 # EDGE_TYPE_TO_RML_FILE at all (tags are its only source,
@@ -442,14 +481,18 @@ def write_build(nodes: NodeSource, edges: EdgeSource, out_dir: str, *,
                 if key in seen_edges:
                     continue            # RDF is a set; so is each RML file
                 seen_edges.add(key)
+            frame_image = is_frame_image_edge(edge)
             if etype == "subTypeOf" and edge["src"].startswith("origin:"):
                 origin_subtype_writer.writerow(row)
                 rows[origin_subtype_name] += 1
+            elif frame_image:
+                frame_image_writer.writerow(row)
+                rows[frame_image_name] += 1
             else:
                 writers[etype].writerow(row)
                 rows[EDGE_TYPE_TO_RML_FILE[etype][0]] += 1
             if etype in occ_writers:
-                name, occ_writer = occ_writers[etype]
+                name, occ_writer = frame_occ if frame_image else occ_writers[etype]
                 for occ in edge.get("occurrences") or ():
                     occ_writer.writerow([*row, *(_cell(occ.get(f)) for f in OCCURRENCE_FIELDS)])
                     rows[name] += 1

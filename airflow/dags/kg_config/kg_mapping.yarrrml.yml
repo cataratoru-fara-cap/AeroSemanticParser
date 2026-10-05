@@ -93,6 +93,7 @@ prefixes:
   rdfs: "http://www.w3.org/2000/01/rdf-schema#"
   xsd: "http://www.w3.org/2001/XMLSchema#"
   imgflip: "https://imgflip.com/"
+  wdt: "http://www.wikidata.org/prop/direct/"
 
 mappings:
 
@@ -511,6 +512,26 @@ mappings:
     po:
       - [m4s:fromImage, http://www.wikidata.org/entity/$(qid)~iri]
 
+  # 7.1.0: the linked items' Wikidata statements, as IMKG imported them —
+  # truthy and item-valued (modules/kg/wikidata_statements.py). The
+  # predicate is Wikidata's own direct claim, made from the property column.
+  wikidata_statement:
+    sources:
+      - [rml_data/wikidata_statements.csv~csv]
+    subjects: http://www.wikidata.org/entity/$(qid)
+    po:
+      - [wdt:$(property), http://www.wikidata.org/entity/$(value)~iri]
+
+  # 7.1.0: what the FRAME's own image shows — IMKG's m4s:fromImage as IMKG
+  # used it (Google Vision on the KYM entry's image there, the lab's vision
+  # model here). Its own file: the subject is the frame's URL.
+  frame_from_image:
+    sources:
+      - [rml_data/frame_image_edges.csv~csv]
+    subjects: $(url)
+    po:
+      - [m4s:fromImage, http://www.wikidata.org/entity/$(qid)~iri]
+
   # ---- MemeAtlas: occurrences, as RDF-star annotations -----------------------
 
   cites_frame_occurrence_edge:
@@ -660,6 +681,26 @@ mappings:
       - [rml_data/entity_image_occurrences.csv~csv]
     subjects:
       - quotedNonAsserted: entity_image_occurrence_edge
+    po:
+      - [mk:mentionText, $(mention_text)]
+      - [mk:linkScore, $(link_score), xsd:decimal]
+      - [mk:linkMethod, $(link_method)]
+      - [mk:depictionKind, $(depiction_kind)]
+      - [mk:boundingBox, $(bounding_box)]
+      - [mk:detectedBy, $(detected_by)]
+
+  frame_image_occurrence_edge:
+    sources:
+      - [rml_data/frame_image_occurrences.csv~csv]
+    subjects: $(src)
+    po:
+      - [m4s:fromImage, http://www.wikidata.org/entity/$(dst)~iri]
+
+  frame_image_occurrence:
+    sources:
+      - [rml_data/frame_image_occurrences.csv~csv]
+    subjects:
+      - quotedNonAsserted: frame_image_occurrence_edge
     po:
       - [mk:mentionText, $(mention_text)]
       - [mk:linkScore, $(link_score), xsd:decimal]

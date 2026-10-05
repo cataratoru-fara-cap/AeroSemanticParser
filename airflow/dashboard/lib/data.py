@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -677,6 +678,21 @@ def _kg_group(coll, build_id: str, field: str) -> dict[str, int]:
     ])}
 
 
+# KG 7.1.0: a Wikidata statement is an edge named by its property (P31, P21,
+# ...), several hundred types; on a chart they are one.
+STATEMENTS_LABEL = "Wikidata statements"
+_STATEMENT_TYPE = re.compile(r"^P[1-9][0-9]*$")
+
+
+def fold_statement_types(by_type: dict[str, int]) -> dict[str, int]:
+    """Edge counts by type, the Wikidata properties summed into one entry."""
+    out: dict[str, int] = {}
+    for t, n in by_type.items():
+        key = STATEMENTS_LABEL if _STATEMENT_TYPE.match(t) else t
+        out[key] = out.get(key, 0) + n
+    return dict(sorted(out.items(), key=lambda kv: -kv[1]))
+
+
 @st.cache_data(ttl=CACHE_TTL)
 def kg_state() -> dict[str, Any]:
     nodes = _coll("MONGODB_KG_NODES_COLLECTION", "kg_nodes")
@@ -709,7 +725,7 @@ def kg_state() -> dict[str, Any]:
     out["manifest_counts"] = (doc.get("manifest") or {}).get("counts") or {}
     out["validation"] = doc.get("validation")
     out["nodes_by_kind"] = _kg_group(nodes, bid, "kind")
-    out["edges_by_type"] = _kg_group(edges, bid, "type")
+    out["edges_by_type"] = fold_statement_types(_kg_group(edges, bid, "type"))
     out["nodes"] = sum(out["nodes_by_kind"].values())
     out["edges"] = sum(out["edges_by_type"].values())
     out["frames"] = out["nodes_by_kind"].get("frame", 0)

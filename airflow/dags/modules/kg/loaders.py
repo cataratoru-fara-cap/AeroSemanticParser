@@ -64,7 +64,7 @@ from typing import Any, Iterable, Iterator
 
 from modules.kg.build import EDGE_TYPES, NODE_KINDS, OCCURRENCE_FIELDS
 from modules.kg.cooccurs import COOCCURS_EDGE_TYPES
-from modules.kg.rdf import PREFIXES
+from modules.kg.rdf import PREFIXES, is_statement_type
 from modules.kg.siblings import SIBLING_EDGE_TYPES
 from modules.kg.taxonomy import CONCEPT_EDGE_TYPES
 
@@ -311,7 +311,12 @@ def neo4j_load(driver, cfg: Neo4jConfig, build_id: str,
     for edge in edges:
         etype = edge.get("type")
         if etype not in by_type:
-            raise LoaderError(f"edge type {etype!r} outside the vocabulary")
+            # 7.1.0: a Wikidata statement is a relationship named by its
+            # property (P31) — the vocabulary IS Wikidata's, so it is checked
+            # by shape, and only that shape: the type is spliced into Cypher.
+            if not is_statement_type(etype):
+                raise LoaderError(f"edge type {etype!r} outside the vocabulary")
+            by_type[etype] = []
         by_type[etype].append({"suid": f"{build_id}|{edge['src']}",
                                "duid": f"{build_id}|{edge['dst']}",
                                "props": edge_properties(edge)})

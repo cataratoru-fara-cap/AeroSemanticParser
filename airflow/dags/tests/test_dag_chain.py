@@ -1,7 +1,8 @@
 """The monthly chain: which DAG triggers which, and with what.
 
     kym_parse -> kym_entities -> kym_entity_curation -> kym_events
-              -> kym_templates -> kym_template_entities -> kym_kg
+              -> kym_templates -> kym_template_entities
+              -> kym_frame_image_entities -> kym_wikidata_statements -> kym_kg
 
 Each stage selects only what is missing or stale, so the chain does the
 month's new and changed frames and nothing else — as long as no link of it
@@ -21,7 +22,8 @@ except ImportError:  # pragma: no cover - the venv has it
     HAVE_AIRFLOW = False
 
 CHAIN = ["kym_parse", "kym_entities", "kym_entity_curation", "kym_events",
-         "kym_templates", "kym_template_entities", "kym_kg"]
+         "kym_templates", "kym_template_entities", "kym_frame_image_entities",
+         "kym_wikidata_statements", "kym_kg"]
 
 
 def build(dag_id: str):
@@ -83,6 +85,24 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(conf_task.python_callable(params={}),
                          {"batch_size": 0, "trigger_kg": False})
         self.assertIs(dag.params["trigger_kg"], False)
+
+    def test_the_graph_stages_carry_trigger_kg_on_to_kym_kg(self):
+        # 7.1.0: from the template reader, through the frames' own images and
+        # the Wikidata statements; each link runs only when trigger_kg is set,
+        # so a hand-started run of any of them never builds the graph.
+        expected = {"kym_template_entities": {"batch_size": 0, "trigger_kg": True},
+                    "kym_frame_image_entities": {"trigger_kg": True}}
+        for dag_id in ("kym_template_entities", "kym_frame_image_entities",
+                       "kym_wikidata_statements"):
+            dag = self.dags[dag_id]
+            (t,) = triggers(dag)
+            with self.subTest(dag=dag_id):
+                self.assertIs(dag.params["trigger_kg"], False)
+                self.assertIn("should_trigger_kg", t.upstream_task_ids)
+                if dag_id in expected:
+                    self.assertEqual(t.conf, expected[dag_id])
+                    nxt = self.dags[t.trigger_dag_id]
+                    self.assertTrue(set(t.conf) <= set(nxt.params.keys()))
 
 
 if __name__ == "__main__":

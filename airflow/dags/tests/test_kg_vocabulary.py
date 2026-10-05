@@ -74,6 +74,7 @@ class MappingCrosswalkTests(unittest.TestCase):
         cls.predicates: set[str] = set()
         cls.constant_classes: set[str] = set()
         cls.class_templates: set[str] = set()
+        cls.predicate_templates: set[str] = set()
         for rule in cls.doc["mappings"].values():
             for po in rule.get("po") or []:
                 pred, obj = po[0], po[1]
@@ -82,6 +83,8 @@ class MappingCrosswalkTests(unittest.TestCase):
                         cls.class_templates.add(obj.split("$(", 1)[0])
                     else:
                         cls.constant_classes.add(expand(obj, cls.prefixes))
+                elif "$(" in pred:
+                    cls.predicate_templates.add(expand(pred, cls.prefixes).split("$(", 1)[0])
                 else:
                     cls.predicates.add(expand(pred, cls.prefixes))
 
@@ -95,6 +98,11 @@ class MappingCrosswalkTests(unittest.TestCase):
                          "mapping predicates rdf.py never emits")
         self.assertEqual(ours - self.predicates, set(),
                          "rdf.py predicates the mapping never emits")
+
+    def test_the_only_data_driven_predicates_are_wikidata_statements(self):
+        # 7.1.0: wdt:$(property), the linked items' statements; rdf.py
+        # emits that namespace for statement edges and nothing else from data.
+        self.assertEqual(self.predicate_templates, {rdf.WDT})
 
     def test_constant_classes_are_exactly_rdf_pys(self):
         self.assertEqual(self.constant_classes, rdf.constant_classes())
@@ -124,6 +132,10 @@ class MappingCrosswalkTests(unittest.TestCase):
                         in serialize.OCCURRENCE_RML_FILES.values()})
         origin_subtype_name, origin_subtype_header = serialize.ORIGIN_SUBTYPE_RML_FILE
         headers[origin_subtype_name] = origin_subtype_header
+        for name, header in (serialize.FRAME_IMAGE_RML_FILE,
+                             serialize.FRAME_IMAGE_OCCURRENCE_RML_FILE,
+                             serialize.STATEMENTS_RML_FILE):  # 7.1.0
+            headers[name] = header
         for rule_name, rule in self.doc["mappings"].items():
             header = headers[source_file(rule)]
             subjects = rule["subjects"] if isinstance(rule["subjects"], str) else ""

@@ -179,6 +179,20 @@ class Neo4jLoadTests(unittest.TestCase):
                  | set(SIBLING_EDGE_TYPES)]
         self.assertEqual(L.neo4j_load(d, CFG, BUILD, [], edges)["edges"], len(edges))
 
+    def test_a_wikidata_statement_loads_as_a_relationship_named_by_its_property(self):
+        # 7.1.0: the paper's (person)-[:P31]->(:Q5) reads as Cypher.
+        d = StubDriver()
+        L.neo4j_load(d, CFG, BUILD, [], [{"src": "wd:Q22686", "type": "P31", "dst": "wd:Q5"}])
+        (cypher, _params), = [c for c in d.calls if "`P31`" in c[0]]
+        self.assertIn("MERGE (a)-[e:`P31`", cypher)
+
+    def test_a_type_that_only_looks_close_is_still_refused(self):
+        # The type is spliced into Cypher, so only the exact shape passes.
+        for bad in ("P31`]->() DETACH DELETE (a", "P0", "Px", "p31"):
+            with self.assertRaises(L.LoaderError, msg=bad):
+                L.neo4j_load(StubDriver(), CFG, BUILD, [],
+                             [{"src": F1, "type": bad, "dst": F2}])
+
     def test_cooccurs_with_loads_for_both_type_and_tag_prefixed_uids(self):
         # No RDF restriction in the property graph -- kg/rdf.py's tag:
         # exclusion is an RDF-path-only guard, not a loader-level one.

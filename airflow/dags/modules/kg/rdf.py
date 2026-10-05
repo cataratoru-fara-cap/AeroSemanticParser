@@ -113,6 +113,7 @@ __all__ = [
     "PROVENANCE_PREDICATES", "escape_literal",
     "concept_pref_label", "category_class", "node_iri", "edge_object",
     "quoted", "all_predicates", "constant_classes", "iter_triples", "write_nt",
+    "WDT", "is_statement_type",
 ]
 
 PREFIXES: dict[str, str] = {
@@ -127,6 +128,10 @@ PREFIXES: dict[str, str] = {
     # 6.1.0: the linked entities' own IRIs (kg/wikidata.WD_ENTITY). Objects
     # only — MemeAtlas never uses a wd: term as a predicate or a class.
     "wd": "http://www.wikidata.org/entity/",
+    # 7.1.0: Wikidata's direct-claim ("truthy") predicates, for the linked
+    # items' statements (kg/wikidata_statements.py) — Wikidata's own terms,
+    # so the statements read as in Wikidata and federate with it as they are.
+    "wdt": "http://www.wikidata.org/prop/direct/",
     # 6.4.0: IMKG's imgflip vocabulary (imgflip/mappings/imgflip.yaml in its
     # repository), for imgflip:templateId — the key IMKG's 1.3M imgflip memes
     # carry, so the two graphs join on it.
@@ -134,6 +139,7 @@ PREFIXES: dict[str, str] = {
 }
 M4S, MK, KYM, KYMT = (PREFIXES[p] for p in ("m4s", "mk", "kym", "kymt"))
 WD = PREFIXES["wd"]
+WDT = PREFIXES["wdt"]
 IMGFLIP = PREFIXES["imgflip"]
 SKOS, RDFS, RDF, XSD = (PREFIXES[p] for p in ("skos", "rdfs", "rdf", "xsd"))
 
@@ -535,6 +541,13 @@ def iter_triples(nodes: Iterable[dict], edges: Iterable[dict], *,
     for edge in edges:
         etype = edge.get("type")
         if etype not in EDGE_PREDICATES:
+            # 7.1.0: a Wikidata statement, named by its property — the one
+            # edge type whose predicate is data (wdt:P31, wdt:P21, ...).
+            if is_statement_type(etype):
+                line = emit(f"<{node_iri(edge['src'])}> <{WDT}{etype}> "
+                            f"<{node_iri(edge['dst'])}> .")
+                if line:
+                    yield line
             # coOccursWith always lands here (not a recognized predicate;
             # property-graph-only, see the module docstring) — same path
             # as any other type this module doesn't know.
@@ -573,6 +586,13 @@ def iter_triples(nodes: Iterable[dict], edges: Iterable[dict], *,
             line = emit(f"<{CURRENT_BUILD}> <{MK}{local}> {_literal(value, None)} .")
             if line:
                 yield line
+
+
+def is_statement_type(edge_type: str | None) -> bool:
+    """A Wikidata statement edge (``P31``); kg/wikidata_statements.py's
+    rule, restated so this module imports nothing that reads a dump."""
+    return bool(edge_type) and edge_type[0] == "P" and edge_type[1:].isdigit() \
+        and edge_type[1] != "0"
 
 
 def write_nt(nodes: Iterable[dict], edges: Iterable[dict], path: str, *,

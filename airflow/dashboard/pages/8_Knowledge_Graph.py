@@ -266,9 +266,11 @@ else:
                                            value_name="count"),
                         config=PLOTLY_CONFIG, width="stretch")
     with tab_edges:
-        types = sorted({t for r in runs for t in (r["summary"].get("graph", {})
-                                                   .get("edges_by_type") or {})})
-        series = {t: data.scalar_series(runs, f"graph.edges_by_type.{t}") for t in types}
+        by_type = [(r["created_at"], data.fold_statement_types(
+            r["summary"].get("graph", {}).get("edges_by_type") or {})) for r in runs]
+        types = sorted({t for _when, counts in by_type for t in counts})
+        series = {t: [(when, float(counts[t])) for when, counts in by_type if t in counts]
+                  for t in types}
         series = {k: v for k, v in series.items() if v}
         st.plotly_chart(charts.trend_lines(series, pal, value_name="edges"),
                         config=PLOTLY_CONFIG, width="stretch")

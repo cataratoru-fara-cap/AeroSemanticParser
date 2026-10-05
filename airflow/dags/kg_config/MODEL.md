@@ -64,7 +64,8 @@ Neo4j and Mongo) to its RDF term.
 | edge `fromTags` (6.1.0) | `m4s:fromTags` → a Wikidata item | `tags`, each looked up whole |
 | edge `hasTemplate`, inverse (6.4.0) | `m4s:templateOf` (template → frame; IMKG's mapping) | `frame_templates.selected` (see [Templates](#templates-imgflip-beyond-imkg-640)) |
 | `template.template_id` (6.4.0) | `imgflip:templateId` (a plain literal, as IMKG writes it) | imgflip's id |
-| edge `fromImage` (6.4.0) | `m4s:fromImage` → a Wikidata item | what a template's image shows (`template_entities`) |
+| edge `fromImage` (6.4.0) | `m4s:fromImage` → a Wikidata item | what a template's image shows (`template_entities`); since 7.1.0 also from the frame, what the entry's own image shows (`frame_image_entities`) |
+| edge `P31`, `P21`, … (7.1.0) | `wdt:P31`, `wdt:P21`, … (Wikidata's own direct claims) between two Wikidata items | the linked items' truthy statements (`wikidata_statements`; see [Frame images and statements](#frame-images-and-wikidata-statements-710)) |
 
 ### MemeAtlas extensions
 
@@ -356,6 +357,15 @@ inside morph-kgc). It is minted once, in `kg/events.py`, and stored.
    1,945 `frame_stub`s for them. A link is `citesMediaFrame` only when its
    path is an entry's (`build._is_kym_entry`); every other page is
    `citesExternal`.
+13. **Wikidata statements reach one hop out from the linked items**
+   (7.1.0). IMKG kept a statement between two items only when both were
+   already nodes of its graph; MemeAtlas keeps every truthy statement of
+   every linked item, and makes its value a node. So `P31 → Q5` (human) or
+   `P21 → Q6581097` (male) is in the graph whether or not some frame links
+   Q5 or Q6581097 — which is what the paper's people and gender queries
+   need, and what IMKG got only because those items happened to be linked.
+   The statement edges are left out of the IMKG-comparable core metrics;
+   the full scope counts them, as IMKG's full graph counts its WD subset.
 
 ## Events: drawn from EventKG, not copied from it
 
@@ -390,8 +400,9 @@ QIDs, and emitted `m4s:fromAbout` / `m4s:fromTags` from the frame to each
 (`kym/tags/spotlight.py`, `kym/KYM.Enrichment.ipynb`,
 `kym/mappings/kym.media.frames.textual.enrichment.yaml` in its
 repository). It joined the frame *itself* to Wikidata on KYM's own ID, and
-pulled Wikidata statements between the linked items from downloaded dumps
-through KGTK.
+pulled Wikidata statements from downloaded dumps through KGTK: every
+statement to or from a meme's own item, and those between two items
+already in its graph.
 
 | IMKG | MemeAtlas 6.1.0 |
 |---|---|
@@ -400,8 +411,8 @@ through KGTK.
 | Object `https://www.wikidata.org/wiki/Q…` | **Changed** to the entity IRI — Deliberate difference 7 |
 | Frame ↔ item on KYM's numeric ID (P6760) | **Changed** to the KYM slug (P13484): the numeric ID is not on the page and the parser does not extract it; the slug is the URL's last segment. The item found this way is the title's entity at score 1.0 (`mk:linkMethod "kym_id"`), and wins every other span that could name it |
 | Confidence threshold, not recorded | **Recorded** per mention (`mk:linkScore`, `mk:linkMethod`, `mk:nerLabel`, RDF-star on the quoted edge) |
-| 1-hop Wikidata statements between linked items (KGTK) | **Not in 6.1.0** — see Not yet modelled |
-| Google Vision labels → `m4s:fromImage` | **Not in 6.1.0** |
+| Wikidata statements (KGTK) | **Taken in 7.1.0**, from each linked item, one hop — see [Frame images and statements](#frame-images-and-wikidata-statements-710) |
+| Google Vision labels → `m4s:fromImage` | **Taken in 7.1.0**, with the lab's vision model on the entry's own image |
 
 How a link is made (`kg/entities.py` has the reasoning at length):
 
@@ -517,7 +528,7 @@ described the templates themselves, and never read their images.
 | `m4s:templateOf` (mapping) / `m4s:sameAs` (data) | `m4s:templateOf` and `mk:hasTemplate` — Deliberate difference 8 |
 | One frame per template | Several — Deliberate difference 9 |
 | Template IRI = its imgflip page | `mk:template/<id>` + `imgflip:templateId` + `mk:imgflipPage` — Deliberate difference 10 |
-| Google Vision on the KYM frame image → `m4s:fromImage` | The lab's vision model (qwen3-vl:32b) on the **template** image → `m4s:fromImage`, each region annotated with what it depicts, where (`mk:boundingBox`) and which model read it (`mk:detectedBy`) |
+| Google Vision on the KYM frame image → `m4s:fromImage` | The lab's vision model (qwen3-vl:32b) on the **template** image → `m4s:fromImage`, each region annotated with what it depicts, where (`mk:boundingBox`) and which model read it (`mk:detectedBy`); since 7.1.0 on the frame image too |
 
 Like events and entity links, `m4s:fromImage` here is **derived** — a
 model's reading. Only every named entity, printed text, and the three
@@ -530,15 +541,55 @@ not kept, imgflip popularity, and the featured flag (property graph only).
 after `mk:event/<id>`, and falls under gap 01 (the `mk:` namespace needs
 IMKG's authors' agreement) like every other `mk:` term.
 
+## Frame images and Wikidata statements (7.1.0)
+
+Three of the four use cases in IMKG's ESWC 2023 paper (Table 4) read two
+things MemeAtlas did not have until 7.1.0: what a frame's own image shows,
+and the Wikidata statements of the items the graph links to. 7.1.0 adds
+both, so the paper's queries run on MemeAtlas as written — `KG_QUERIES.md`
+has them, with both graphs' answers.
+
+**The frame's own image** (`kym_frame_image_entities`, `kg/frame_images.py`).
+IMKG sent each KYM frame image to Google Vision and linked what it found
+with `m4s:fromImage`. MemeAtlas reads the entry's `og:image` with the
+lab's vision model, the same reader and linker as the template images
+(6.4.0), told what the entry is (its title, category and the start of its
+About) so it can name what it sees; the same regions reach the graph (every
+named one, every printed text that links, the three largest generic ones),
+annotated the same way. The edge is from the frame itself, as IMKG has it,
+so `(h)-[:m4s:fromImage]->(:Q83279)` (memes showing SpongeBob) matches
+without going through a template.
+
+| IMKG | MemeAtlas 7.1.0 |
+|---|---|
+| Google Vision web entities on the frame image | qwen3-vl:32b, regions grounded and linked to the local lexicon (`kg/template_entities.py`'s rules) |
+| No score, no region | `mk:linkScore`, `mk:linkMethod`, `mk:depictionKind`, `mk:boundingBox`, `mk:detectedBy` per region |
+
+**Wikidata statements** (`kym_wikidata_statements`,
+`kg/wikidata_statements.py`). Every truthy, item-valued statement of every
+item a frame's text, a template's image or a frame's image links to, read
+from the same dated dump as the lexicon. Truthy is Wikidata's own rule for
+its `wdt:` predicates: per property the preferred-rank statements if there
+are any, else the normal-rank ones; never a deprecated one. Values become
+`wikidata_entity` nodes, named from the lexicon or (for items without a
+Wikipedia article) from the dump; their own statements are not read. In
+the property graph the edge is named by its property (`P31`), so a query
+reads like the paper's Kypher; in RDF it is `wdt:P31`.
+
+| IMKG (`KGTK Wikidata Enrichment.ipynb`) | MemeAtlas 7.1.0 |
+|---|---|
+| Statements from a meme's own item | Taken: it is a linked item (`own_item`) |
+| Statements *to* a meme's own item, `(x) -[P144]-> (meme)` | **Not taken** — see Not yet modelled |
+| Statements between two items already in the graph | Taken where the subject is a linked item, and widened: every statement from a linked item, wherever its value is (Deliberate difference 13) |
+| KGTK's `claims.wikibase-item`, as it is | Truthy statements only |
+
 ## Not yet modelled
 
-- **The frame's own image entities** (IMKG's actual `m4s:fromImage` use:
-  Google Vision on the KYM frame image). 6.4.0 reads imgflip templates; the
-  same extractor could read each frame's og:image — about 18k more calls.
-- **Wikidata statements between linked items.** IMKG added the Wikidata
-  edges between the items in its graph (KGTK over dumps). The lexicon has
-  P31/P279 already; the rest would need the claims table from the same
-  dump, and a decision about which properties are worth importing.
+- **Incoming Wikidata statements to a meme's own item** (IMKG's
+  "memes as objects": `(x) -[P144 based on]-> (meme)`). The import reads
+  only the wanted items' lines of the dump; finding statements that point
+  *at* an item means parsing every item in it. None of the paper's
+  queries needs them.
 - **Entities from Origin/Spread, and event actors as items.** Only title,
   tags and About are linked; `mk:eventActor` stays a literal.
 

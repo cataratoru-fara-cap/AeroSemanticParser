@@ -541,8 +541,10 @@ def compute_metrics(nodes: dict, edges: list, triple_equivalent: bool = False,
 
 def layer_metrics(nodes: dict, edges: list, top_k: int = 20) -> dict:
     """What the layers beyond the IMKG core add, per frame (6.x): Wikidata
-    items linked from the frame's text (6.1.0, curated in 6.5.0) and from its
-    templates' images (6.4.0), imgflip templates, events (6.0.0). Pure."""
+    items linked from the frame's text (6.1.0, curated in 6.5.0), from its
+    templates' images (6.4.0) and from its own image (7.1.0), imgflip
+    templates, events (6.0.0), and the linked items' Wikidata statements
+    (7.1.0). Pure."""
     kind = {nid: n.get("kind") for nid, n in nodes.items()}
     frames = {nid for nid, k in kind.items() if k == "frame"}
     templates = {nid for nid, k in kind.items() if k == "template"}
@@ -551,6 +553,9 @@ def layer_metrics(nodes: dict, edges: list, top_k: int = 20) -> dict:
     linked_by_field: dict[str, set[str]] = {t: set() for t in ENTITY_FRAME_EDGES}
     entity_frames: dict[str, set[str]] = defaultdict(set)
     entity_templates: dict[str, set[str]] = defaultdict(set)
+    entity_frame_images: dict[str, set[str]] = defaultdict(set)
+    statements_by_property: Counter[str] = Counter()
+    items_with_statements: set[str] = set()
     frame_templates: dict[str, set[str]] = defaultdict(set)
     template_frames: dict[str, set[str]] = defaultdict(set)
     events_per_frame: Counter[str] = Counter()
@@ -560,19 +565,25 @@ def layer_metrics(nodes: dict, edges: list, top_k: int = 20) -> dict:
             linked_by_field[typ].add(src)
             entity_frames[dst].add(src)
         elif typ == "fromImage":
-            entity_templates[dst].add(src)
+            # A template's image (6.4.0) or, 7.1.0, the frame's own.
+            (entity_frame_images if kind.get(src) == "frame" else entity_templates)[dst].add(src)
         elif typ == "hasTemplate":
             frame_templates[src].add(dst)
             template_frames[dst].add(src)
         elif typ == "hasEvent":
             events_per_frame[src] += 1
+        elif typ[:1] == "P" and typ[1:].isdigit():
+            statements_by_property[typ] += 1
+            items_with_statements.add(src)
 
     with_entity = set().union(*linked_by_field.values()) & frames
     with_template = set(frame_templates) & frames
     templates_reading = set().union(*entity_templates.values())  # templates showing an item
     with_template_entity = {f for f in with_template if frame_templates[f] & templates_reading}
     with_events = set(events_per_frame) & frames
-    from_text, from_images = set(entity_frames), set(entity_templates)
+    with_image_entity = set().union(*entity_frame_images.values()) & frames
+    from_text = set(entity_frames)
+    from_images = set(entity_templates) | set(entity_frame_images)
     n_frames = max(len(frames), 1)
 
     def pct(k: int, n: int = n_frames) -> float:
@@ -596,6 +607,8 @@ def layer_metrics(nodes: dict, edges: list, top_k: int = 20) -> dict:
         "frames_with_template_pct": pct(len(with_template)),
         "frames_with_template_entity": len(with_template_entity),
         "frames_with_template_entity_pct": pct(len(with_template_entity)),
+        "frames_with_image_entity": len(with_image_entity),
+        "frames_with_image_entity_pct": pct(len(with_image_entity)),
         "frames_with_events": len(with_events),
         "frames_with_events_pct": pct(len(with_events)),
         "frames_with_all_three": len(with_entity & with_template & with_events),
@@ -615,6 +628,13 @@ def layer_metrics(nodes: dict, edges: list, top_k: int = 20) -> dict:
         "top_entities_by_frames": top(entity_frames, "frames"),
         "top_entities_by_templates": top(entity_templates, "templates"),
         "top_templates_by_frames": top(template_frames, "frames"),
+        "top_entities_by_frame_images": top(entity_frame_images, "frames"),
+        "wikidata_statements": sum(statements_by_property.values()),
+        "wikidata_statement_properties": len(statements_by_property),
+        "wikidata_items_with_statements": len(items_with_statements),
+        "top_statement_properties": [
+            {"property": p, "statements": n}
+            for p, n in statements_by_property.most_common(top_k)],
     }
 
 
@@ -728,6 +748,8 @@ def format_report(m: dict) -> str:
             ("with a template", f"{lay['frames_with_template']:,} ({lay['frames_with_template_pct']}%)"),
             ("  whose image shows an item", f"{lay['frames_with_template_entity']:,} "
                                             f"({lay['frames_with_template_entity_pct']}%)"),
+            ("whose own image shows an item", f"{lay['frames_with_image_entity']:,} "
+                                              f"({lay['frames_with_image_entity_pct']}%)"),
             ("with events", f"{lay['frames_with_events']:,} ({lay['frames_with_events_pct']}%)"),
             ("with all three / none", f"{lay['frames_with_all_three']:,} / {lay['frames_with_none']:,}"),
             ("events per frame mean / median", f"{lay['events_per_frame_mean']} / "
@@ -740,6 +762,9 @@ def format_report(m: dict) -> str:
             ("templates", f"{lay['templates']:,}"),
             ("  showing an item", f"{lay['templates_with_entity']:,} ({lay['templates_with_entity_pct']}%)"),
             ("  kept by more than one frame", f"{lay['templates_shared_by_frames']:,}"),
+            ("Wikidata statements", f"{lay['wikidata_statements']:,} over "
+                                    f"{lay['wikidata_statement_properties']:,} properties, "
+                                    f"{lay['wikidata_items_with_statements']:,} items"),
         ]
         for label, val in rows:
             add(f"  {label:38} {val}")
@@ -749,6 +774,9 @@ def format_report(m: dict) -> str:
         add("top Wikidata items by templates showing them:")
         for row in lay["top_entities_by_templates"][:10]:
             add(f"  {row['templates']:>8,}  {row['label']}")
+        add("top Wikidata items by frames whose own image shows them:")
+        for row in lay["top_entities_by_frame_images"][:10]:
+            add(f"  {row['frames']:>8,}  {row['label']}")
     return "\n".join(L)
 
 

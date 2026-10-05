@@ -89,7 +89,7 @@ class VocabularyTests(unittest.TestCase):
         self.assertLessEqual(set(build.OCCURRENCE_EDGE_TYPES), set(build.EDGE_TYPES))
 
     def test_version_is_stamped(self):
-        self.assertEqual(build.KG_BUILD_VERSION, "7.0.0")
+        self.assertEqual(build.KG_BUILD_VERSION, "7.1.0")
 
     def test_emitted_kinds_types_and_occurrence_fields_stay_in_the_vocabulary(self):
         nodes, edges = build.build_nodes_and_edges(entry(

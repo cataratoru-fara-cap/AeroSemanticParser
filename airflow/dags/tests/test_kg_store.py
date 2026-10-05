@@ -293,7 +293,32 @@ class StalenessTests(unittest.TestCase):
               "entities_curation_pending": 12,
               "entities_curation_versions": ["a1b2c3d4e5f60718"],
               "entities_judge_models": ["mistral-small3.2:24b"],
-              "entities_max_curated_at": "2026-09-29T09:00:00+00:00"}
+              "entities_max_curated_at": "2026-09-29T09:00:00+00:00",
+              # 6.4.0: templates and what their images show.
+              "templates_frames": 15, "templates_links": 18,
+              "templates_selection_digest": "9c1e", "templates_versions": ["1.0.0"],
+              "templates_detailed": 12, "templates_max_selected_at": "2026-10-01T09:00:00+00:00",
+              "template_entities_templates": 12, "template_entities_in_graph": 30,
+              "template_entities_lexicons": ["5d2737e5595693eb"],
+              "template_entities_prompts": ["1"],
+              "template_entities_models": ["qwen3-vl:32b"],
+              "template_entities_max_linked_at": "2026-10-01T10:00:00+00:00",
+              # 7.1.0: what each frame's own image shows, and the linked
+              # items' Wikidata statements — a new dump moves only the
+              # dumps stamp, and must still rebuild.
+              "frame_images_frames": 20, "frame_images_in_graph": 41,
+              "frame_images_lexicons": ["5d2737e5595693eb"],
+              "frame_images_prompts": ["1"], "frame_images_models": ["qwen3-vl:32b"],
+              "frame_images_max_linked_at": "2026-10-05T09:00:00+00:00",
+              "wikidata_statement_items": 90, "wikidata_statements": 1100,
+              "wikidata_statement_dumps": ["wikidata-20260914-all.json.gz"],
+              "wikidata_statement_versions": ["1.0.0"],
+              "wikidata_statements_max_extracted_at": "2026-10-05T10:00:00+00:00"}
+
+    def test_every_layer_stamp_is_compared(self):
+        for keys in (ks.TEMPLATE_STAMP_KEYS, ks.FRAME_IMAGE_STAMP_KEYS,
+                     ks.WIKIDATA_STATEMENT_STAMP_KEYS):
+            self.assertLessEqual(set(keys), set(self.STAMPS))
 
     def test_every_event_stamp_is_compared(self):
         # The fixture above and the store's own list must not drift apart.

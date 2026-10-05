@@ -269,6 +269,27 @@ class LayerTests(unittest.TestCase):
         self.assertEqual(lay["top_entities_by_frames"][0],
                          {"id": "wd:Q2", "label": "two", "frames": 2})
 
+    def test_a_frames_own_image_and_statements(self):
+        nodes, edges = layered_graph()
+        nodes["wd:Q5"] = node("wd:Q5", "wikidata_entity", "human")
+        edges += [edge("f3", "fromImage", "wd:Q3"),
+                  edge("f3", "fromImage", "wd:Q1"),
+                  edge("wd:Q2", "P31", "wd:Q5"),
+                  edge("wd:Q3", "P31", "wd:Q5"),
+                  edge("wd:Q3", "P21", "wd:Q1")]
+        lay = metrics.layer_metrics(nodes, edges)
+        self.assertEqual(lay["frames_with_image_entity"], 1)               # f3
+        self.assertEqual(lay["templates_with_entity"], 1)                  # still t1 only
+        self.assertEqual(lay["top_entities_by_templates"][0]["templates"], 1)
+        self.assertEqual(lay["top_entities_by_frame_images"][0],
+                         {"id": "wd:Q1", "label": "one", "frames": 1})
+        self.assertEqual((lay["entities_from_text_only"], lay["entities_from_images_only"],
+                          lay["entities_from_both"]), (0, 1, 2))
+        self.assertEqual((lay["wikidata_statements"], lay["wikidata_statement_properties"],
+                          lay["wikidata_items_with_statements"]), (3, 2, 2))
+        self.assertEqual(lay["top_statement_properties"][0],
+                         {"property": "P31", "statements": 2})
+
     def test_a_core_graph_has_no_layers(self):
         lay = metrics.layer_metrics(*small_graph())
         self.assertEqual((lay["frames_with_entity_link"], lay["templates"],

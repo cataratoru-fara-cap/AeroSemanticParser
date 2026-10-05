@@ -91,7 +91,9 @@ __all__ = [
     "mark_verified", "record_validation", "events_for", "extraction_stamps",
     "EVENT_STAMP_KEYS", "entity_links_for", "linking_stamps",
     "ENTITY_STAMP_KEYS", "template_links_for", "template_stamps",
-    "TEMPLATE_STAMP_KEYS",
+    "TEMPLATE_STAMP_KEYS", "frame_image_links_for", "frame_image_stamps",
+    "FRAME_IMAGE_STAMP_KEYS", "wikidata_statements_for", "wikidata_statement_stamps",
+    "WIKIDATA_STATEMENT_STAMP_KEYS",
 ]
 
 # The pointer document's _id. A build_id can never collide with it because
@@ -164,6 +166,19 @@ TEMPLATE_STAMP_KEYS: tuple[str, ...] = (
     "template_entities_templates", "template_entities_in_graph",
     "template_entities_lexicons", "template_entities_prompts",
     "template_entities_models", "template_entities_max_linked_at",
+)
+
+# 7.1.0: what the frames' own images show (frame_image_store).
+FRAME_IMAGE_STAMP_KEYS: tuple[str, ...] = (
+    "frame_images_frames", "frame_images_in_graph", "frame_images_lexicons",
+    "frame_images_prompts", "frame_images_models", "frame_images_max_linked_at",
+)
+
+# 7.1.0: the linked items' Wikidata statements (wikidata_statement_store). A
+# new dump or a new import rule re-extracts every item, and moves these.
+WIKIDATA_STATEMENT_STAMP_KEYS: tuple[str, ...] = (
+    "wikidata_statement_items", "wikidata_statements", "wikidata_statement_dumps",
+    "wikidata_statement_versions", "wikidata_statements_max_extracted_at",
 )
 
 
@@ -307,7 +322,8 @@ class KGStore(MongoStoreBase):
                     "origin_taxonomy_version", "tag_denylist_version",
                     "entries_count", "parser_versions",
                     "corpus_policy_versions", "max_parsed_at",
-                    *EVENT_STAMP_KEYS, *ENTITY_STAMP_KEYS, *TEMPLATE_STAMP_KEYS):
+                    *EVENT_STAMP_KEYS, *ENTITY_STAMP_KEYS, *TEMPLATE_STAMP_KEYS,
+                    *FRAME_IMAGE_STAMP_KEYS, *WIKIDATA_STATEMENT_STAMP_KEYS):
             if stamps.get(key) != published.get(key):
                 return True, (f"{key} changed: "
                               f"{published.get(key)!r} -> {stamps.get(key)!r}")
@@ -710,6 +726,38 @@ def template_stamps(snapshot_at) -> dict[str, Any]:
     from modules import template_entity_store, template_store
     return {**template_store.selection_stamps(selected_at_lte=snapshot_at),
             **template_entity_store.graph_stamps(linked_at_lte=snapshot_at)}
+
+
+def frame_image_links_for(entry_ids: list[str], snapshot_at) -> dict[str, list[dict]]:
+    """{frame_url: [mention]} for one build chunk, frozen at the snapshot:
+    the in-graph regions of each frame's own image (7.1.0), the shape
+    build.py's ``frame_images=`` takes. frame_image_store keys frames by
+    URL, the chunk by entry id, so the URLs are looked up first."""
+    from modules import frame_image_store
+    with get_store() as store:
+        urls = [e["url"] for e in store.entries.find(
+            {"_id": {"$in": list(entry_ids)}, "parsed_at": {"$lte": snapshot_at}},
+            {"url": 1}) if e.get("url")]
+    return frame_image_store.graph_mentions_for(urls, linked_at_lte=snapshot_at)
+
+
+def frame_image_stamps(snapshot_at) -> dict[str, Any]:
+    """The frame-image layer's staleness stamps; see FRAME_IMAGE_STAMP_KEYS."""
+    from modules import frame_image_store
+    return frame_image_store.graph_stamps(linked_at_lte=snapshot_at)
+
+
+def wikidata_statements_for(qids, snapshot_at) -> dict[str, list[tuple[str, int]]]:
+    """{item: [(property, value number)]} for the build's linked items,
+    frozen at the snapshot (7.1.0)."""
+    from modules import wikidata_statement_store
+    return wikidata_statement_store.statements_for(qids, extracted_at_lte=snapshot_at)
+
+
+def wikidata_statement_stamps(snapshot_at) -> dict[str, Any]:
+    """The statement layer's staleness stamps; see WIKIDATA_STATEMENT_STAMP_KEYS."""
+    from modules import wikidata_statement_store
+    return wikidata_statement_store.graph_stamps(extracted_at_lte=snapshot_at)
 
 
 def iter_nodes(build_id: str, kinds=None, fields=None):

@@ -64,7 +64,7 @@
 MemeAtlas describes the full parsed record of each Know Your Meme entry —
 its section text, links, references, images, regions and corpus grading —
 on top of IMKG's model of media frames, which it reuses unchanged.""" ;
-    owl:versionInfo "7.0.0" ;
+    owl:versionInfo "7.1.0" ;
     rdfs:seeAlso <https://doi.org/10.1007/978-3-031-33455-9_21> ,
                  <https://github.com/riccardotommasini/imkg> ;
     prov:wasDerivedFrom <https://doi.org/10.5281/zenodo.7457166> .
@@ -428,6 +428,17 @@ mk:relevanceBasis a rdf:Property ;
 #       mk:depictionKind "person" ;
 #       mk:boundingBox "xywh=percent:10.0,5.0,50.0,85.0" ;
 #       mk:detectedBy "qwen3-vl:32b" .
+#
+# 7.1.0: the entry's OWN image (its og:image) is read the same way, and
+# linked from the media frame itself, as IMKG did — so IMKG's
+# `(h)-[:m4s:fromImage]->(:Q83279)` (memes showing SpongeBob) runs as written:
+#
+#   <frame> m4s:fromImage wd:Q… .
+#   << <frame> m4s:fromImage wd:Q… >> mk:depictionKind "character" ; ...
+#
+# Also 7.1.0: the truthy, item-valued Wikidata statements of every linked
+# item, with Wikidata's own direct-claim predicates (wdt:P31, wdt:P21, ...),
+# as IMKG imported them. Nothing here declares them; they are Wikidata's.
 # ---------------------------------------------------------------------------
 
 mk:MemeTemplate a owl:Class ;
@@ -475,7 +486,7 @@ mk:depictionKind a rdf:Property ;
 
 mk:boundingBox a rdf:Property ;
     rdfs:label "bounding box" ;
-    rdfs:comment "Where in the template image the item was seen, as a W3C Media Fragments spatial fragment in percent: xywh=percent:x,y,width,height." .
+    rdfs:comment "Where in the image (a template's, or since 7.1.0 the entry's own) the item was seen, as a W3C Media Fragments spatial fragment in percent: xywh=percent:x,y,width,height." .
 
 mk:detectedBy a rdf:Property ;
     rdfs:subPropertyOf prov:wasGeneratedBy ;

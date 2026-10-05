@@ -64,6 +64,8 @@ Pipeline:
     materialize_stubs   one pass: a stub node for every edge target with no node
     write_sibling_edges sharesSameSeries between every two frames of one series
                         (6.6.0, kg/siblings.py), from the build's partOfSeries
+    write_wikidata_statements  the linked items' truthy Wikidata statements
+                        (7.1.0, kym_wikidata_statements), and their values
     census              entry_type frequency + co-occurrence for the taxonomy
     load_taxonomy       kg_config/entry_type_taxonomy.yaml, validated against it
     write_concept_edges subTypeOf edges (rdfs:subClassOf) into the same generation
@@ -135,6 +137,7 @@ TAXONOMY_PATH = os.path.join(KG_CONFIG_DIR, "entry_type_taxonomy.yaml")
 ORIGIN_TAXONOMY_PATH = os.path.join(KG_CONFIG_DIR, "origin_taxonomy.yaml")
 TAG_DENYLIST_PATH = os.path.join(KG_CONFIG_DIR, "tag_normalization_exceptions.yaml")
 ONTOLOGY_PATH = os.path.join(KG_CONFIG_DIR, "memeatlas.ttl")
+LEXICON_PATH = os.getenv("WIKIDATA_LEXICON", "/opt/airflow/data/wikidata/lexicon.sqlite")
 
 # The subgraph kg/metrics.py measures: the shape IMKG publishes numbers for
 # (frames, their types, tags, series and cross-links), so MemeAtlas's figures
@@ -268,6 +271,10 @@ def kym_kg_dag():
             # 6.4.0: and for the template stages — a re-selection, new
             # details, or a new reading of a template's image.
             **store.template_stamps(snap["snapshot_at"]),
+            # 7.1.0: and for what the frames' own images show, and the
+            # linked items' Wikidata statements.
+            **store.frame_image_stamps(snap["snapshot_at"]),
+            **store.wikidata_statement_stamps(snap["snapshot_at"]),
         }
         stale, reason = store.KGStore.is_stale(
             stamps, store.published_stamps(), force=p.get("force_rebuild", False))
@@ -356,7 +363,8 @@ def kym_kg_dag():
         if not chunk:
             return {"entries": 0, "nodes_written": 0, "edges_written": 0,
                     "stubs_deferred": 0, "frames_with_events": 0,
-                    "frames_with_entities": 0, "frames_with_templates": 0}
+                    "frames_with_entities": 0, "frames_with_templates": 0,
+                    "frames_with_image_entities": 0}
         import functools
         from modules.kg import origin, tag_normalize
         snapshot_at = datetime.fromisoformat(proceed["snapshot_at"])
@@ -379,6 +387,8 @@ def kym_kg_dag():
         entities_by_url = store.entity_links_for(chunk, snapshot_at)
         # 6.4.0: its selected imgflip templates, with their image entities.
         templates_by_url = store.template_links_for(chunk, snapshot_at)
+        # 7.1.0: what each frame's own image shows.
+        frame_images_by_url = store.frame_image_links_for(chunk, snapshot_at)
         nodes: list[dict] = []
         edges: list[dict] = []
         seen = 0
@@ -388,7 +398,8 @@ def kym_kg_dag():
                 entry, origin_resolver=origin_resolver, tag_denylist=tag_denylist,
                 events=events_by_url.get(entry.get("url"), ()),
                 entities=entities_by_url.get(entry.get("url"), ()),
-                templates=templates_by_url.get(entry.get("url"), ()))
+                templates=templates_by_url.get(entry.get("url"), ()),
+                frame_images=frame_images_by_url.get(entry.get("url"), ()))
             nodes.extend(n)
             edges.extend(e)
         written = store.save_graph(proceed["build_id"], nodes, edges)
@@ -396,6 +407,7 @@ def kym_kg_dag():
         written["frames_with_events"] = len(events_by_url)
         written["frames_with_entities"] = len(entities_by_url)
         written["frames_with_templates"] = len(templates_by_url)
+        written["frames_with_image_entities"] = len(frame_images_by_url)
         log.info("Chunk done — %s", written)
         return written
 
@@ -420,6 +432,50 @@ def kym_kg_dag():
             written += store.save_concept_edges(bid, batch)["concept_edges_written"]
         log.info("sharesSameSeries: %d edges written", written)
         return {"edges_written": written}
+
+    @task(execution_timeout=timedelta(minutes=45))
+    def write_wikidata_statements(proceed: dict, stubs: dict) -> dict:
+        """7.1.0: the truthy, item-valued Wikidata statements of every item
+        this build links, as IMKG imported them (kg/wikidata_statements.py):
+        ``wd:Q42 -[P31]-> wd:Q5``, ``wdt:P31`` in RDF. One hop — a value
+        becomes a wikidata_entity node, named from the lexicon or
+        wikidata_labels; its own statements are not read. After
+        materialize_stubs, which would otherwise take a value for an
+        external reference."""
+        from itertools import islice
+        from modules import wikidata_statement_store as statement_store
+        from modules.kg import wikidata_statements as kg_ws
+        from modules.kg.wikidata import Lexicon
+
+        bid = proceed["build_id"]
+        snapshot_at = datetime.fromisoformat(proceed["snapshot_at"])
+        linked = {n["qid"] for n in store.iter_nodes(
+            bid, kinds=["wikidata_entity"], fields=["qid"]) if n.get("qid")}
+        statements = store.wikidata_statements_for(linked, snapshot_at)
+        values = {f"Q{v}" for st in statements.values() for _p, v in st} - linked
+        named = statement_store.labels_for(values)
+        lexicon = Lexicon(LEXICON_PATH) if os.path.exists(LEXICON_PATH) else None
+
+        def names(q: str) -> tuple[str | None, str | None]:
+            c = lexicon.entity(q) if lexicon else None
+            return (c.label, c.description) if c else named.get(q, (None, None))
+
+        try:
+            nodes = kg_ws.value_nodes(statements, linked, names)
+        finally:
+            if lexicon:
+                lexicon.close()
+        nodes_written = store.save_graph(bid, nodes, ())["nodes_written"]
+        edges = iter(kg_ws.statement_edges(statements))
+        written = 0
+        while batch := list(islice(edges, 50_000)):
+            written += store.save_concept_edges(bid, batch)["concept_edges_written"]
+        out = {"items": len(statements), "value_nodes": nodes_written,
+               "unnamed_values": sum(1 for n in nodes if not n["label"]),
+               "properties": len({p for st in statements.values() for p, _v in st}),
+               "edges_written": written}
+        log.info("Wikidata statements: %s", out)
+        return out
 
     # -- Phase 3: the concept layer -------------------------------------------
     @task
@@ -499,7 +555,8 @@ def kym_kg_dag():
     @task(execution_timeout=timedelta(minutes=30))
     def write_exports(snap: dict, proceed: dict, stubs: dict, concepts: dict,
                       origin_concepts: dict, cooccurs_written: dict,
-                      siblings_written: dict, params: dict | None = None) -> dict:
+                      siblings_written: dict, statements_written: dict,
+                      params: dict | None = None) -> dict:
         from modules.kg import serialize
         p = params or {}
         bid = proceed["build_id"]
@@ -537,7 +594,7 @@ def kym_kg_dag():
     @task(execution_timeout=timedelta(minutes=45))
     def load_neo4j(proceed: dict, stubs: dict, concepts: dict,
                    origin_concepts: dict, cooccurs_written: dict,
-                   siblings_written: dict) -> dict:
+                   siblings_written: dict, statements_written: dict) -> dict:
         if not _neo4j_enabled():
             raise AirflowSkipException("NEO4J_PASSWORD unset — Neo4j follower disabled")
         bid = proceed["build_id"]
@@ -565,7 +622,7 @@ def kym_kg_dag():
         different graphs — precisely the drift this stage exists to make
         impossible — and every pointer stays put.
         """
-        from modules.kg import serialize
+        from modules.kg import rdf, serialize
         bid = proceed["build_id"]
         counts = store.graph_counts(bid)
         problems: list[str] = []
@@ -590,11 +647,22 @@ def kym_kg_dag():
                 origin_subtype_name = serialize.ORIGIN_SUBTYPE_RML_FILE[0]
                 rml_n = (files.get(name, {}).get("rows", 0)
                         + files.get(origin_subtype_name, {}).get("rows", 0))
+            elif etype == "fromImage":
+                # 7.1.0: a template's and a frame's, in two files likewise.
+                mongo_n = counts["edges_by_type"].get(etype, 0)
+                rml_n = (files.get(name, {}).get("rows", 0)
+                         + files.get(serialize.FRAME_IMAGE_RML_FILE[0], {}).get("rows", 0))
             else:
                 mongo_n = counts["edges_by_type"].get(etype, 0)
                 rml_n = files.get(name, {}).get("rows", 0)
             if mongo_n != rml_n:
                 problems.append(f"{etype}: mongo={mongo_n} rml_rows={rml_n}")
+        # 7.1.0: Wikidata statements, one edge type per property, one file.
+        mongo_n = sum(n for t, n in counts["edges_by_type"].items()
+                      if rdf.is_statement_type(t))
+        rml_n = files.get(serialize.STATEMENTS_RML_FILE[0], {}).get("rows", 0)
+        if mongo_n != rml_n:
+            problems.append(f"wikidata statements: mongo={mongo_n} rml_rows={rml_n}")
         if files["frames.csv"]["rows"] != counts["frames"]:
             problems.append(f"frames: mongo={counts['frames']} "
                             f"frames.csv={files['frames.csv']['rows']}")
@@ -738,7 +806,8 @@ def kym_kg_dag():
                   metrics: dict | None = None,
                   origin_tax: dict | None = None,
                   cooccurs_written: dict | None = None,
-                  siblings_written: dict | None = None) -> dict:
+                  siblings_written: dict | None = None,
+                  statements_written: dict | None = None) -> dict:
         if not snap["stale"]:
             summary = {"skipped": True, "reason": snap["reason"],
                        "build": {"build_id": None, "stamps": snap["stamps"]}}
@@ -787,6 +856,7 @@ def kym_kg_dag():
                         (cooccurs_written or {}).get("concept_edges_written")},
             "siblings": {"edges_written":
                         (siblings_written or {}).get("edges_written")},
+            "wikidata_statements": statements_written or {},
             "stores": {
                 "fuseki": ({"triples": fuseki.get("triples"), "graph": fuseki.get("graph")}
                            if fuseki else None),
@@ -821,6 +891,7 @@ def kym_kg_dag():
     built = build_chunk.partial(proceed=proceed).expand(chunk=chunks)
     stubs = materialize_stubs(proceed, built)
     siblings_written = write_sibling_edges(proceed, built)
+    statements_written = write_wikidata_statements(proceed, stubs)
     cen = census(proceed)
     tax = load_taxonomy(proceed, cen)
     concepts = write_concept_edges(proceed, tax)
@@ -830,10 +901,10 @@ def kym_kg_dag():
     tags_cen = census_tags(proceed)
     cooccurs_written = write_cooccurs_edges(proceed, tags_cen)
     manifest = write_exports(snap, proceed, stubs, concepts, origin_concepts,
-                             cooccurs_written, siblings_written)
+                             cooccurs_written, siblings_written, statements_written)
     fus = load_fuseki(proceed, manifest)
     neo = load_neo4j(proceed, stubs, concepts, origin_concepts, cooccurs_written,
-                     siblings_written)
+                     siblings_written, statements_written)
     verified = verify(proceed, manifest, fus, neo)
     published = publish(proceed, manifest, verified)
     pruned = prune(published, verified)
@@ -842,7 +913,8 @@ def kym_kg_dag():
     summary = summarize(snap, built, stubs, tax, manifest, fus, neo, verified,
                         published, measured, origin_tax=origin_tax,
                         cooccurs_written=cooccurs_written,
-                        siblings_written=siblings_written)
+                        siblings_written=siblings_written,
+                        statements_written=statements_written)
     record_summary(summary)
 
 
