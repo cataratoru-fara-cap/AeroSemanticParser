@@ -515,3 +515,20 @@ now refuses a file that contradicts itself.
   file, so do not set it in both.
 - `_PIP_ADDITIONAL_REQUIREMENTS` reinstalls on every container start. Real
   dependencies belong in `requirements.txt`.
+
+## Licence
+
+The code, the documentation and the MemeAtlas vocabulary (`dags/kg_config/`)
+are released under the [MIT licence](../LICENSE), copyright the MemeAtlas
+contributors. Two exceptions:
+
+- `docker-compose.yml` is derived from Apache Airflow's reference compose
+  file and keeps its Apache-2.0 licence, as its header says.
+- The pages in `dags/tests/fixtures/` were saved from knowyourmeme.com and
+  imgflip.com to test the parsers. They belong to those sites and are not
+  covered by the MIT licence (`dags/tests/fixtures/README.md`).
+
+The licence covers this repository, not what the pipeline collects. The
+corpus and the graphs built from it (`data/`, the published builds) hold Know
+Your Meme's text and images and imgflip's templates, which stay under their
+owners' terms; the Wikidata labels and statements in them are CC0.
