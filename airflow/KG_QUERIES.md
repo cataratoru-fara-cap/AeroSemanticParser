@@ -57,6 +57,35 @@ A relationship's properties are lists, one entry per mention, index-aligned:
 position *i* of `mention_texts` and of `relevance_bases` describe the same
 mention. A `FrameStub` has no title, only its KYM URL (`id`).
 
+### Colours and sizes in Neo4j Browser
+
+Out of the box every node is the same colour. The Browser colours a node by
+the label highest in its styling list, and `KGNode`, which every node has,
+starts at the top. Import the shared stylesheet once:
+in the graph styling panel choose **Upload GraSS styles**, then pick
+[`dags/kg_config/neo4j_browser.grass`](dags/kg_config/neo4j_browser.grass) and
+**Import**. It puts `KGNode` at the bottom of the list, so each kind's own
+style wins. The style is kept per browser; change any colour or size in the
+same panel.
+
+| Kind | Colour | Size | Caption |
+|---|---|---|---|
+| `Frame` | blue `#3987e5` | largest | title |
+| `FrameStub` | dark blue `#184f95` (a frame not in the corpus) | small | KYM URL |
+| `WikidataEntity` | orange `#d95926` | large | label |
+| `Template` | aqua `#199e70` | large | name |
+| `Event` | yellow `#c98500` | medium | the sentence it was read from |
+| `EntryTypeConcept`, `OriginConcept` | green `#008300` | medium | label |
+| `TagConcept`, `RegionConcept`, `BadgeConcept` | green `#008300` | small | label |
+| `Image`, `ExternalRef` | light grey `#b5b4ad` | smallest | URL |
+
+Frame, Wikidata item and template link to each other, so they take the
+three hues that stay apart from each other under protanopia, deuteranopia and
+normal vision, on both the light and the dark theme. No fourth hue does that
+(checked with the data-viz palette validator). Events and concepts link mostly to frames, so
+each hue is checked against blue and grey only. The concepts share one green
+and are told apart by size and caption, as are images and external links.
+
 ## The queries
 
 ### 1. One frame as a graph

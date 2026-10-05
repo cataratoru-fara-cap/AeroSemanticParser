@@ -1,0 +1,77 @@
+node.KGNode {
+  color: #898781;
+  diameter: 47px;
+  caption: '{id}';
+}
+
+node.ExternalRef {
+  color: #b5b4ad;
+  diameter: 34px;
+  caption: '{id}';
+}
+
+node.Image {
+  color: #b5b4ad;
+  diameter: 34px;
+  caption: '{id}';
+}
+
+node.BadgeConcept {
+  color: #008300;
+  diameter: 47px;
+  caption: '{label}';
+}
+
+node.RegionConcept {
+  color: #008300;
+  diameter: 47px;
+  caption: '{label}';
+}
+
+node.TagConcept {
+  color: #008300;
+  diameter: 47px;
+  caption: '{label}';
+}
+
+node.OriginConcept {
+  color: #008300;
+  diameter: 56px;
+  caption: '{label}';
+}
+
+node.EntryTypeConcept {
+  color: #008300;
+  diameter: 56px;
+  caption: '{label}';
+}
+
+node.Event {
+  color: #c98500;
+  diameter: 56px;
+  caption: '{source_text}';
+}
+
+node.FrameStub {
+  color: #184f95;
+  diameter: 47px;
+  caption: '{id}';
+}
+
+node.Template {
+  color: #199e70;
+  diameter: 67px;
+  caption: '{label}';
+}
+
+node.WikidataEntity {
+  color: #d95926;
+  diameter: 67px;
+  caption: '{label}';
+}
+
+node.Frame {
+  color: #3987e5;
+  diameter: 79px;
+  caption: '{label}';
+}
