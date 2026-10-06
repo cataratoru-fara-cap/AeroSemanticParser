@@ -1,0 +1,609 @@
+{
+ "discovery_state": {
+  "total": 39972,
+  "confirmed": 25058,
+  "unconfirmed": 14914,
+  "lastmod_null": 14972,
+  "by_namespace": {
+   "memes": {
+    "confirmed": 17178,
+    "unconfirmed": 10642
+   },
+   "memes/sites": {
+    "confirmed": 412,
+    "unconfirmed": 317
+   },
+   "memes/events": {
+    "confirmed": 1885,
+    "unconfirmed": 1650
+   },
+   "sensitive/memes": {
+    "confirmed": 2051,
+    "unconfirmed": 0
+   },
+   "memes/people": {
+    "confirmed": 1158,
+    "unconfirmed": 1001
+   },
+   "editorials/guides": {
+    "confirmed": 7,
+    "unconfirmed": 0
+   },
+   "memes/cultures": {
+    "confirmed": 0,
+    "unconfirmed": 125
+   },
+   "editorials/meme-review": {
+    "confirmed": 1,
+    "unconfirmed": 0
+   },
+   "memes/subcultures": {
+    "confirmed": 1394,
+    "unconfirmed": 1179
+   },
+   "editorials/interviews": {
+    "confirmed": 1,
+    "unconfirmed": 0
+   },
+   "editorials/poll": {
+    "confirmed": 1,
+    "unconfirmed": 0
+   },
+   "sensitive/memes/events": {
+    "confirmed": 267,
+    "unconfirmed": 0
+   },
+   "editorials": {
+    "confirmed": 17,
+    "unconfirmed": 0
+   },
+   "photos": {
+    "confirmed": 555,
+    "unconfirmed": 0
+   },
+   "unknown": {
+    "confirmed": 14,
+    "unconfirmed": 0
+   },
+   "videos": {
+    "confirmed": 117,
+    "unconfirmed": 0
+   }
+  }
+ },
+ "scrape_state": {
+  "urls_confirmed": 25058,
+  "doms_total": 25058,
+  "doms_ok": 25016,
+  "doms_failed": 42,
+  "failed_permanent": 34,
+  "failed_retryable": 8,
+  "by_error_kind": {
+   "permanent": 34,
+   "retryable": 8
+  },
+  "content_bytes": 6858390121,
+  "content_avg": 274160.1423488967
+ },
+ "parse_state": {
+  "entries_total": 24291,
+  "entries_ready": 4515,
+  "entries_incomplete": 19776,
+  "parse_failures": 709,
+  "missing_field_counts": {
+   "region": 18604,
+   "section:spread": 5751,
+   "section:origin": 5609,
+   "entry_type": 4563,
+   "section:about": 2205,
+   "year": 770,
+   "tags": 66
+  },
+  "failure_type_counts": {
+   "ValidationError": 709
+  },
+  "failure_namespace_counts": {
+   "photos": 553,
+   "videos": 116,
+   "editorials": 30,
+   "editorials/guides": 7,
+   "editorials/interviews": 1,
+   "editorials/poll": 1,
+   "editorials/meme-review": 1
+  },
+  "by_category": {
+   "meme": 18738,
+   "event": 2149,
+   "subculture": 1493,
+   "person": 1279,
+   "site": 455,
+   "culture": 177
+  },
+  "by_status": {
+   "confirmed": 24145,
+   "submission": 146
+  },
+  "parser_versions": {
+   "1.7.0": 24291
+  }
+ },
+ "event_state": {
+  "units_total": 36673,
+  "units_by_section": {
+   "origin": 18458,
+   "spread": 18215
+  },
+  "events_total": 142787,
+  "last_extracted_at": "2026-10-02 09:47:24+00:00",
+  "zero_event_units": 0,
+  "frames_covered": 18773,
+  "frames_with_narrative": 18827,
+  "units_possible": 36677,
+  "events_by_certainty": {
+   "confirmed": 140998,
+   "unconfirmed": 1738,
+   "disputed": 50,
+   "debunked": 1
+  },
+  "events_by_precision": {
+   "day": 91502,
+   "none": 36528,
+   "month": 7854,
+   "year": 6903
+  },
+  "events_by_location_type": {
+   "platform": 100846,
+   "unknown": 39731,
+   "geo": 1573,
+   "both": 637
+  },
+  "models_in_use": {
+   "ministral-3:14b": 36673
+  },
+  "failures_total": 14,
+  "failure_kind_counts": {
+   "invalid": 14
+  }
+ },
+ "entity_state": {
+  "frames": 24291,
+  "frames_linked": 24242,
+  "mentions": 305359,
+  "own_item": 2940,
+  "last_linked_at": "2026-10-02 08:21:22+00:00",
+  "by_field": {
+   "title": 18477,
+   "about": 191060,
+   "tag": 95822
+  },
+  "by_method": {
+   "propn": 19952,
+   "title": 2022,
+   "noun_chunk": 124166,
+   "ner": 60457,
+   "kym_id": 2940,
+   "tag": 95822
+  },
+  "distinct_items": 31085,
+  "linker_versions": {
+   "1.2.0": 24291
+  },
+  "senses_versions": {
+   "91bf579988c37d7e": 24291
+  },
+  "lexicon_versions": {
+   "2199132b6f51fafc": 24291
+  }
+ },
+ "curation_state": {
+  "frames": 24291,
+  "frames_judged": 22988,
+  "frames_waiting": 0,
+  "frames_none_kept": 117,
+  "failures": 0,
+  "kept": {
+   "format": 14178,
+   "tag_and_text": 54052,
+   "platform": 26623,
+   "own_item": 4698,
+   "judge": 42114,
+   "title": 18477,
+   "tag_named": 23207,
+   "title_agrees": 26478
+  },
+  "dropped": {
+   "judge": 67455,
+   "generic_item": 21375,
+   "deny_class": 3248,
+   "deny_item": 3454
+  },
+  "pending": 0,
+  "kept_total": 209827,
+  "dropped_total": 95532,
+  "judge_roles": {
+   "platform": 781,
+   "source": 13701,
+   "wrong_sense": 7959,
+   "incidental": 48930,
+   "format": 4330,
+   "subject": 24214
+  },
+  "confirm_agreed": 27470,
+  "confirm_overturned": 6214,
+  "judge_models": {
+   "ministral-3:14b \u00b7 prompt 4": 22840,
+   "ministral-3:14b \u00b7 prompt 3": 148
+  },
+  "versions": {
+   "1.1.0": 24291
+  },
+  "last_curated_at": "2026-10-02 09:44:52.309000+00:00"
+ },
+ "template_state": {
+  "frames": 18823,
+  "by_priority": {
+   "other meme": {
+    "selected": 3622,
+    "no_results": 5981,
+    "below_threshold": 1000
+   },
+   "template-type meme": {
+    "no_results": 2927,
+    "selected": 3952,
+    "below_threshold": 536
+   },
+   "own imgflip link": {
+    "below_threshold": 2,
+    "selected": 784,
+    "no_results": 2
+   },
+   "other entry": {
+    "no_results": 5,
+    "selected": 10,
+    "below_threshold": 2
+   }
+  },
+  "by_status": {
+   "selected": 8368,
+   "below_threshold": 1540,
+   "no_results": 8915
+  },
+  "per_frame": {
+   "6": 293,
+   "8": 222,
+   "9": 175,
+   "10": 982,
+   "7": 277,
+   "4": 612,
+   "1": 3126,
+   "5": 412,
+   "2": 1424,
+   "3": 845
+  },
+  "links": 29885,
+  "methods": {
+   "search": 29106,
+   "kym_reference": 779
+  },
+  "kept": 26868,
+  "with_image": 26868,
+  "image_failed": 0,
+  "seen": 145498,
+  "merged": 10261,
+  "last_searched_at": "2026-10-02 07:08:16.323000+00:00"
+ },
+ "template_reading": {
+  "readable": 26868,
+  "read": 26818,
+  "read_total": 27023,
+  "failed": 50,
+  "remaining": 0,
+  "last_hour": 0,
+  "last_6h": 0,
+  "eta_hours": null,
+  "regions_by_kind": {
+   "object": 40164,
+   "person": 30603,
+   "text": 27426,
+   "logo": 956,
+   "animal": 5026,
+   "artwork": 2717,
+   "character": 9657
+  },
+  "regions_named": 20660,
+  "regions_total": 116549,
+  "links": {
+   "generic | True": 28183,
+   "text | True": 3891,
+   "generic | False": 17702,
+   "named | True": 16144
+  },
+  "links_in_graph": 48218,
+  "failure_kinds": {
+   "answer cut off": 11,
+   "stuck repeating itself": 38,
+   "image": 1
+  },
+  "blind_named": 240,
+  "blind_confirmed": 204
+ },
+ "derived_state": {
+  "frames_total": 24291,
+  "frames_linked": 24242,
+  "mentions": 305359,
+  "frames_curated": 24291,
+  "frames_waiting": 0,
+  "links_kept": 209827,
+  "templates_kept": 26868,
+  "templates_readable": 26868,
+  "templates_read": 26818
+ },
+ "kg_state": {
+  "build_id": "kg_20261002T170459Z_manual",
+  "published_at": "2026-10-02 17:19:38.321000+00:00",
+  "state": "published",
+  "stamps": {
+   "ready_only": false,
+   "snapshot_at": "2026-10-02T17:04:59.960597+00:00",
+   "events_total": 142787,
+   "events_units": 36673,
+   "entries_count": 24291,
+   "max_parsed_at": "2026-10-01T00:56:53.919000+00:00",
+   "entities_frames": 24291,
+   "parser_versions": [
+    "1.7.0"
+   ],
+   "templates_links": 29885,
+   "kg_build_version": "7.0.0",
+   "taxonomy_version": "c5d29338053ff02ad6d59a23ff5cd3b5e06fa93c9955f089d52998a6ba63bd55",
+   "templates_frames": 18823,
+   "entities_in_graph": 209827,
+   "entities_mentions": 305359,
+   "events_schema_shas": [
+    "ca6072d1129c981e",
+    "d729e548e5fd7dba"
+   ],
+   "templates_detailed": 27250,
+   "templates_versions": [
+    "1.0.0/1.0.0/1.0.0"
+   ],
+   "entities_nlp_models": [
+    "en_core_web_sm@3.8.0"
+   ],
+   "tag_denylist_version": "1448ac88757449c08fb21fcfffe8233a5b89c3f32aedc04cf65ce11e9a111bdd",
+   "entities_judge_models": [
+    "ministral-3:14b"
+   ],
+   "corpus_policy_versions": [
+    "2026-07-16-tags-gated-not-required"
+   ],
+   "entities_max_linked_at": "2026-10-02T08:21:22+00:00",
+   "events_prompt_versions": [
+    "8",
+    "9"
+   ],
+   "entities_max_curated_at": "2026-10-02T09:44:52.309000+00:00",
+   "events_max_extracted_at": "2026-10-02T09:47:24+00:00",
+   "origin_taxonomy_version": "f0bb85c4b655b9494c4f7aa22bb49b0970ff034cf2c91c9dc90777cbd6a199c9",
+   "entities_curation_frames": 24291,
+   "entities_linker_versions": [
+    "1.2.0"
+   ],
+   "entities_senses_versions": [
+    "91bf579988c37d7e"
+   ],
+   "template_entities_models": [
+    "qwen3-vl:32b"
+   ],
+   "entities_curation_pending": 0,
+   "entities_lexicon_versions": [
+    "2199132b6f51fafc"
+   ],
+   "template_entities_prompts": [
+    "2"
+   ],
+   "templates_max_selected_at": "2026-10-02T07:12:11.384000+00:00",
+   "entities_curation_versions": [
+    "69c5998631e957b4"
+   ],
+   "events_extraction_versions": [
+    "3.2.0",
+    "4.0.0"
+   ],
+   "template_entities_in_graph": 48218,
+   "template_entities_lexicons": [
+    "2199132b6f51fafc"
+   ],
+   "templates_selection_digest": "80feea625069558c",
+   "template_entities_templates": 26844,
+   "template_entities_max_linked_at": "2026-10-02T10:09:15.989000+00:00"
+  },
+  "manifest_counts": {
+   "edges": 2564089,
+   "nodes": 795711,
+   "triples": 8790369,
+   "edges_by_type": {
+    "hasTag": 225943,
+    "fromTags": 77640,
+    "hasBadge": 2304,
+    "hasEvent": 142787,
+    "hasImage": 192518,
+    "eventLink": 90965,
+    "fromAbout": 85077,
+    "fromImage": 44577,
+    "fromTitle": 18258,
+    "hasOrigin": 24291,
+    "hasRegion": 5691,
+    "subTypeOf": 55,
+    "eventEmbed": 19229,
+    "eventImage": 103985,
+    "hasTemplate": 29885,
+    "imgflipPage": 26868,
+    "nextInStory": 124014,
+    "coOccursWith": 4984,
+    "hasEntryType": 33551,
+    "partOfSeries": 19515,
+    "citesExternal": 244297,
+    "eventCitation": 117461,
+    "templateImage": 25452,
+    "citesMediaFrame": 215295,
+    "eventDateAnchor": 10055,
+    "sharesSameSeries": 679392
+   },
+   "nodes_by_kind": {
+    "event": 142787,
+    "frame": 24291,
+    "image": 202390,
+    "template": 26868,
+    "frame_stub": 7631,
+    "tag_concept": 101883,
+    "external_ref": 257031,
+    "badge_concept": 1,
+    "origin_concept": 5703,
+    "region_concept": 110,
+    "wikidata_entity": 26897,
+    "entry_type_concept": 119
+   }
+  },
+  "validation": {
+   "equal": true,
+   "content_divergence": [],
+   "in_process_triples": 8790369,
+   "rml_triples": 8790365,
+   "report": "/opt/airflow/data/kg/builds/kg_20261002T170459Z_manual/rdf_diff.json"
+  },
+  "nodes": 795711,
+  "edges": 2564089,
+  "frames": 24291,
+  "nodes_by_kind": {
+   "external_ref": 257031,
+   "image": 202390,
+   "event": 142787,
+   "tag_concept": 101883,
+   "wikidata_entity": 26897,
+   "template": 26868,
+   "frame": 24291,
+   "frame_stub": 7631,
+   "origin_concept": 5703,
+   "entry_type_concept": 119,
+   "region_concept": 110,
+   "badge_concept": 1
+  },
+  "edges_by_type": {
+   "sharesSameSeries": 679392,
+   "citesExternal": 244297,
+   "hasTag": 225943,
+   "citesMediaFrame": 215295,
+   "hasImage": 192518,
+   "hasEvent": 142787,
+   "nextInStory": 124014,
+   "eventCitation": 117461,
+   "eventImage": 103985,
+   "eventLink": 90965,
+   "fromAbout": 85077,
+   "fromTags": 77640,
+   "fromImage": 44577,
+   "hasEntryType": 33551,
+   "hasTemplate": 29885,
+   "imgflipPage": 26868,
+   "templateImage": 25452,
+   "hasOrigin": 24291,
+   "partOfSeries": 19515,
+   "eventEmbed": 19229,
+   "fromTitle": 18258,
+   "eventDateAnchor": 10055,
+   "hasRegion": 5691,
+   "coOccursWith": 4984,
+   "hasBadge": 2304,
+   "subTypeOf": 55
+  },
+  "legacy_docs": 0,
+  "generations": 3
+ },
+ "event_progress": {
+  "by_version": {
+   "4.0.0": 36663,
+   "3.2.0": 10
+  },
+  "current": "4.0.0",
+  "current_units": 36663,
+  "remaining": 10,
+  "last_hour": 0,
+  "last_6h": 0,
+  "eta_hours": null
+ },
+ "stage_freshness": {
+  "discovery": {
+   "run_id": "scheduled__2026-10-01T00:00:00+00:00",
+   "dag_id": "kym_discovery",
+   "created_at": "2026-10-01 00:46:26.005000+00:00",
+   "age_hours": 109.59719140555556
+  },
+  "entities": {
+   "run_id": "manual__2026-10-02T08:20:30.848406+00:00",
+   "dag_id": "kym_entities",
+   "created_at": "2026-10-02 08:21:25.836000+00:00",
+   "age_hours": 78.01390520638888
+  },
+  "entity_curation": {
+   "run_id": "manual__2026-10-02T08:21:30.971870+00:00",
+   "dag_id": "kym_entity_curation",
+   "created_at": "2026-10-02 09:44:54.137000+00:00",
+   "age_hours": 76.6227106525
+  },
+  "events": {
+   "run_id": "manual__2026-10-02T07:00:07.434220+00:00",
+   "dag_id": "kym_events",
+   "created_at": "2026-10-02 09:47:32.310000+00:00",
+   "age_hours": 76.57877393916667
+  },
+  "frame_images": {
+   "run_id": "manual__2026-10-05T07:05:45.787437+00:00",
+   "dag_id": "kym_frame_image_entities",
+   "created_at": "2026-10-05 07:18:20.235000+00:00",
+   "age_hours": 7.065461630833333
+  },
+  "kg": {
+   "run_id": "manual__2026-10-05T08:37:18.543283+00:00",
+   "dag_id": "kym_kg",
+   "created_at": "2026-10-05 08:50:23.214000+00:00",
+   "age_hours": 5.531300893611111
+  },
+  "kg_validate": {
+   "run_id": "manual__2026-10-05T09:07:13.742423+00:00",
+   "dag_id": "kym_kg_validate",
+   "created_at": "2026-10-05 09:14:43.478000+00:00",
+   "age_hours": 5.1256720824999995
+  },
+  "parse": {
+   "run_id": "manual__2026-10-01T00:56:21.048497+00:00",
+   "dag_id": "kym_parse",
+   "created_at": "2026-10-01 00:56:56.045000+00:00",
+   "age_hours": 109.42218136472222
+  },
+  "scrape": {
+   "run_id": "manual__2026-10-01T00:46:26.906256+00:00",
+   "dag_id": "kym_scrape",
+   "created_at": "2026-10-01 00:56:19.838000+00:00",
+   "age_hours": 109.43223906638889
+  },
+  "template_entities": {
+   "run_id": "manual__2026-10-02T09:47:50.918854+00:00",
+   "dag_id": "kym_template_entities",
+   "created_at": "2026-10-02 10:09:18.424000+00:00",
+   "age_hours": 76.21596527472222
+  },
+  "templates": {
+   "run_id": "manual__2026-10-02T07:00:10.427331+00:00",
+   "dag_id": "kym_templates",
+   "created_at": "2026-10-02 07:15:42.567000+00:00",
+   "age_hours": 79.10925896333333
+  },
+  "wikidata_statements": {
+   "run_id": "manual__2026-10-05T07:21:02.791266+00:00",
+   "dag_id": "kym_wikidata_statements",
+   "created_at": "2026-10-05 10:41:34.471000+00:00",
+   "age_hours": 3.6781745894444446
+  }
+ }
+}

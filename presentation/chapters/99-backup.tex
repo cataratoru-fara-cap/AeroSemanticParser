@@ -1,0 +1,58 @@
+% Backup slides, for questions.
+
+\gmsetchapter{graph}
+\begin{frame}{Backup: what becomes a node (4.0.0)}
+  \begin{columns}[t]
+    \column{.5\textwidth}
+      \begin{itemize}\setlength{\itemsep}{2.6mm}
+        \item A node is \textbf{something other things can share}: an entry, a type, a tag, a URL,
+          an image, a Wikidata item
+        \item What belongs to one entry is a \textbf{value on it} (its About, its sections)
+        \item What belongs to one mention is \textbf{on the edge} (its anchor text, its score)
+      \end{itemize}
+    \column{.44\textwidth}
+      {\small\begin{tabular}[t]{@{}lrr@{}}
+        & \small before & \small after\\\midrule
+        nodes   & 985,481   & \textbf{476,794}\\
+        edges   & 1,738,366 & \textbf{855,932}\\
+        triples & 4,177,478 & \textbf{2,632,847}\\
+      \end{tabular}}\par\vskip3mm
+      {\scriptsize\color{gmInk2}no parsed data dropped; the IMKG-comparable core unchanged}
+  \end{columns}
+  \note{Sections, links and references used to be nodes: 88k of 135k section nodes held no text,
+  and every link node was a detour around an edge that already existed. Dissolving them halved
+  the graph and lost nothing. Events (6.0.0) are the one exception: they get their own IRI
+  because other events and pages point at them.}
+\end{frame}
+
+\begin{frame}{Backup: the stages and what they store}
+  {\scriptsize
+  \begin{tabular}{@{}lll@{}}
+    \bfseries stage & \bfseries reads & \bfseries writes\\\midrule
+    kym\_discovery & sitemaps, listings & urls\\
+    kym\_scrape & urls & doms (compressed HTML)\\
+    kym\_parse & doms & entries, parse\_failures\\
+    kym\_entities & entries & entities (mentions, links)\\
+    kym\_entity\_curation & entities & entity\_curation (kept, dropped, why)\\
+    kym\_events & entries & events, event\_failures\\
+    kym\_templates & entries, imgflip & imgflip\_pages, imgflip\_templates, frame\_templates\\
+    kym\_template\_entities & templates' images & template\_entities\\
+    kym\_frame\_image\_entities & entries' images & frame\_image\_entities (7.1.0)\\
+    kym\_wikidata\_statements & the Wikidata dump & wikidata\_statements (7.1.0)\\
+    kym\_kg & all of the above & kg\_nodes, kg\_edges, files, Fuseki, Neo4j\\
+    kym\_kg\_validate & the build's files & the RDF diff report\\
+  \end{tabular}}
+  \note{Every stage reads one or two collections and writes its own; each collection has one
+  owner module. The chain runs monthly, and every stage can be started by hand.}
+\end{frame}
+
+\begin{frame}{Backup: the numbers behind the slides}
+  \small
+  Every number comes from the live graph or the stage collections, extracted by
+  {\ttfamily presentation/scripts/extract.py} and {\ttfamily stages.py}, turned into the slides by
+  {\ttfamily figures.py}. Build {\ttfamily\scriptsize\NBuildId}.\par\vskip3mm
+  Facts that come from documents --- IMKG's paper, the review measurements --- are in
+  {\ttfamily chapters/facts.tex}, each with its source.
+  \note{If someone asks where a number comes from: this. Re-running the three scripts against the
+  7.1.0 build updates every chart and number in the deck.}
+\end{frame}

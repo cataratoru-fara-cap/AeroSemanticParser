@@ -1,0 +1,146 @@
+% Chapter 6 — see the picture: imgflip templates (kym_templates) and what their images show
+% (kym_template_entities).
+
+\gmzoomin{picture}
+\note{Chapter 6: memes are pictures. Which blank images is Doge made from, and what do they show?}
+
+\begin{frame}{Doge, step 5: the blank pictures people caption}
+  \centering
+  \resizebox{!}{5.3cm}{\input{figures/generated/fig-picture-doge}}\par\vskip3mm
+  {\small\color{gmInk2}imgflip, searched for ``doge'': \NDogeCandidates\ candidates, copies merged, \NDogeTemplates\ kept --- the most varied first}
+  \note{
+  \begin{itemize}
+    \item Layman version: a meme is usually a blank picture that people write their own caption
+      on. imgflip is the website where people make them; it calls the blank pictures templates.
+    \item For Doge we searched imgflip for ``doge'': 120 candidate pictures. Many are the same
+      picture uploaded again --- resized, re-compressed, mirrored --- so copies are merged, and the
+      eight most relevant and most different are kept.
+    \item The first one is certain: Doge's own KYM page links to it (``Meme Generator'' link). The
+      others are scored: name, picture, rank on imgflip.
+    \item Notice the family: Swole Doge vs.\ Cheems, Dogecoin --- the graph will connect them.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{What the vision model sees}
+  \begin{columns}[c]
+    \column{.48\textwidth}\centering
+      \input{figures/generated/fig-picture-boxes-a}\par\vskip1mm
+      {\scriptsize\color{gmInk2}Buff Doge vs.\ Cheems}
+    \column{.48\textwidth}\centering
+      \input{figures/generated/fig-picture-boxes-b}\par\vskip1mm
+      {\scriptsize\color{gmInk2}Dogecoin}
+  \end{columns}
+  \vskip4mm
+  {\small\color{gmInk2}Every box is named, and every name is linked to Wikidata --- Cheems is the dog Balltze.}
+  \note{
+  \begin{itemize}
+    \item A vision model (qwen3-vl:32b, on the lab's GPUs) looks at each template and returns
+      boxes: what is where, and its name if it is someone or something specific.
+    \item Left: it finds Doge, and Cheems --- whose Wikidata item is Balltze, the real Shiba Inu
+      behind Cheems. Right: Elon Musk holding Doge: the Dogecoin template.
+    \item Orange boxes are linked to Wikidata items, with their IDs. That is IMKG's ``its picture
+      shows'' (m4s:fromImage), for templates.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{\NTemplates\ templates, \NRegions\ things seen}
+  \begin{columns}[t]
+    \column{.46\textwidth}
+      \begin{tikzpicture}[baseline=(current bounding box.north), x=1cm, y=-1cm, n/.style={font=\scriptsize, text=gmInk2, anchor=west},
+                          v/.style={font=\large\bfseries, text=gmInk, anchor=east}]
+        \node[v] at (2.1,0) {\NFramesSearched};   \node[n] at (2.2,0) {entries searched};
+        \node[v] at (2.1,.75) {\NFramesSelected}; \node[n] at (2.2,.75) {with templates (\NFramesSelectedPct\%)};
+        \node[v] at (2.1,1.6) {\NCandidates};     \node[n] at (2.2,1.6) {candidates seen};
+        \node[v] at (2.1,2.35) {\NMerged};        \node[n] at (2.2,2.35) {near-copies merged};
+        \node[v] at (2.1,3.1) {\NTemplates};      \node[n] at (2.2,3.1) {templates kept};
+        \node[v] at (2.1,3.95) {\NRead};          \node[n] at (2.2,3.95) {images read (\NReadFailed\ failed)};
+      \end{tikzpicture}
+    \column{.5\textwidth}
+      {\scriptsize\color{gmInk2}what the images show}\par\vskip1mm
+      \input{figures/generated/fig-picture-regions}\par\vskip0mm
+      {\small\color{gmInk2}\NNamed\ named --- \NImageLinks\ links reach the graph}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item 18,823 entries searched; 8,368 got templates (44\%). 8,915 got no result from imgflip --- most
+      likely entries that are not picture memes (people, events, sites) --- and 1,540 had only
+      candidates below the threshold.
+    \item 145,498 candidate pictures seen, 10,261 near-copies merged, 26,868 templates kept;
+      29,885 entry--template links, 779 of them from KYM's own link.
+    \item 26,818 images read by the vision model, 50 failures (mostly the model repeating
+      itself). 116,549 regions: objects, people, printed text, characters, animals \dots; 20,660 of
+      them named.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{Finding the right picture, politely}
+  \begin{columns}[t]
+    \column{.5\textwidth}
+      \begin{itemize}\setlength{\itemsep}{2.6mm}
+        \item \textbf{Scored, not matched by hand}: the name, the picture against the entry's own
+          images, the rank, imgflip's own pick
+        \item KYM's own link is the \textbf{answer key}: hidden, search still finds it in the top 10
+          \textbf{\FTplRecallTen} of the time
+        \item ``The same picture'' $=$ a \textbf{perceptual fingerprint}: resized, re-encoded or
+          mirrored copies merge; crops and edits stay apart
+        \item 0, or 1 to 10 per entry, \textbf{most varied first}
+      \end{itemize}
+    \column{.44\textwidth}
+      {\scriptsize\bfseries\color{gmMuted}IMKG}\par
+      {\small templates joined to \FImkgLinkedFrames\ entries, by hand and by title}\par\vskip3mm
+      {\scriptsize\bfseries\color{gm@col@picture}MemeAtlas}\par
+      {\small \NFramesSelected\ entries, scored --- precision $\approx$\,\FTplPrecision}\par\vskip5mm
+      \begin{tikzpicture}[baseline=(current bounding box.north)]
+        \node[fill=gmTint, rounded corners=2mm, inner sep=3mm, text width=5.1cm, align=left] {
+          \gmwhy{Someone else's site}\par\vskip1mm\scriptsize
+          Only imgflip's public pages, about one request a second, as its rules allow --- never its
+          internal search API, which would be 40 times faster.};
+      \end{tikzpicture}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item IMKG linked templates to 96 frames, by hand and by title similarity above 0.85.
+    \item MemeAtlas searches imgflip for every entry's title and scores each candidate: name
+      similarity (difflib and ordered words), the picture compared with the entry's own images,
+      search rank, imgflip's ``featured'' flag. Precision about 0.95 on contact sheets (read by
+      Claude, not yet by a person --- say it). With KYM's link hidden, search finds the linked
+      template in the top 10 for 78.7\% of frames (top 1: 51.3\%).
+    \item Perceptual hashes (pHash, dHash) on thumbnails merge resizes, re-encodes, mirrors and
+      letterboxes. A crop still counts as its own template --- a known limit.
+    \item Most varied first: an MMR ranking, so ten templates are not ten copies of one picture.
+    \item Politeness is a design constraint: imgflip's terms forbid other access methods, so only
+      public HTML pages at about one request per second, even though the JSON endpoint would cut
+      requests forty-fold.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{Reading images: checked, and audited blind}
+  \begin{columns}[t]
+    \column{.5\textwidth}
+      \begin{itemize}\setlength{\itemsep}{2.6mm}
+        \item A vision model, told what the entry is, answers in a \textbf{fixed format}: boxes,
+          kinds, names, printed words
+        \item Every box and every name is \textbf{checked} before it is stored
+        \item \textbf{Blind audit}: some images are read again \emph{without} the entry's text ---
+          do the names survive?
+        \item Only named things, and the \textbf{three largest} ordinary ones, reach the graph
+      \end{itemize}
+    \column{.44\textwidth}
+      \gmbig{\NBlindPct\%}{of names confirmed by the blind reading (\NBlindOk\ of \NBlind)}\par\vskip6mm
+      \gmbig{6,800}{templates show ``a man'' --- why only the three largest ordinary regions count}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item kym\_template\_entities: qwen3-vl:32b with a grammar-constrained JSON answer (boxes on a
+      0--1000 grid, kind, name, printed text). Spike findings fixed before the pilot: the model's
+      ``thinking'' output, unbounded lists, ``named'' set on generic things.
+    \item The worry with context: the entry's title can put a name in the model's mouth. So a
+      deterministic sample is read again with no context. 204 of 240 named things (85\%) were
+      confirmed blind; on the pilot, the names only context gave were right.
+    \item Generic regions are the noise of this layer (``man'' in 6,800 templates); only named
+      things, printed text that names something, and the three largest generic regions reach the
+      graph. Everything stays in Mongo for later.
+  \end{itemize}}
+\end{frame}
+
+\gmzoomout{picture}

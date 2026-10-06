@@ -1,0 +1,321 @@
+% beamerthememeatlas.sty — a graph-shaped Beamer theme for the MemeAtlas talk.
+%
+% The talk is a walk through a graph: every chapter is a node of the
+% pipeline map (\gmmap), entered with a camera zoom (\gmzoomin) and left
+% with the reverse (\gmzoomout). Inside a chapter, a mini-map in the top
+% right corner shows where we are, and the chapter's colour is its node's.
+%
+% Colours: the node-kind colours of kg_config/neo4j_browser.grass where a
+% chapter produces that kind (frames blue, Wikidata items orange, templates
+% aqua, events yellow), checked for colour-vision deficiencies with the
+% data-viz palette validator; the rest from the same validated palette.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{beamerthememeatlas}[2026/10/05 MemeAtlas graph theme]
+
+\RequirePackage[T1]{fontenc}
+\RequirePackage[sfdefault,scaled=.94]{FiraSans}
+\RequirePackage[scaled=.86]{FiraMono}
+\RequirePackage{fontawesome5}
+\RequirePackage{tikz}
+\RequirePackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds,shapes.geometric,decorations.pathmorphing}
+
+% -- colours --------------------------------------------------------------
+\definecolor{gmSurface}{HTML}{FCFCFB}
+\definecolor{gmInk}{HTML}{0B0B0B}
+\definecolor{gmInk2}{HTML}{52514E}
+\definecolor{gmMuted}{HTML}{898781}
+\definecolor{gmHair}{HTML}{E1E0D9}
+\definecolor{gmBase}{HTML}{C3C2B7}
+\definecolor{gmTint}{HTML}{F3F2EE}
+% node kinds (neo4j_browser.grass)
+\definecolor{kFrame}{HTML}{3987E5}
+\definecolor{kStub}{HTML}{184F95}
+\definecolor{kWikidata}{HTML}{D95926}
+\definecolor{kTemplate}{HTML}{199E70}
+\definecolor{kEvent}{HTML}{C98500}
+\definecolor{kConcept}{HTML}{008300}
+\definecolor{kDoc}{HTML}{B5B4AD}
+% the validated categorical palette, light mode, in its fixed order (charts)
+\definecolor{gmP1}{HTML}{2A78D6}
+\definecolor{gmP2}{HTML}{EB6834}
+\definecolor{gmP3}{HTML}{1BAF7A}
+\definecolor{gmP4}{HTML}{EDA100}
+\definecolor{gmP5}{HTML}{E87BA4}
+\definecolor{gmP6}{HTML}{008300}
+% the rest of the validated palette
+\definecolor{gmViolet}{HTML}{4A3AA7}
+\definecolor{gmRed}{HTML}{E34948}
+\definecolor{gmMagenta}{HTML}{D55181}
+\definecolor{gmGreen}{HTML}{008300}
+
+\setbeamercolor{background canvas}{bg=gmSurface}
+\setbeamercolor{normal text}{fg=gmInk,bg=gmSurface}
+\setbeamercolor{structure}{fg=gmInk2}
+\setbeamercolor{alerted text}{fg=kWikidata}
+\setbeamercolor{frametitle}{fg=gmInk}
+\setbeamercolor{title}{fg=gmInk}
+\setbeamercolor{subtitle}{fg=gmInk2}
+\setbeamercolor{footline}{fg=gmMuted}
+\setbeamercolor{item}{fg=gmChapter}
+\setbeamercolor{block title}{fg=gmInk,bg=gmTint}
+\setbeamercolor{block body}{fg=gmInk,bg=gmTint}
+
+\setbeamerfont{frametitle}{size=\Large,series=\bfseries}
+\setbeamerfont{title}{size=\huge,series=\bfseries}
+\setbeamerfont{subtitle}{size=\large}
+\setbeamerfont{footline}{size=\tiny}
+\setbeamersize{text margin left=9mm,text margin right=9mm}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{itemize items}{\tikz[baseline=-.6ex]\fill[gmChapter](0,0) circle (.55ex);}
+\setbeamertemplate{itemize subitem}{\tikz[baseline=-.6ex]\draw[gmChapter,line width=.5pt](0,0) circle (.45ex);}
+\setlength{\leftmargini}{1.1em}
+\setbeamertemplate{blocks}[rounded][shadow=false]
+
+% -- the chapters -----------------------------------------------------------
+% \gmdefchapter{id}{number}{title}{colour}{text on colour}{x}{y}{icon}{map label}
+% (x, y) in cm on the 16 x 9 cm map canvas.
+\newcommand{\gmdefchapter}[9]{%
+  \expandafter\def\csname gm@num@#1\endcsname{#2}%
+  \expandafter\def\csname gm@title@#1\endcsname{#3}%
+  \colorlet{gm@col@#1}{#4}%
+  \colorlet{gm@on@#1}{#5}%
+  \expandafter\def\csname gm@x@#1\endcsname{#6}%
+  \expandafter\def\csname gm@y@#1\endcsname{#7}%
+  \expandafter\def\csname gm@icon@#1\endcsname{#8}%
+  \expandafter\def\csname gm@label@#1\endcsname{#9}}
+\newcommand{\gm@get}[2]{\csname gm@#1@#2\endcsname}
+
+% the current chapter: its number decides which map nodes are done
+\def\gm@cur{none}
+\def\gm@curnum{-1}
+\colorlet{gmChapter}{gmInk2}
+\newcommand{\gmsetchapter}[1]{%
+  \def\gm@cur{#1}%
+  \edef\gm@curnum{\gm@get{num}{#1}}%
+  \colorlet{gmChapter}{gm@col@#1}%
+  \setbeamercolor{item}{fg=gm@col@#1}}
+\newcommand{\gmchaptertitle}{\gm@get{title}{\gm@cur}}
+
+% -- the map ------------------------------------------------------------------
+\tikzset{
+  gm node/.style={circle, minimum size=12mm, inner sep=0pt, line width=1.6pt,
+                  font=\Large},
+  gm label/.style={font=\scriptsize\bfseries, text=gmInk, align=center, inner sep=1pt},
+  gm flow/.style={-{Stealth[length=2.2mm,width=1.8mm]}, line width=.9pt, draw=gmBase,
+                  shorten >=1.5mm, shorten <=1.5mm},
+  gm flow label/.style={font=\tiny, text=gmMuted, fill=gmSurface, inner sep=1pt},
+}
+% state of a node: done (number < current), current, or ahead
+\newcommand{\gm@nodestyle}[1]{%
+  \ifnum\gm@get{num}{#1}<\gm@curnum\relax
+    \tikzset{gm this/.style={draw=gm@col@#1, fill=gm@col@#1!35!gmSurface, text=gm@col@#1!60!gmInk}}%
+  \else\ifnum\gm@get{num}{#1}=\gm@curnum\relax
+    \tikzset{gm this/.style={draw=gm@col@#1, fill=gm@col@#1, text=gm@on@#1, line width=2.4pt}}%
+  \else
+    \tikzset{gm this/.style={draw=gm@col@#1, fill=gmSurface, text=gm@col@#1}}%
+  \fi\fi}
+\newcommand{\gm@mapnode}[2][]{% [extra style]{id}
+  \gm@nodestyle{#2}%
+  \node[gm node, gm this, #1] (#2) at (\gm@get{x}{#2},\gm@get{y}{#2}) {\gm@get{icon}{#2}};
+  \node[gm label, below=1.2mm of #2] (#2-label) {\gm@get{label}{#2}};}
+
+% \gmmapcontents draws the whole pipeline map in canvas coordinates.
+\newcommand{\gmmapcontents}{%
+  % the machine every stage runs in, under the nodes
+  \draw[gm@col@operate!45!gmSurface, dashed, line width=.8pt, rounded corners=5mm]
+    (1.35,0.75) rectangle (12.65,7.55);
+  \gm@mapnode{collect}\gm@mapnode{read}\gm@mapnode{link}\gm@mapnode{events}%
+  \gm@mapnode{picture}\gm@mapnode{graph}\gm@mapnode{numbers}%
+  \gm@mapnode[dashed]{next}\gm@mapnode[dashed]{before}%
+  \gm@nodestyle{operate}%
+  \node[gm node, gm this, minimum size=10mm, font=\normalsize] (operate)
+    at (\gm@get{x}{operate},\gm@get{y}{operate}) {\gm@get{icon}{operate}};
+  \node[gm label, right=1.5mm of operate, align=left, fill=gmSurface] (operate-label) {\gm@get{label}{operate}};
+  % data flow
+  \draw[gm flow, dashed] (before) to[out=-60,in=110] node[gm flow label, pos=.45, left] {2023} (collect);
+  \draw[gm flow] (collect) -- node[gm flow label, above] {\NPagesShort} (read);
+  \draw[gm flow] (read) to[out=40,in=180] node[gm flow label, pos=.55, above left] {text} (link);
+  \draw[gm flow] (read) -- node[gm flow label, above] {stories} (events);
+  \draw[gm flow] (read) to[out=-40,in=180] node[gm flow label, pos=.55, below left] {titles} (picture);
+  \draw[gm flow] (link) to[out=0,in=140] node[gm flow label, pos=.45, above right] {\NLinksShort} (graph);
+  \draw[gm flow] (events) -- node[gm flow label, above] {\NEventsShort} (graph);
+  \draw[gm flow] (picture) to[out=0,in=-140] node[gm flow label, pos=.45, below right] {\NTemplatesShort} (graph);
+  \draw[gm flow] (graph) to[out=40,in=180] (numbers);
+  \draw[gm flow, dashed] (graph) to[out=-40,in=180] node[gm flow label, pos=.6, below left] {7.1.0} (next);}
+
+% -- the camera ----------------------------------------------------------------
+% One view of the map: scale s, centred on canvas point (cx, cy). The map is
+% drawn in its own picture and placed over the whole page, so zooming is a
+% canvas transformation: lines, icons and labels grow like a real zoom.
+\newsavebox{\gm@camera}
+\newcommand{\gm@view}[3]{%
+  \sbox{\gm@camera}{%
+    \begin{tikzpicture}
+      \useasboundingbox (0,0) rectangle (16,9);
+      \fill[gmSurface] (0,0) rectangle (16,9);
+      \clip (0,0) rectangle (16,9);
+      \begin{scope}[transform canvas={shift={(8,4.5)}, scale=#1, shift={(-#2,-#3)}}]
+        \gmmapcontents
+      \end{scope}
+    \end{tikzpicture}}%
+  \begin{tikzpicture}[remember picture, overlay]
+    \node[anchor=south west, inner sep=0pt, outer sep=0pt] at (current page.south west)
+      {\usebox{\gm@camera}};
+  \end{tikzpicture}}
+
+% Zoom steps: with \gmanimatetrue (default) 9 auto-advancing steps; with
+% \gmanimatefalse only the start and the end (viewers that do not honour
+% PDF page durations). The end is the node filling the page.
+\newif\ifgmanimate \gmanimatetrue
+\def\gm@zoommax{16}
+% (a conditional inside a pgfmath expression breaks it, so the count is set first)
+\newcommand{\gm@setsteps}{\ifgmanimate\def\gm@n{8}\else\def\gm@n{1}\fi}
+% step k of n: scale s = S^(k/n); camera between map centre and node, weighted
+% so the node glides to the centre while it grows.
+\newcommand{\gm@stepview}[3]{% id, k, n
+  \pgfmathsetmacro{\gm@s}{\gm@zoommax^(#2/#3)}%
+  \pgfmathsetmacro{\gm@w}{(1-1/\gm@s)/(1-1/\gm@zoommax)}%
+  \pgfmathsetmacro{\gm@cx}{8+(\gm@get{x}{#1}-8)*\gm@w}%
+  \pgfmathsetmacro{\gm@cy}{4.5+(\gm@get{y}{#1}-4.5)*\gm@w}%
+  \gm@view{\gm@s}{\gm@cx}{\gm@cy}}
+
+% \gmmapframe{caption}: the whole map on a frame of its own, a caption top left
+\newcommand{\gmmapframe}[1]{%
+  \begin{frame}[plain]
+    \gm@view{1}{8}{4.5}%
+    \begin{tikzpicture}[remember picture, overlay]
+      \node[anchor=north east, font=\large\bfseries, text=gmInk, align=right]
+        at ($(current page.north east)+(-9mm,-6mm)$) {#1};
+    \end{tikzpicture}
+  \end{frame}}
+
+% \gmzoomin{id}: map -> node -> chapter card
+\newcommand{\gmzoomin}[1]{%
+  \gmsetchapter{#1}%
+  \begin{frame}[plain]
+    \gm@setsteps
+    \foreach \k in {0,...,\gm@n} {%
+      \pgfmathtruncatemacro{\gm@slide}{\k+1}%
+      \only<\gm@slide>{\gm@stepview{#1}{\k}{\gm@n}}}%
+    \pgfmathtruncatemacro{\gm@last}{\gm@n+1}%
+    \pgfmathtruncatemacro{\gm@card}{\gm@n+2}%
+    \only<\gm@card>{\gm@card@page{#1}}%
+    \ifgmanimate\transduration<2-\gm@last>{0.07}\fi
+    \transdissolve<\gm@card>[duration=0.5]
+  \end{frame}}
+
+% \gmzoomout{id}: node -> map, the chapter now done
+\newcommand{\gmzoomout}[1]{%
+  {\edef\gm@curnum{\the\numexpr\gm@get{num}{#1}+1\relax}%
+  \begin{frame}[plain]
+    \gm@setsteps
+    \foreach \k in {0,...,\gm@n} {%
+      \pgfmathtruncatemacro{\gm@slide}{\k+1}%
+      \pgfmathtruncatemacro{\gm@back}{\gm@n-\k}%
+      \only<\gm@slide>{\gm@stepview{#1}{\gm@back}{\gm@n}}}%
+    \ifgmanimate\transduration<1-\gm@n>{0.07}\fi
+  \end{frame}}}
+
+% the chapter card: the node fills the page; its number and title on it
+\newcommand{\gm@card@page}[1]{%
+  \begin{tikzpicture}[remember picture, overlay]
+    \fill[gm@col@#1] (current page.south west) rectangle (current page.north east);
+    \node[text=gm@on@#1, font=\fontsize{120}{120}\selectfont\bfseries, opacity=.18, anchor=east]
+      at ($(current page.east)+(-8mm,0)$) {\gm@get{num}{#1}};
+    \node[text=gm@on@#1, anchor=west, font=\fontsize{34}{38}\selectfont\bfseries, align=left]
+      at ($(current page.west)+(12mm,4mm)$) {\gm@get{title}{#1}};
+    \node[text=gm@on@#1, anchor=north west, font=\large, align=left]
+      at ($(current page.west)+(12.5mm,-5mm)$) {\gm@get{icon}{#1}\quad chapter \gm@get{num}{#1}};
+  \end{tikzpicture}}
+
+% -- inside a chapter ---------------------------------------------------------
+% the mini-map: the same graph, tiny, current node filled
+\newcommand{\gmminimap}{%
+  \begin{tikzpicture}[scale=.105, every node/.style={transform shape}]
+    \foreach \c in {before,collect,read,link,events,picture,graph,numbers,next} {%
+      \ifnum\gm@get{num}{\c}<\gm@curnum\relax
+        \fill[gm@col@\c!45!gmSurface] (\gm@get{x}{\c},\gm@get{y}{\c}) circle (.62);
+      \else\ifnum\gm@get{num}{\c}=\gm@curnum\relax
+        \fill[gm@col@\c] (\gm@get{x}{\c},\gm@get{y}{\c}) circle (.95);
+      \else
+        \draw[gm@col@\c, line width=.5pt] (\gm@get{x}{\c},\gm@get{y}{\c}) circle (.62);
+      \fi\fi}
+    \draw[gmBase, line width=.35pt]
+      (\gm@get{x}{collect},\gm@get{y}{collect}) -- (\gm@get{x}{read},\gm@get{y}{read})
+      (\gm@get{x}{read},\gm@get{y}{read}) -- (\gm@get{x}{link},\gm@get{y}{link})
+      (\gm@get{x}{read},\gm@get{y}{read}) -- (\gm@get{x}{events},\gm@get{y}{events})
+      (\gm@get{x}{read},\gm@get{y}{read}) -- (\gm@get{x}{picture},\gm@get{y}{picture})
+      (\gm@get{x}{link},\gm@get{y}{link}) -- (\gm@get{x}{graph},\gm@get{y}{graph})
+      (\gm@get{x}{events},\gm@get{y}{events}) -- (\gm@get{x}{graph},\gm@get{y}{graph})
+      (\gm@get{x}{picture},\gm@get{y}{picture}) -- (\gm@get{x}{graph},\gm@get{y}{graph})
+      (\gm@get{x}{graph},\gm@get{y}{graph}) -- (\gm@get{x}{numbers},\gm@get{y}{numbers})
+      (\gm@get{x}{graph},\gm@get{y}{graph}) -- (\gm@get{x}{next},\gm@get{y}{next});
+  \end{tikzpicture}}
+
+% frame title: the chapter as a kicker, the title, the mini-map on the right
+\setbeamertemplate{frametitle}{%
+  \vskip2.5mm
+  \begin{minipage}[t]{.84\textwidth}
+    \ifx\gm@cur\gm@none@\else
+      {\color{gmChapter}\scriptsize\bfseries\MakeUppercase{\gmchaptertitle}}\par\vskip.6mm
+    \fi
+    {\usebeamerfont{frametitle}\usebeamercolor[fg]{frametitle}\insertframetitle}
+    \ifx\insertframesubtitle\@empty\else
+      \par\vskip.5mm{\small\color{gmInk2}\insertframesubtitle}\fi
+  \end{minipage}\hfill
+  \ifx\gm@cur\gm@none@\else
+  \begin{minipage}[t]{.14\textwidth}\raggedleft\vskip-1mm\gmminimap\end{minipage}\fi
+  \vskip1mm}
+\def\gm@none@{none}
+
+% a hairline of the chapter colour at the top: we are inside its node
+\setbeamertemplate{background}{%
+  \begin{tikzpicture}
+    \useasboundingbox (0,0) rectangle (\the\paperwidth,\the\paperheight);
+    \ifx\gm@cur\gm@none@\else
+      \fill[gmChapter] (0,\paperheight) rectangle ++(\paperwidth,-1.2mm);
+    \fi
+  \end{tikzpicture}}
+
+\setbeamertemplate{footline}{%
+  \hfill\usebeamerfont{footline}\usebeamercolor[fg]{footline}%
+  \insertframenumber\hspace*{6mm}\vskip3mm}
+
+% -- building blocks for slides -------------------------------------------------
+% a hero number: \gmbig{24,291}{frames}
+\newcommand{\gmbig}[2]{%
+  {\usebeamercolor[fg]{normal text}\fontsize{26}{28}\selectfont\bfseries #1}\par
+  \vskip.5mm{\small\color{gmInk2}#2}}
+% the layman's example box: tinted, with the running example's mark
+\newsavebox{\gm@exbox}
+\newenvironment{gmexample}[1][Doge]{%
+  \def\gm@extitle{#1}%
+  \begin{lrbox}{\gm@exbox}\begin{minipage}{\dimexpr\linewidth-6mm\relax}
+  {\scriptsize\bfseries\color{gmChapter}\faPaw\enspace\gm@extitle}\par\vskip1mm}%
+  {\end{minipage}\end{lrbox}%
+  \tikz\node[fill=gmChapter!9!gmSurface, rounded corners=2mm, inner sep=3mm] {\usebox{\gm@exbox}};}
+% a "why" marker for design decisions
+\newcommand{\gmwhy}[1]{{\color{gmChapter}\bfseries #1}}
+% muted small print, e.g. sources
+\newcommand{\gmsource}[1]{\par\vfill{\tiny\color{gmMuted}#1}}
+% a pill: \gmpill{text}
+\newcommand{\gmpill}[2][gmChapter]{\tikz[baseline=(p.base)]\node[fill=#1!14!gmSurface, text=#1!70!gmInk,
+  rounded corners=1.6mm, inner xsep=1.6mm, inner ysep=.8mm, font=\scriptsize\bfseries] (p) {#2};}
+
+% pgfplots: thin horizontal bars, values at their ends, no chart junk
+\pgfplotsset{
+  gm hbar/.style={
+    xbar, bar width=7pt, width=\linewidth, axis line style={draw=none},
+    xmin=0, enlarge y limits=.1, ytick=data, yticklabel style={font=\footnotesize, text=gmInk},
+    xtick=\empty, major tick length=0pt, y dir=reverse,
+    nodes near coords, nodes near coords style={font=\scriptsize, text=gmInk2, anchor=west},
+    every axis plot/.append style={draw=none},
+    point meta=rawx, clip=false,
+  },
+  gm axis/.style={axis line style={draw=gmBase}, tick style={draw=gmBase},
+    ticklabel style={font=\tiny, text=gmInk2}, label style={font=\scriptsize, text=gmInk2},
+    grid style={draw=gmHair}},
+}
+\endinput

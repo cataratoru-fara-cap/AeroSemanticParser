@@ -1,0 +1,120 @@
+% Chapter 5 — tell the story: Origin and Spread become dated events (kym_events).
+
+\gmzoomin{events}
+\note{Chapter 5: what happened, when, and where.}
+
+\begin{frame}{Doge, step 4: what happened, when, where?}
+  \centering
+  \resizebox{\linewidth}{!}{\input{figures/generated/fig-events-doge}}\par\vskip3mm
+  {\scriptsize\color{gmInk2}
+  \tikz\node[circle, draw=gm@col@events, fill=gm@col@events, minimum size=2mm, inner sep=0pt]{}; to the day\quad
+  \tikz\node[circle, draw=gm@col@events, fill=gm@col@events!55!gmSurface, minimum size=2mm, inner sep=0pt]{}; to the month\quad
+  \tikz\node[circle, draw=gm@col@events, fill=gm@col@events!25!gmSurface, minimum size=2mm, inner sep=0pt]{}; to the year\quad
+  \tikz\node[circle, draw=gm@col@events, dashed, fill=gmSurface, minimum size=2mm, inner sep=0pt]{}; no date
+  \quad---\quad in the order the page tells them}
+  \note{
+  \begin{itemize}
+    \item Layman version: the page tells a story in sentences. We turn it into a timeline: each
+      event with its date, its place, its people.
+    \item Doge's story: 2005, a cartoon (Homestar Runner) misspells ``dog'' as ``doge''. 2010, a
+      Reddit post. 2012, Tumblr, YouTube, 4chan, the first fan blogs. 2013, Reddit communities,
+      a 4chan thread with 600 replies, and YouTube's Comic Sans easter egg.
+    \item 16 events, in the order the page tells them. A full dot is a date to the day; lighter
+      dots are only a month or a year; a dashed one has no date --- and we say so rather than
+      guess.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{One sentence, one event}
+  \vskip2mm
+  \begin{tikzpicture}
+    \node[fill=gmTint, rounded corners=2mm, inner sep=3.5mm, text width=13.2cm, align=left] {\large
+      ``\colorbox{gm@col@events!30!gmSurface}{On May 7th}, YouTuber
+      \colorbox{gm@col@events!30!gmSurface}{KwandaoRen66} uploaded a video with a person reading the
+      text over a fake Pokemon battle.''\par\vskip1mm
+      {\scriptsize\color{gmMuted}Doge, Spread section --- the sentence before says ``Sometime in April 2012''}};
+  \end{tikzpicture}
+  \vskip6mm
+  \begin{columns}[t]
+    \column{.23\textwidth}{\scriptsize\color{gmInk2}when}\par{\large\bfseries 7 May 2012}\par{\scriptsize\color{gmInk2}to the day}
+    \column{.23\textwidth}{\scriptsize\color{gmInk2}where}\par{\large\bfseries YouTube}\par{\scriptsize\color{gmInk2}a platform}
+    \column{.23\textwidth}{\scriptsize\color{gmInk2}who}\par{\large\bfseries KwandaoRen66}
+    \column{.23\textwidth}{\scriptsize\color{gmInk2}certainty}\par{\large\bfseries confirmed}
+  \end{columns}
+  \vskip6mm
+  {\small\color{gmInk2}The event keeps the words it came from: anyone can check it.}
+  \note{
+  \begin{itemize}
+    \item One event, read by a language model running on the lab's own GPUs.
+    \item ``On May 7th'' has no year: the model takes it from the sentence before (April 2012).
+      The precision is ``day''; ``Sometime in April 2012'' would be ``month''.
+    \item Where: YouTube, a platform. Who: the uploader. Certainty: confirmed --- KYM also writes
+      ``allegedly'', ``debunked'', and those are kept as such.
+    \item And the event keeps its source text. Nothing in the graph that a model produced is
+      without the sentence it came from.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{\NEvents\ events from \NSections\ stories}
+  \begin{columns}[t]
+    \column{.56\textwidth}
+      {\scriptsize\color{gmInk2}events per year}\par\vskip1mm
+      \input{figures/generated/fig-events-years}
+    \column{.4\textwidth}
+      \gmbig{\NFramesEventsPct\%}{of entries have events --- \NEventsPerFrame\ each}\par\vskip4mm
+      {\scriptsize\color{gmInk2}how precisely they are dated}\par\vskip1mm
+      \input{figures/generated/fig-events-precision}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item 36,673 Origin and Spread sections read; 142,787 events; 18,773 entries have at least one
+      (77.3\% --- almost every entry that has a story), 7.6 events each on average.
+    \item Dates: 64\% to the day, 6\% to the month, 5\% to the year, 26\% undated. 71\% of events
+      happen on a platform (YouTube, Twitter, TikTok \dots).
+    \item The chart: the history of memes as KYM tells it. The right end falls because KYM writes
+      a meme up after it becomes notable --- recent years are not finished yet.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{A model's reading, checked like one}
+  \begin{columns}[t]
+    \column{.5\textwidth}
+      \begin{itemize}\setlength{\itemsep}{2.6mm}
+        \item One call per section, on the lab's GPUs (\NEventModel)
+        \item The answer must fit a \textbf{schema}: checked before it is stored
+        \item \textbf{Every sentence belongs to an event} --- an audit refuses anything less
+        \item Dates keep their \textbf{precision} and their \textbf{words}
+        \item Events are chained \textbf{in page order}: the page is not always chronological
+      \end{itemize}
+    \column{.44\textwidth}
+      {\scriptsize\color{gmInk2}sentences that ended up in an event}\par\vskip2mm
+      \begin{tabular}{@{}lcc@{}}
+        & \small before & \small after\\\midrule
+        \small 236 review sections & \FEvCoverBefore\% & \textbf{\FEvCoverAfter\%}\\
+        \small 116 never seen     & \FEvHoldBefore\% & \textbf{\FEvCoverAfter\%}\\
+      \end{tabular}\par\vskip4mm
+      \begin{tikzpicture}[baseline=(current bounding box.north)]
+        \node[fill=gmTint, rounded corners=2mm, inner sep=3mm, text width=5.1cm, align=left] {
+          \gmwhy{Drawn from EventKG, not copied}\par\vskip1mm\scriptsize
+          what / when / where / who from the SEM model; EventKG's rule that every fact stays traceable
+          to its source};
+      \end{tikzpicture}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item kym\_events: one LLM call per Origin/Spread section (ministral-3:14b on the lab's Ollama),
+      JSON output constrained by a schema, validated before it is written.
+    \item The coverage problem: measured on the full run, 15.3\% of all sentences ended up in no
+      event --- the model skipped background and reception. Extraction 4.0.0 (prompt 9) makes it
+      an invariant: each sentence starts an event or continues the previous one, and an audit
+      refuses a record with a sentence left out. 84.9\% $\to$ 100\% on the review sections, and
+      83.6\% $\to$ 100\% on a holdout that was never used for tuning.
+    \item Page order is not time order: KYM tells flashbacks on purpose (30 of 753 dated neighbours
+      step back in time). The chain (mk:nextInStory) follows the page; the dates carry the time.
+    \item Model: SEM's what/when/where/who and EventKG's traceability, aligned in the ontology, not
+      copied (no per-statement named graphs). Events are the first nodes MemeAtlas mints from a
+      model's reading --- that made it a major version (6.0.0).
+  \end{itemize}}
+\end{frame}
+
+\gmzoomout{events}

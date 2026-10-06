@@ -1,0 +1,181 @@
+% Chapter 4 — link: names in the text become Wikidata items (kym_entities), and only those
+% that matter to the meme are kept (kym_entity_curation).
+
+\gmzoomin{link}
+\newcommand{\hl}[1]{\colorbox{gm@col@link!20!gmSurface}{\strut #1}}
+\note{Chapter 4: who and what is this page about? Linking names to Wikidata.}
+
+\begin{frame}{Doge, step 3: who and what is the page about?}
+  \vskip1mm
+  {\setlength{\fboxsep}{1.2pt}%
+  \begin{minipage}{\linewidth}\normalsize\color{gmInk}
+    \hl{Doge} is a slang term for ``dog'' that is primarily associated with pictures of
+    \hl{Shiba Inus} (nicknamed ``Shibe'') and internal monologue captions on \hl{Tumblr}. These
+    photos may be photoshopped to change the dog's face or captioned with interior monologues in
+    \hl{Comic Sans} font. The primary meme and iconography associated with Doge was the Shiba Inu
+    named \hl{Kabosu}, whose photos taken by her owner, Atsuko Sato, in early 2010, went viral
+    \dots
+  \end{minipage}}
+  \vskip7mm
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      item/.style={rounded corners=1.2mm, draw=gm@col@link, line width=.8pt, fill=gmSurface,
+                   inner sep=2.5pt, align=center, text width=2.25cm, minimum height=1.05cm}]
+    \node[item] at (0,0)   {\footnotesize Doge\\[-.4mm]{\tiny\color{gmInk2}Internet meme}\\{\tiny\color{gmInk2}Q15613810}};
+    \node[item] at (2.75,0){\footnotesize Shiba Inu\\[-.4mm]{\tiny\color{gmInk2}dog breed}\\{\tiny\color{gmInk2}Q39315}};
+    \node[item] at (5.5,0) {\footnotesize Tumblr\\[-.4mm]{\tiny\color{gmInk2}microblogging platform}\\{\tiny\color{gmInk2}Q384060}};
+    \node[item] at (8.25,0){\footnotesize Comic Sans MS\\[-.4mm]{\tiny\color{gmInk2}typeface}\\{\tiny\color{gmInk2}Q868492}};
+    \node[item] at (11,0)  {\footnotesize Kabosu\\[-.4mm]{\tiny\color{gmInk2}Japanese dog, meme celebrity}\\{\tiny\color{gmInk2}Q23486479}};
+  \end{tikzpicture}
+  \vskip3mm
+  {\small\color{gmInk2}Each name becomes a \textbf{Wikidata} item: a shared, worldwide identity with its own facts.}
+  \note{
+  \begin{itemize}
+    \item Layman version: the computer underlines the names in the text and looks each one up in
+      Wikidata --- the encyclopedia of facts behind Wikipedia --- where every thing has an ID.
+    \item ``Shiba Inu'' becomes Q39315, the dog breed. Tumblr is Q384060. Kabosu, the real dog, has
+      her own item. Comic Sans MS is the typeface.
+    \item Why IDs matter: ``Shiba Inu'' in the Doge page and ``shiba'' in another page become the
+      same thing, and the graph can connect them.
+    \item Doge itself gets its item from its Know Your Meme ID, recorded in Wikidata --- that link
+      is certain, score 1.0.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{Not every name matters}
+  \begin{columns}[t]
+    \column{.47\textwidth}
+      {\bfseries\color{gm@col@link}\faCheck\enspace kept}\par\vskip2mm
+      \small
+      \begin{tabular}{@{}l@{\hspace{3mm}}l@{}}
+        Shiba Inu      & {\color{gmInk2}a tag and the text agree}\\
+        Kabosu         & {\color{gmInk2}a tag and the text agree}\\
+        Tumblr, Reddit & {\color{gmInk2}a platform}\\
+        Dogecoin       & {\color{gmInk2}a whole tag names it}\\
+        monologue      & {\color{gmInk2}the judge: its format}\\
+        Doge           & {\color{gmInk2}the meme's own item}\\
+      \end{tabular}
+    \column{.49\textwidth}
+      {\bfseries\color{gmMuted}\faTimes\enspace dropped}\par\vskip2mm
+      \small
+      \begin{tabular}{@{}l@{\hspace{3mm}}l@{}}
+        ``doges'' $\to$ the doges of Venice & {\color{gmInk2}wrong sense}\\
+        ``Sato'' $\to$ slang for a stray dog & {\color{gmInk2}wrong sense}\\
+        Donald Trump                       & {\color{gmInk2}incidental}\\
+        Internet, internet meme            & {\color{gmInk2}incidental}\\
+        animal, iconography, plan          & {\color{gmInk2}incidental}\\
+      \end{tabular}
+  \end{columns}
+  \vskip6mm
+  {\small\color{gmInk2}Doge: \NDogeMentions\ names found, \NDogeKept\ kept --- each with the reason it was kept.}
+  \note{
+  \begin{itemize}
+    \item Recognising names is easy; deciding which ones \emph{matter to the meme} is the hard part.
+    \item Real decisions on Doge. Kept: the breed, the dog, the platforms, the coin, the
+      monologue format. Dropped: the tag ``doges'' linked to the doge, head of state of Venice and
+      Genoa --- a wrong sense. ``Sato'' (Atsuko Sato, Kabosu's owner) linked to Puerto Rican slang
+      for a mixed-breed dog --- a wrong sense, and a funny one for a dog meme. Donald Trump appears because of DOGE, the US department ---
+      incidental to the meme.
+    \item Every kept link carries its reason (rules first, the LLM judge for the rest), so anyone
+      can see why it is in the graph.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{\NMentions\ names, \NItems\ things, \NKept\ kept}
+  \begin{columns}[t]
+    \column{.5\textwidth}
+      {\scriptsize\color{gmInk2}kept, and why (\NKeptPct\%)}\par\vskip1mm
+      \input{figures/generated/fig-link-kept}
+    \column{.46\textwidth}
+      {\scriptsize\color{gmInk2}dropped, and by what}\par\vskip1mm
+      \input{figures/generated/fig-link-dropped}
+      \vskip3mm
+      \gmbig{\NLexEntities}{Wikidata items in our own lexicon, from the \NDumpGB\ GB dump}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item 305,359 names found in 24,242 entries, pointing at 31,085 different Wikidata items.
+    \item Curation kept 209,827 links (68.7\%) and dropped 95,532.
+    \item Kept: mostly by rules --- a tag and the text agree, a platform, the title agrees --- and
+      42,114 by the LLM judge. Dropped: mostly by the judge (67,455), then items too generic to say
+      anything (21,375), then curated deny lists.
+    \item The lexicon: 17.3 million Wikidata items with 22.6 million names, built from the full
+      156 GB Wikidata dump (121.7 million lines), stored locally (3.3 GB).
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{Linking like IMKG --- but at home, with evidence}
+  \begin{columns}[t]
+    \column{.47\textwidth}
+      {\scriptsize\bfseries\color{gmMuted}IMKG}\par\vskip1mm
+      \begin{itemize}\setlength{\itemsep}{2mm}\small
+        \item DBpedia Spotlight, a web service, confidence $\ge$ 0.5
+        \item then DBpedia $\to$ Wikidata
+        \item a link, and nothing about it
+      \end{itemize}
+    \column{.49\textwidth}
+      {\scriptsize\bfseries\color{gm@col@link}MemeAtlas}\par\vskip1mm
+      \begin{itemize}\setlength{\itemsep}{2mm}\small
+        \item language analysis \textbf{on our machine} (spaCy): names, noun phrases, whole tags
+        \item a \textbf{lexicon of \NLexEntities\ items} built from the full Wikidata dump
+        \item every link keeps its \textbf{score, method, and reason}
+        \item the meme's own item from its \textbf{KYM ID} in Wikidata: score 1.0
+      \end{itemize}
+  \end{columns}
+  \vskip6mm
+  \begin{tikzpicture}
+    \node[fill=gmTint, rounded corners=2mm, inner sep=3mm, text width=12.8cm, align=left] {
+      \gmwhy{Why at home?}\enspace\small The same dump gives the same links, every time --- no quota, no
+      service that changes its answers, no second knowledge base in between.};
+  \end{tikzpicture}
+  \note{
+  \begin{itemize}
+    \item IMKG used DBpedia Spotlight, a remote API, then mapped DBpedia to Wikidata. Remote,
+      rate-limited, and its answers change over time.
+    \item MemeAtlas: spaCy (en\_core\_web\_sm) finds candidate spans --- named entities, noun
+      chunks, runs of proper nouns, the title, each whole tag --- and a local lexicon built from
+      the dated Wikidata dump (wikidata-20260914) links them. Same dump, same answer.
+    \item Every link records score, method, the NER label, and the reason curation kept it. In RDF
+      these are RDF-star annotations on the link itself.
+    \item The meme's own item: Wikidata has a property for Know Your Meme IDs (P13484, the slug);
+      when it matches, the link is certain.
+    \item IMKG's predicates are kept word for word: m4s:fromAbout, m4s:fromTags.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{Measuring changed the design}
+  \begin{columns}[t]
+    \column{.5\textwidth}
+      \begin{itemize}\setlength{\itemsep}{2.6mm}
+        \item \textbf{\FCurCommonNouns\%} of the About links came from common nouns:
+          ``popularity'', ``man'', ``photograph''
+        \item ``a series of videos'' $\to$ the \textbf{mathematical series}, \FCurSeries\ times
+        \item So: a curated list of senses, then \textbf{curation} --- rules first, then an LLM judge
+          asked twice, in two wordings
+      \end{itemize}
+    \column{.44\textwidth}
+      {\scriptsize\color{gmInk2}the bar, set before measuring --- and the result}\par\vskip2mm
+      \begin{tabular}{@{}lcc@{}}
+        & \small bar & \small measured\\\midrule
+        \small relevant among kept    & $\ge$\,\FCurBarKept & \textbf{\FCurKept}\\
+        \small relevant among dropped & $\le$\,\FCurBarDropped & \textbf{\FCurDropped}\\
+      \end{tabular}\par\vskip3mm
+      {\scriptsize\color{gmMuted}projected over the corpus from 353 labelled links}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item The first full linking run (282,914 links) was measured before anything else was built
+      on it. 59\% of About links came from spans with no proper noun --- common-noun concepts.
+    \item Worse, some hubs were wrong: KYM's stock phrase ``X is a series of \dots'' linked to the
+      mathematical series (Q170198) 5,531 times; ``game'' to games in general, where KYM means
+      video games.
+    \item Fixes: a curated sense list (entity\_senses.yaml); then a curation stage: rules decide
+      first (title, own item, platform, format, a tag and the text agree, a whole tag), an LLM
+      (ministral-3:14b on the lab's GPUs) judges the rest with two differently worded prompts.
+    \item The bar was set before measuring: of kept links $\ge$ 0.85 relevant, of dropped $\le$
+      0.15. A first review failed on the dropped side (0.25), which produced curation 1.1.0; it
+      now projects to 0.875 / 0.126. Caveat to say out loud: projected from 353 labelled items; the
+      holdout review is the next step.
+  \end{itemize}}
+\end{frame}
+
+\gmzoomout{link}

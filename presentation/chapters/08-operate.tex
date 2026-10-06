@@ -1,0 +1,148 @@
+% Chapter 8 — keep it running: orchestration, quality, operations.
+
+\gmzoomin{operate}
+\note{Chapter 8: the machine around all of it --- the dashed box on the map.}
+
+\begin{frame}{Every month, a robot redoes only what changed}
+  \centering
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      st/.style={circle, minimum size=7.5mm, inner sep=0pt, line width=1.2pt, fill=gmSurface, font=\scriptsize},
+      lb/.style={font=\fontsize{6}{7}\selectfont, text=gmInk, align=center, text width=1.55cm},
+      go/.style={-{Stealth[length=1.6mm]}, line width=.8pt, draw=gmBase, shorten <=.6mm, shorten >=.6mm}]
+    \foreach \i/\c/\ic/\t in {0/collect/\faSitemap/find pages, 1/collect/\faGlobe/fetch pages,
+                              2/read/\faFile*/read pages, 3/link/\faLink/link names,
+                              4/link/\faGavel/keep what matters, 5/events/\faStream/tell the story} {
+      \node[st, draw=gm@col@\c, text=gm@col@\c] (a\i) at (\i*2.25,1.4) {\ic};
+      \node[lb, below=1mm of a\i] {\t};}
+    \foreach \i/\c/\ic/\t in {0/picture/\faImages/find templates, 1/picture/\faEye/read templates,
+                              2/picture/\faImage/read the meme's image, 3/link/\faBook/Wikidata facts,
+                              4/graph/\faProjectDiagram/build \& publish} {
+      \node[st, draw=gm@col@\c, text=gm@col@\c] (b\i) at (\i*2.25+1.1,-1.3) {\ic};
+      \node[lb, below=1mm of b\i] {\t};}
+    \foreach \i [count=\j] in {0,...,4} \draw[go] (a\i) -- (a\j);
+    \draw[go] (a5.south) |- ($(b0.north)+(0,.62)$) -- (b0.north);
+    \foreach \i [count=\j] in {0,...,3} \draw[go] (b\i) -- (b\j);
+    \node[font=\scriptsize\bfseries, text=gm@col@operate, anchor=east] at (a0.west) {1st of the month\enspace};
+  \end{tikzpicture}
+  \vskip7mm
+  {\large Each step does \textbf{only what is new or changed} --- and can stop and restart safely.}
+  \note{
+  \begin{itemize}
+    \item Layman version: every month a robot repeats the whole journey we just made with Doge ---
+      but only for the pages that are new or changed. Doge, unchanged, is not read again.
+    \item The chain: find pages, fetch them, read them, link names, keep what matters, tell the
+      story, find templates, read them, read the meme's own image, fetch Wikidata facts, build and
+      publish the graph. Each step starts the next.
+    \item If anything fails half-way, running it again finishes the job without redoing or losing
+      work. That is the property everything is built around.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{The machine}
+  \centering
+  \resizebox{!}{6.0cm}{\begin{tikzpicture}[x=1cm, y=1cm,
+      bx/.style={rounded corners=1.6mm, draw=gmBase, line width=.9pt, fill=gmSurface, align=center, font=\scriptsize,
+                 minimum height=.95cm, inner sep=2pt},
+      go/.style={-{Stealth[length=1.6mm]}, line width=.7pt, draw=gmBase},
+      grp/.style={rounded corners=2.5mm, draw=gmHair, line width=.8pt, fill=gmTint}]
+    % groups
+    \draw[grp] (-0.4,-0.7) rectangle (5.0,3.3);  \node[font=\scriptsize\bfseries, text=gmInk2, anchor=north west] at (-0.3,3.25) {Airflow 3 --- \FDags\ DAGs};
+    \draw[grp] (5.6,-0.7) rectangle (10.0,3.3); \node[font=\scriptsize\bfseries, text=gmInk2, anchor=north west] at (5.7,3.25) {stores};
+    % airflow
+    \node[bx, draw=gm@col@operate, minimum width=2.1cm] (sch) at (1.05,2.2) {scheduler};
+    \node[bx, draw=gm@col@operate, minimum width=2.1cm] (wk) at (3.5,2.2) {workers\\{\tiny Celery, Redis}};
+    \node[bx, minimum width=2.1cm] (pg) at (1.05,0.4) {Postgres\\{\tiny run history}};
+    \node[bx, minimum width=2.1cm] (dag) at (3.5,0.4) {stage code\\{\tiny library $\leftarrow$ store $\leftarrow$ DAG}};
+    % stores
+    \node[bx, draw=gm@col@read, minimum width=1.9cm] (mo) at (6.75,2.2) {MongoDB\\{\tiny one owner per collection}};
+    \node[bx, draw=gm@col@graph, minimum width=1.9cm] (n4) at (8.95,2.2) {Neo4j};
+    \node[bx, draw=gm@col@graph, minimum width=1.9cm] (fu) at (8.95,0.4) {Fuseki};
+    \node[bx, minimum width=1.9cm] (fi) at (6.75,0.4) {files\\{\tiny builds, images}};
+    % outside
+    \node[bx, draw=gm@col@collect, minimum width=2.6cm] (web) at (2.3,4.5) {Know Your Meme, imgflip\\{\tiny via a rendering service}};
+    \node[bx, draw=gm@col@events, minimum width=2.6cm] (gpu) at (7.8,4.5) {the lab's GPUs\\{\tiny language and vision models}};
+    \node[bx, draw=gm@col@numbers, minimum width=4.6cm] (px) at (4.8,-1.9) {one door: port 8080\\{\tiny dashboard, Neo4j Browser, SPARQL, admin}};
+    \draw[go] (web) -- (wk);  \draw[go] (wk) -- (gpu);
+    \draw[go] (wk) -- (mo);   \draw[go] (wk.south east) -- (fi.north west);
+    \draw[go] (mo) -- (n4);   \draw[go] (fi) -- (fu);
+    \draw[go] (px.north) -- ++(0,.75);
+  \end{tikzpicture}}
+  \note{
+  \begin{itemize}
+    \item 15 services in Docker Compose on one server. Airflow 3 orchestrates 12 DAGs: a scheduler,
+      Celery workers with Redis, Postgres for Airflow's own history.
+    \item MongoDB holds every stage's output; each collection has exactly one owning module (the
+      layering rule: pure library $\leftarrow$ store module $\leftarrow$ DAG; a DAG never issues a
+      query, a library never touches a database).
+    \item The graph goes to Neo4j and Fuseki, plus files. Models run on the lab's GPU servers
+      (Ollama behind Open WebUI): ministral-3:14b for text, qwen3-vl:32b for images.
+    \item One door: the campus firewall lets only port 8080 through, so a Caddy proxy serves the
+      Streamlit dashboard, Neo4j Browser, the SPARQL endpoint and the admin tools behind it.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{Principles that made it hold}
+  \begin{columns}[t]
+    \column{.5\textwidth}
+      \begin{itemize}\setlength{\itemsep}{2.6mm}
+        \item \textbf{Stamps, not timestamps}: a stage redoes work when the code, prompt, model,
+          lexicon or input that produced it changed
+        \item \textbf{Dead letters}: what fails is kept aside with its reason, never retried blindly
+        \item \textbf{Models on record}: every output names the model that produced it
+        \item \textbf{Every run leaves a summary}: the dashboard reads them
+      \end{itemize}
+    \column{.44\textwidth}
+      \begin{tikzpicture}[baseline=(current bounding box.north)]
+        \node[fill=gmTint, rounded corners=2mm, inner sep=3.5mm, text width=5.2cm, align=left] {
+          \gmwhy{Shared GPUs}\par\vskip1.5mm\small
+          The models run on the lab's servers, one call at a time. Reading 36,673 stories and
+          26,868 pictures took days --- so every step had to survive interruption and
+          resume where it stopped.};
+      \end{tikzpicture}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item Staleness by stamps: each output records the versions that produced it (parser version,
+      prompt version, schema hash, model, lexicon version, linker version\dots). Selection is
+      ``missing or stale under the current stamps''. Changing the event prompt re-extracts events;
+      it does not re-scrape pages.
+    \item Dead letters: parse failures, event failures, template failures are stored with their
+      reason, and not retried until something relevant changes.
+    \item Models on record: every output stores the model that produced it, and the curation judge
+      never falls back to another model (event extraction still may, by design --- recorded either
+      way), so the graph never mixes readings without saying so.
+    \item Run summaries in Mongo feed the dashboard: progress, coverage, failures, per stage.
+    \item The GPU constraint shaped everything: backfills of days, one call at a time.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{Checked, measured, written down}
+  \begin{columns}[t]
+    \column{.31\textwidth}
+      \gmbig{\FTests}{automated tests}\par\vskip1.5mm
+      {\scriptsize\color{gmInk2}\FTestLines\ of the \FPyLines\ lines of Python; saved pages and model answers as fixtures}
+    \column{.31\textwidth}
+      \gmbig{\FGaps}{technical gaps logged}\par\vskip1.5mm
+      {\scriptsize\color{gmInk2}what is weak, why, and what would fix it --- in the repository, in the open}
+    \column{.31\textwidth}
+      \gmbig{\FCommits}{commits since \FStart}\par\vskip1.5mm
+      {\scriptsize\color{gmInk2}from a scraper to a published, versioned graph}
+  \end{columns}
+  \vskip8mm
+  {\small\color{gmInk2}Every model output is reviewed in a loop --- sample, read, fix, read again --- on
+  contact sheets, blind audits and held-out sets never used for tuning.}
+  \note{
+  \begin{itemize}
+    \item 1,195 tests, about 14k of the 44k lines of Python. Parsers are tested on saved pages;
+      model-facing code on recorded answers; the DAG chain itself is tested (who triggers whom,
+      with which parameters).
+    \item 14 technical gaps logged in the repository: each says what is weak, what it costs, and
+      the fix --- honest debt-tracking. Several chapters today closed one.
+    \item Review loops: for every model layer, a sample is read (contact sheets of templates,
+      blind re-reading of images, event review page), the code is fixed, and a holdout that was
+      never used for tuning confirms the fix.
+    \item 96 commits since 24 June: the whole project in about three and a half months.
+  \end{itemize}}
+\end{frame}
+
+\gmzoomout{operate}

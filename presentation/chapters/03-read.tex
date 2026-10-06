@@ -1,0 +1,127 @@
+% Chapter 3 — read: one page becomes one structured record (kym_parse).
+
+\gmzoomin{read}
+\note{Chapter 3: reading the page the way a person would.}
+
+\begin{frame}{Doge, step 2: read the page like a person would}
+  \begin{columns}[c]
+    \column{.47\textwidth}\centering
+      \begin{tikzpicture}[x=1cm, y=1cm,
+          blk/.style={rounded corners=1mm, fill=gm@col@read!14!gmSurface, draw=gm@col@read!60!gmSurface,
+                      line width=.5pt, font=\tiny, text=gmInk, inner sep=1.5pt},
+          blkd/.style={blk, fill=gm@col@read!22!gmSurface},
+          blkt/.style={blk, fill=gm@col@read!30!gmSurface}]
+        \draw[gmBase, line width=.8pt, rounded corners=1.5mm] (0,0) rectangle (5.6,6.3);
+        \fill[gmHair] (0,5.95) rectangle (5.6,6.3);
+        \foreach \x in {.18,.36,.54} \fill[gmBase] (\x,6.125) circle (.06);
+        \node[blkt, minimum width=3.4cm, minimum height=.45cm, anchor=north west, font=\scriptsize\bfseries] at (.2,5.8) {Doge};
+        \node[blk, minimum width=1.6cm, minimum height=1.6cm, anchor=north west] at (.2,5.2) {image};
+        \node[blkd, text width=1.95cm, minimum height=1.6cm, anchor=north west, align=left] at (1.95,5.2)
+          {status\\type\\year\\origin\\region};
+        \node[blk, text width=1.2cm, minimum height=2.3cm, anchor=north west, align=center] at (4.2,5.8)
+          {part of a series};
+        \node[blkd, text width=5.05cm, minimum height=.55cm, anchor=north west] at (.2,3.45) {About};
+        \node[blkd, text width=5.05cm, minimum height=.55cm, anchor=north west] at (.2,2.78) {Origin};
+        \node[blkd, text width=5.05cm, minimum height=.55cm, anchor=north west] at (.2,2.11) {Spread \dots\ 21 more sections};
+        \node[blk, text width=2.4cm, minimum height=.45cm, anchor=north west] at (.2,1.36) {tags};
+        \node[blk, text width=2.45cm, minimum height=.45cm, anchor=north west] at (2.8,1.36) {references};
+        \node[font=\tiny, text=gmMuted, anchor=south] at (2.8,.08) {knowyourmeme.com/memes/doge};
+      \end{tikzpicture}
+    \column{.5\textwidth}
+      {\footnotesize\ttfamily
+      \begin{tabular}{@{}l@{\hspace{3mm}}l@{}}
+        \color{gmInk2}title    & Doge\\
+        \color{gmInk2}category & meme, confirmed\\
+        \color{gmInk2}year     & 2010\\
+        \color{gmInk2}origin   & Tumblr\\
+        \color{gmInk2}region   & Japan\\
+        \color{gmInk2}types    & animal, character, exploitable,\\
+                               & image macro, slang\\
+        \color{gmInk2}series   & Interior Monologue Captioning\\
+        \color{gmInk2}tags     & \NDogeTags\ (shiba inu, kabosu, dogecoin\dots)\\
+        \color{gmInk2}sections & \NDogeSections\ --- \NDogeLinks\ links, \NDogeImages\ images\\
+        \color{gmInk2}references & \NDogeRefs\\
+      \end{tabular}}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item Layman version: a person reading this page sees a title, a picture, a box of facts on
+      the right, and the story underneath. The parser does exactly that, and writes it down as a
+      tidy record --- one record per page, the same fields every time.
+    \item Doge: a meme, confirmed by KYM's editors, from 2010, born on Tumblr, in Japan; five
+      types; part of the series ``Interior Monologue Captioning''; 22 tags; 25 sections with 77
+      links and 36 images; 49 references.
+    \item This record is what every later step works from. Nobody reads HTML again.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{\NEntries\ records}
+  \begin{columns}[c]
+    \column{.38\textwidth}
+      {\small\begin{tabular}{@{}r@{\hspace{2.5mm}}l@{}}
+        \textbf{\NMemes}         & memes\\
+        \textbf{\NCatEvents}     & events\\
+        \textbf{\NCatSubcultures}& subcultures\\
+        \textbf{\NCatPeople}     & people\\
+        \textbf{\NCatSites}      & sites\\
+        \textbf{\NCatCultures}   & cultures\\
+      \end{tabular}}\par\vskip5mm
+      {\small\color{gmInk2}\NReady\ have every field (\NReadyPct\%); the rest are missing something}
+    \column{.58\textwidth}
+      {\scriptsize\color{gmInk2}what the incomplete ones are missing}\par\vskip1mm
+      \input{figures/generated/fig-read-missing}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item 24,291 entries, all parsed by the same parser version (1.7.0).
+    \item Most are memes (18,738), then events, subcultures, people, sites, cultures --- KYM's own
+      categories, which become IMKG's classes (kym:Meme, kym:Event \dots).
+    \item Only 18.6\% have every field. That is normal: most entries have no region, a quarter
+      have no Origin or Spread section. The chart is what is missing, and how often.
+    \item Important: none of them is thrown away for it --- next slide.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{A parser you can test, and a record you can trust}
+  \begin{columns}[t]
+    \column{.48\textwidth}
+      \begin{itemize}\setlength{\itemsep}{2mm}
+        \item \textbf{HTML in, record out}: no database, no scheduler inside --- tested on saved
+          pages, Doge's among them
+        \item \textbf{A schema with a version}: every record says which parser wrote it; a new
+          parser re-reads only what it changes
+        \item \textbf{Incomplete is a status, not a rejection}: the record lists what is missing
+      \end{itemize}
+    \column{.46\textwidth}
+      \begin{tikzpicture}[baseline=(current bounding box.north)]
+        \node[fill=gmTint, rounded corners=2mm, inner sep=3.5mm, text width=5.4cm, align=left] {
+          \gmwhy{Pages that are not entries}\par\vskip1mm\footnotesize
+          Photo galleries, videos and articles share the addresses of entries. They fail the
+          schema and go to a separate ``dead letter'' list --- \NParseFailures\ of them --- so the
+          entries stay clean and nothing is lost.};
+      \end{tikzpicture}\par\vskip.5mm
+      \begin{tikzpicture}[baseline=(current bounding box.north)]
+        \node[fill=gmTint, rounded corners=2mm, inner sep=3.5mm, text width=5.4cm, align=left] {
+          \gmwhy{Tried and dropped}\par\vskip1mm\footnotesize
+          Grouping pages by layout automatically. An explicit parser with saved test pages was
+          simpler to trust and to fix.};
+      \end{tikzpicture}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item The parser (kym\_parse.py) is a pure function: HTML in, a typed record out. No Mongo,
+      no Airflow. That is why it can be tested on saved pages --- the repository keeps Doge's
+      page as a test fixture.
+    \item Every record carries parser\_version, schema\_version and corpus\_policy\_version. A new
+      parser version re-parses; an unchanged page is not re-read (content fingerprint).
+    \item Corpus policy: ``nothing is discarded for being incomplete''. Tags became gated rather
+      than required (16 July). Missing fields are listed in corpus\_missing; the status is ready
+      or incomplete.
+    \item Non-entries go to parse\_failures (a dead-letter collection), so entries stay schema-pure.
+    \item An approach I tried and removed: clustering pages by DOM structure. It found layouts,
+      but an explicit parser with fixtures was easier to trust. Worth saying: dropping things is
+      part of engineering.
+  \end{itemize}}
+\end{frame}
+
+\gmzoomout{read}

@@ -1,0 +1,166 @@
+% Chapter 2 — collect: finding the pages (kym_discovery) and keeping a copy (kym_scrape).
+
+\gmzoomin{collect}
+\note{Chapter 2: before reading anything, we need the pages.}
+
+\begin{frame}{Doge, step 1: find the page, keep a copy}
+  \centering
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      box/.style={rounded corners=2mm, draw=gm@col@collect, line width=1.2pt, fill=gmSurface,
+                  minimum width=3.4cm, minimum height=2.5cm, align=center},
+      go/.style={-{Stealth[length=2.6mm]}, line width=1.1pt, draw=gmBase},
+      cpt/.style={font=\scriptsize, text=gmInk2, align=center, text width=3.4cm}]
+    \node[box] (a) at (0,0) {{\color{gm@col@collect}\Large\faSitemap}\\[1.5mm]
+      {\small\bfseries the site's index}\\[1mm]{\scriptsize\ttfamily knowyourmeme.com/}\\{\scriptsize\ttfamily \NDogeAddress}};
+    \node[box] (b) at (4.8,0) {{\color{gm@col@collect}\Large\faGlobe}\\[1.5mm]
+      {\small\bfseries the page}\\[1mm]{\Large\bfseries \NDogeRawKB\ KB}};
+    \node[box] (c) at (9.6,0) {{\color{gm@col@collect}\Large\faArchive}\\[1.5mm]
+      {\small\bfseries our copy}\\[1mm]{\Large\bfseries \NDogeStoredKB\ KB}};
+    \draw[go] (a) -- node[above, font=\scriptsize, text=gmInk2] {listed \NDogeLastmod} (b);
+    \draw[go] (b) -- node[above, font=\scriptsize, text=gmInk2] {fetched \NDogeFetched} (c);
+    \node[cpt, below=2mm of a] {found in Know Your Meme's sitemap, with the date it last changed};
+    \node[cpt, below=2mm of b] {menus, ads, scripts --- the About text is \NDogeAboutKB\ KB of it};
+    \node[cpt, below=2mm of c] {compressed, and never thrown away};
+  \end{tikzpicture}
+  \note{
+  \begin{itemize}
+    \item Layman version: we look the page up in the site's own index, download it once, and keep
+      a copy, the way a library keeps a copy of a book.
+    \item Doge's page is listed in KYM's sitemap with the date it last changed (18 June 2026).
+      We fetched it on 10 July.
+    \item The page is 364 KB; the paragraph that says what Doge \emph{is} is less than 1 KB. The
+      rest is the website: menus, ads, scripts. We keep everything anyway --- compressed, 79 KB.
+    \item Why keep it: so we can re-read it later with a better parser, without asking the site
+      again.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{Where the pages go}
+  \begin{columns}[c]
+    \column{.58\textwidth}
+      \input{figures/generated/fig-collect-funnel}
+    \column{.38\textwidth}
+      \gmbig{\NStoredGB\ GB}{stored, from \NRawGB\ GB of HTML --- \NCompress$\times$ smaller}\par\vskip5mm
+      {\small\color{gmInk2}\NDomsFailed\ pages failed, \NDomsPermanent\ of them for good (gone or forbidden)}\par\vskip2mm
+      {\small\color{gmInk2}\NParseFailures\ are not entries --- photos, videos, articles --- and are set aside}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item 39,972 addresses discovered. 25,058 are confirmed KYM entries: the others are
+      submissions the editors have not confirmed (we keep their addresses, we do not read them).
+    \item 25,016 pages stored, 6.86 GB of HTML, 1.41 GB on disk.
+    \item 42 failures: 34 permanent (the page is gone, forbidden), 8 retryable.
+    \item 24,291 entries parsed: the 709 others are photo galleries, videos and editorials living
+      under the same addresses --- not memes, set aside on purpose (next chapter).
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{Finding pages: the index first, then the listings}
+  \begin{columns}[t]
+    \column{.48\textwidth}
+      \begin{itemize}\setlength{\itemsep}{2.6mm}
+        \item \textbf{Sitemaps first}: the site's own list of pages, with the date each changed
+        \item \textbf{Listing pages} for what the sitemaps miss --- every category, every page of it
+        \item Every address gets its \textbf{section}: memes, people, events, sites, subcultures \dots
+        \item Runs on the 1st of every month
+      \end{itemize}
+    \column{.46\textwidth}
+      \begin{tikzpicture}[baseline=(current bounding box.north)]
+        \node[fill=gmTint, rounded corners=2mm, inner sep=3.5mm, text width=5.4cm, align=left] {
+          \gmwhy{Never forget, never undo}\par\vskip1.5mm\small
+          Saving the same address twice changes nothing. An entry the editors confirmed stays
+          confirmed. The date we last fetched a page is never overwritten by a crawl.\par\vskip1.5mm
+          {\color{gmInk2}So a crawl can stop half-way and simply run again.}};
+      \end{tikzpicture}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item Discovery (kym\_discovery): sitemaps are cheap and say when a page changed; listing
+      pages catch what the sitemaps leave out.
+    \item Each URL is stored once, keyed by a hash of the address, with its namespace.
+    \item The design rule is idempotence: running discovery twice is the same as running it once.
+      ``Confirmed'' only goes from false to true; ``last scraped'' is never clobbered.
+    \item That is what makes a monthly, interruptible process safe.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{Fetching pages: pay once, never lose one}
+  \begin{columns}[t]
+    \column{.5\textwidth}
+      \begin{itemize}\setlength{\itemsep}{2.6mm}
+        \item A rendering service gets past the site's bot checks --- and \textbf{bills per page}
+        \item So every batch re-checks the database first: \textbf{a retry never buys a page twice}
+        \item Two kinds of failure: \textbf{retry} (timeouts, overload) or \textbf{give up} (404, 403 \dots)
+        \item A failed re-fetch \textbf{never replaces} a good copy
+      \end{itemize}
+    \column{.44\textwidth}
+      \gmbig{\NCompress$\times$}{smaller on disk (zlib)}\par\vskip5mm
+      \gmbig{1}{fingerprint per page: a new version is noticed, an identical one is not re-read}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item kym\_scrape uses ScrapingAnt, a service that renders pages and passes anti-bot checks.
+      It costs money per request, so the engineering goal is ``never pay twice''.
+    \item Work is split into chunks; a chunk re-filters against Mongo before fetching, so if
+      Airflow retries it, already-fetched pages are skipped.
+    \item Two retry tiers: quick backoff inside the task, then Airflow's own retries. Permanent
+      errors (400, 403, 404, 405, 422) are recorded and never re-queued.
+    \item The page is compressed with zlib and fingerprinted (SHA-256 of the content): the parser
+      only re-reads a page whose content changed.
+  \end{itemize}}
+\end{frame}
+
+\begin{frame}{One entry, one address}
+  \begin{columns}[c]
+    \column{.6\textwidth}
+      \centering
+      \begin{tikzpicture}[x=1cm, y=1cm,
+          addr/.style={rounded corners=2mm, draw=gmHair, line width=.9pt, fill=gmSurface,
+                       minimum width=4.4cm, minimum height=1.3cm, align=center},
+          kept/.style={addr, draw=gm@col@collect, line width=1.4pt},
+          fr/.style={circle, fill=kFrame, text=white, minimum size=1.6cm, font=\small\bfseries},
+          go/.style={-{Stealth[length=2.4mm]}, line width=1.2pt, draw=gmBase},
+          ptr/.style={-{Stealth[length=2.2mm]}, line width=.9pt, draw=gmMuted, dash pattern=on 3pt off 2pt}]
+        \node[addr] (old) at (0,1.2) {{\small\ttfamily\color{gmMuted}/memes/doge}\\[.8mm]
+          {\scriptsize\color{gmInk2}since 2013 $\cdot$ our copy: 10 July}};
+        \node[kept] (new) at (0,-1.2) {{\small\ttfamily /sensitive/memes/doge}\\[.8mm]
+          {\scriptsize\color{gmInk2}since July 2026 $\cdot$ our copy: 9 September}};
+        \node[fr] (doge) at (4.4,-1.2) {Doge};
+        \draw[go] (new) -- (doge);
+        \draw[ptr] (old.east) to[out=0, in=95]
+          node[pos=.35, above right, font=\scriptsize, text=gmInk2] {its links come here} (doge.north);
+        \node[font=\scriptsize, text=gmInk2, anchor=north] at (1.2,-2.25)
+          {the newest page says: \emph{I live at} {\ttfamily /sensitive/memes/doge}};
+      \end{tikzpicture}
+    \column{.37\textwidth}
+      \gmbig{\FDupEntries}{entries at two addresses --- \FDupInGraph\ of them twice in the graph}\par\vskip4mm
+      {\small\color{gmInk2}\FDupKeptSensitive\ moved into ``sensitive'', \FDupKeptPublic\ moved back or renamed}\par\vskip2mm
+      {\small\color{gmInk2}\FCorpusBefore\ $\rightarrow$ \FCorpusAfter\ entries; \FDupLinks\ links re-pointed}
+  \end{columns}
+  \vskip4mm
+  \centering
+  \begin{tikzpicture}
+    \node[fill=gmTint, rounded corners=2mm, inner sep=3mm, text width=12.2cm, align=center] {
+      \gmwhy{No two entries hold the same name.}\ \small Keep the address the site gave last;
+      the others point to it.};
+  \end{tikzpicture}
+  \note{
+  \begin{itemize}
+    \item Found while preparing this talk: Doge was in the graph twice. In July KYM moved him into
+      its ``sensitive'' section, \texttt{/sensitive/memes/doge} --- and the old address still opens.
+      Discovery keeps every address it ever found, so we had both, each parsed, linked and drawn.
+    \item 835 entries like that; 813 were two frames in the published graph. 811 had been moved into
+      ``sensitive'', 24 moved back out or renamed.
+    \item The rule: normally no two entries hold the same name; keep the most recently discovered
+      address. Discovery never recorded when it found an address, so the date comes from KYM
+      itself: every page names its own address, and the newest page's answer wins. That also gets
+      the moves back right (Hide the Pain Harold) and the renames.
+    \item A step at the end of collection, every month. Parse drops the duplicates (24,291 $\to$
+      23,477 entries); the graph sends their links to the kept address --- KYM's pages still link
+      the old ones, 16,008 times.
+    \item The numbers in the rest of the talk are the published graph (7.0.0), duplicates
+      included; 7.1.0 is the first graph without them.
+  \end{itemize}}
+\end{frame}
+
+\gmzoomout{collect}

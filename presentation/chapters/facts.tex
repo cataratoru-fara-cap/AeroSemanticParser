@@ -1,0 +1,65 @@
+% Facts the slides use that do not come from the live graph: typed in by hand,
+% each with where it comes from. Everything else is figures/generated/numbers.tex.
+
+% IMKG, ESWC 2023 (Tommasini, Ilievski, Wijesiriwardene), Table 2 and section 4
+\newcommand{\FImkgNodes}{4,850,636}
+\newcommand{\FImkgEdges}{16,549,810}
+\newcommand{\FImkgRels}{836}
+\newcommand{\FImkgFrames}{12,585}
+\newcommand{\FImkgMemes}{1.3M}            % 1,326,032 imgflip memes
+\newcommand{\FImkgTemplates}{2,006}
+\newcommand{\FImkgKymNodes}{167,662}      % the KYM row
+\newcommand{\FImkgKymEdges}{914,941}
+\newcommand{\FImkgKymRels}{18}
+\newcommand{\FImkgKymDegree}{10.91}
+\newcommand{\FImkgWdEdges}{504,781}       % "WD subset"
+\newcommand{\FImkgSeeds}{556}             % Wikidata memes used as seeds
+\newcommand{\FImkgPsixseven}{276}         % memes joined KYM <-> Wikidata on P6760
+\newcommand{\FImkgTitleMatches}{60}       % KYM <-> imgflip title matches >= 85%
+\newcommand{\FImkgLinkedFrames}{96}       % I2K: frames linked to templates
+\newcommand{\FImkgLinkedTemplates}{241}
+
+% Review measurements (airflow/Technical gaps .../08, 09, 10)
+\newcommand{\FEvCoverBefore}{84.9}        % sentences in an event, extraction 3.2.0 (236 sections)
+\newcommand{\FEvCoverAfter}{100}          % extraction 4.0.0, same sections
+\newcommand{\FEvHoldBefore}{83.6}         % holdout of 116 sections, never tuned on
+\newcommand{\FCurBarKept}{0.85}           % Gabi's bar, set before measuring
+\newcommand{\FCurBarDropped}{0.15}
+\newcommand{\FCurKept}{0.875}             % relevant among kept links (projected from 353 labelled items)
+\newcommand{\FCurDropped}{0.126}          % relevant among dropped links
+\newcommand{\FCurCommonNouns}{59}         % % of About links from spans with no proper noun (linker 1.1.0)
+\newcommand{\FCurSeries}{5,531}           % mentions of "series" linked to the maths series
+\newcommand{\FTplPrecision}{0.95}         % contact sheets, 50 + 50 random frames
+\newcommand{\FTplRecallTen}{0.787}        % own template in the top 10, KYM link hidden, 150 frames
+\newcommand{\FTplRecallOne}{0.513}
+
+% The code (git, 2026-10-05)
+\newcommand{\FCommits}{96}
+\newcommand{\FTests}{1,195}
+\newcommand{\FPyFiles}{127}
+\newcommand{\FPyLines}{44k}
+\newcommand{\FTestLines}{14k}
+\newcommand{\FDags}{12}
+\newcommand{\FServices}{15}
+\newcommand{\FGaps}{14}              % technical gaps logged (14: closed 2026-10-05)
+\newcommand{\FDifferences}{14}       % deliberate differences from IMKG (MODEL.md)
+\newcommand{\FStart}{24 June 2026}
+
+% One entry, one address (gap 14; kym_scrape manual__gap14_duplicates_2026-10-05,
+% kym_parse manual__gap14_retire_2026-10-05). The graph numbers elsewhere are
+% KG 7.0.0, which still holds the duplicates; 7.1.0 is the first without.
+\newcommand{\FDupEntries}{835}          % entries held at more than one address
+\newcommand{\FDupInGraph}{813}          % of them, as two frames in KG 7.0.0
+\newcommand{\FDupKeptSensitive}{811}    % kept address in /sensitive/ (KYM moved them there)
+\newcommand{\FDupKeptPublic}{24}        % kept at a public address (moved back, or renamed)
+\newcommand{\FDupAddresses}{836}        % addresses marked a duplicate
+\newcommand{\FDupRetired}{815}          % entries retired from the corpus
+\newcommand{\FCorpusBefore}{24,291}
+\newcommand{\FCorpusAfter}{23,477}
+\newcommand{\FDupLinks}{12,456}         % 11,509 page links + 947 series parents now re-pointed
+\newcommand{\FDupOldLinks}{16,008}      % KYM page links to the old addresses (2026-10-05)
+
+% KG 7.1.0, built, not yet published (2026-10-05)
+\newcommand{\FStatements}{753,854}
+\newcommand{\FStatementItems}{32,494}
+\newcommand{\FStatementProps}{1,183}

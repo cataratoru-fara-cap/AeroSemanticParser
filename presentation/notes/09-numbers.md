@@ -1,0 +1,80 @@
+# Chapter 9 — The graph in numbers (live build, KG 7.0.0) (≈7 min)
+
+Every number comes from `data/live.json` (scripts/extract.py on the live build)
+and `data/stages.json` (the dashboard's functions). The queries are listed in
+`queries.md`.
+
+## MemeAtlas next to IMKG (the fair comparison is IMKG's KYM part)
+| | MemeAtlas 7.0.0 | IMKG, KYM part |
+|---|---|---|
+| KYM entries | **24,291** | 12,585 |
+| nodes (core) | 364,210 | 167,662 |
+| edges (core) | 738,614 | 914,941 |
+| edges counted the RDF way | **921,120** | 914,941 |
+| relation types (core) | 6 | 18 |
+| average degree (core) | 4.06 | 10.91 |
+| rebuilt | every month | once |
+
+Why "the RDF way": IMKG is RDF, where every literal (about, year, status…) is an
+edge; MemeAtlas's property graph keeps literals on nodes. Counting populated node
+attributes as edges ("triple-equivalent"), the core matches IMKG's density over
+1.93× the entries. Do not compare raw edge counts or degrees without saying this.
+
+## What each entry carries
+Wikidata link 99.5% · events 77.3% · a template 34.4% · all three 33.6% · none
+0.3% (65 entries). Templates exist for picture memes, not for people or events.
+
+## When memes are born
+Entries by the year their meme started: rising from the late 1990s to a peak in
+2019 (1,868), then falling — mostly documentation lag (KYM writes a meme up once
+it has lasted). 970 entries start before 1995.
+
+## Where memes are born (origin platform, canonicalised: "Twitter / X", "X", "twitter.com" → twitter)
+Peaks: 4chan 2010 · Tumblr 2014 · YouTube and Reddit 2019 · Twitter 2020 ·
+TikTok 2022. Totals 2005–2025: Twitter 3,940 · YouTube 2,248 · TikTok 1,775 ·
+Reddit 1,332 · 4chan 805 · Tumblr 776.
+
+## What the graph talks about most
+Wikidata items by entries naming them: Twitter 3,725, TikTok 3,277, image macro
+2,529, YouTube 2,260, catchphrase 2,138, video game, parody, viral video, song,
+Reddit. Templates shared by most entries: Trollface 10, Drake Hotline Bling 9,
+Woman Yelling At Cat 9, Soyboy Vs Yes Chad 8, Roll Safe 7, Buff Doge vs. Cheems 6,
+Doge 6.
+
+## Doge's family
+Ancestors: Doge → Interior Monologue Captioning → Image Macros → Memes.
+Descendants: 20 chains, the deepest Bonk (Cheems) → Cheems → Dogelore → Ironic
+Doge Memes → Doge — the longest series chain of the whole graph (7 steps to
+Memes). Siblings (7.0.0, Riccardo's request): 679,392 pairs share a series; only
+3,602 (0.53%) link to each other on their pages — series and links are different
+relations, and the graph keeps both. This slide's text is small: zoom in (pdfpc
+has a zoom) rather than read it from the back.
+
+## Is the graph sound? (metrics after every publish, on the core)
+0 isolated nodes · 0 duplicate edges · 0 cycles in a series · 2 connected
+components · the RDF re-derived through the mapping equals the published RDF.
+Worth knowing: 26.0% of series parents (1,061 of 4,074) are not in the corpus
+(stubs); 18.8% of entries have no entry type on KYM.
+
+## Findings worth saying
+- **One entry, two addresses (found preparing this talk, fixed — gap 14,
+  chapter 2):** 813 entries are two frames in 7.0.0, at the old address and at
+  the one KYM moved them to (mostly into its `/sensitive/` section); Doge's twin
+  even appears as its sibling. Verified (same creation date, same page; KYM's own
+  address tag names one), and fixed at collection: 7.1.0 holds each entry once.
+  Every 7.0.0 number in this chapter includes them (~3% of frames).
+- **The NSFW placeholder image is a hub** (gap 12): KYM's cover for NSFW content
+  is one image node linked by thousands of frames and events (measured on 6.5.0;
+  re-check on 7.0.0 before quoting a rank).
+- **Generic regions:** "a man" in 6,800 templates.
+
+## Live demo (optional, "Try it" slide)
+Neo4j Browser at `:8080/browser/` with `dags/kg_config/neo4j_browser.grass`
+imported (colours as in the slides). SPARQL at `:8080/sparql/`: the rdfs:seeAlso
+query IMKG would write returns Doge's whole series. **Do not run heavy SPARQL
+during a graph build** (Fuseki has no query timeout).
+
+## If someone asks
+- *Why is the average degree lower than IMKG's?* Counting convention (above).
+- *How many relation types in the whole graph?* 26 in 7.0.0; with 7.1.0's
+  Wikidata statements, each Wikidata property becomes a relation (1,183).
