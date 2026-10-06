@@ -338,6 +338,27 @@
     \xdef\gm@pi{\gm@i}\xdef\gm@px{\gm@x}\xdef\gm@py{\gm@y}}}
 \AtBeginDocument{\ifgm@views\gm@buildboxes\fi}
 
+% -- notes on a second screen (presenter.pdf) -------------------------------------
+% pgfpages puts each slide and its notes on one double-width page, but ships that page
+% only when the next slide starts --- after the next slide has set its own duration.
+% Every page would then play for its successor's time: the stop flashing past with its
+% notes, the move's last frame waiting for a click. And hyperref gives the notes pages
+% labels of their own, so the labels (pdfpc groups a move with its stop by them) drift.
+% So: ship the held page before the next slide's turn, and label the slides only.
+\newcommand{\gmnotesonsecondscreen}{%
+  \setbeameroption{show notes on second screen=right}%
+  \let\gm@pgfshipout\shipout
+  \def\shipout{%
+    \ifnum\pgf@shipoutnextto>0\relax   % a notes page: it joins its slide's page
+      \global\let\HyPL@EveryPage\relax
+    \else
+      \global\let\HyPL@EveryPage\gm@HyPLEveryPage
+      \ifpgf@holdingphysicalpage{\pgfshipoutphysicalpage}\fi
+    \fi
+    \gm@pgfshipout}%
+  \AtBeginDocument{\@ifundefined{HyPL@EveryPage}{\let\gm@HyPLEveryPage\relax}
+    {\let\gm@HyPLEveryPage\HyPL@EveryPage}}}
+
 % -- the tour ---------------------------------------------------------------------
 \newcount\gm@overviews
 \newcommand{\gm@motionframe}[1]{%
