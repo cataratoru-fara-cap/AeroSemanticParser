@@ -1,14 +1,17 @@
-% MemeAtlas — the talk. Build one of the three wrappers, not this file:
-%   slides.tex     the deck, for the screen
-%   presenter.tex  the deck with notes on a second screen (pdfpc --notes=right)
-%   notes.tex      one page per slide with its speaker notes, for reading
+% MemeAtlas — the talk. Build one of the wrappers, not this file (see the Makefile):
+%   slides.tex     the deck, for the screen: the camera moves by itself
+%   presenter.tex  the same with your notes on a second screen (pdfpc --notes=right)
+%   notes.tex      one page per stop with its speaker notes, for reading
+%   stops.tex      one page per stop, no motion: quick to proof
+%   thumbs.tex     the slides alone, one page each: the Makefile renders them into
+%                  figures/thumbs/, the pictures the camera flies over
 \ifdefined\gmmode\else\def\gmmode{slides}\fi
 \def\gmnotesmode{notes}\def\gmpresentermode{presenter}
-\ifx\gmmode\gmnotesmode\PassOptionsToClass{handout}{beamer}\fi
-\documentclass[aspectratio=169,10pt]{beamer}
+\documentclass[aspectratio=169,11pt]{beamer}
 \usepackage{theme/beamerthememeatlas}
 \usepackage{graphicx}
 \usepackage{booktabs}
+\gmsetmode{\gmmode}
 \ifx\gmmode\gmnotesmode
   \setbeameroption{show notes}
   \setbeamertemplate{note page}[plain]
@@ -17,18 +20,19 @@
   \usepackage{pgfpages}
   \setbeameroption{show notes on second screen=right}
 \fi
-% Zoom transitions play by themselves in viewers that honour PDF page
-% durations (Okular, Acrobat, pdfpc). Elsewhere, set false: each zoom is
-% then two clicks, start and end.
+% The camera's moves play by themselves in viewers that honour PDF page
+% durations (pdfpc, Okular, Acrobat). Elsewhere set this false: no motion
+% pages, every stop one click.
 \gmanimatetrue
 
 \input{figures/generated/numbers}
 \input{chapters/facts}
 \input{chapters/registry}
+\IfFileExists{figures/generated/world.tex}{\input{figures/generated/world}}{}
 
 \title{MemeAtlas}
 \subtitle{Turning Know Your Meme into a living knowledge graph}
-\author{Gabi Vaireanu}          % TODO: your name as you want it on the slide
+\author{Vaireanu Cristian Gabriel}
 \institute{LIRIS --- CNRS}      % TODO: check
 \date{October 2026}             % TODO: the day of the talk
 
@@ -40,10 +44,13 @@
 \input{chapters/04-link}
 \input{chapters/05-events}
 \input{chapters/06-picture}
-\input{chapters/07-graph}
-\input{chapters/08-operate}
-\input{chapters/09-numbers}
-\input{chapters/10-next}
-\appendix
-\input{chapters/99-backup}
+\input{chapters/07-meaning}
+\input{chapters/08-graph}
+\input{chapters/09-operate}
+\input{chapters/10-numbers}
+\input{chapters/11-next}
+\ifgmbackup
+  \appendix
+  \input{chapters/99-backup}
+\fi
 \end{document}

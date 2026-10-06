@@ -10,8 +10,10 @@ parser can re-read it later without asking the site again.
 
 ## Doge at this step
 - Found in KYM's sitemap, `lastmod` 18 June 2026; namespace `memes`; confirmed.
-- Fetched 10 July 2026: 364 KB of HTML, of which the About text is 0.8 KB —
-  menus, ads and scripts are the rest. Stored zlib-compressed: 79 KB.
+- Fetched 10 July 2026 through ScrapingAnt's plain-HTML call (1 credit, no
+  browser): 364 KB of HTML as KYM's server sends it — the About text is 0.8 KB,
+  the rest is the site's menus, ad slots and script tags, none of them run.
+  Stored zlib-compressed: 79 KB, with a SHA-256 fingerprint.
 
 ## Numbers (live, `data/stages.json`)
 - 39,972 URLs discovered; 25,058 confirmed entries (the others are unconfirmed
@@ -30,9 +32,15 @@ parser can re-read it later without asking the site again.
   nothing; `Confirmed` only goes false → true; `last_scraped` is never
   clobbered by discovery. That is what makes a monthly, interruptible process
   safe: if it stops, run it again.
-- **Pay once.** ScrapingAnt renders pages and passes bot checks, billed per
-  request. Work is chunked, and every chunk re-filters against Mongo before
-  fetching, so an Airflow retry never buys a page twice.
+- **ScrapingAnt, at its cheapest.** It gets past the site's bot checks. It is a
+  subscription: credits each month, spent per call — the plain HTML call
+  (`browser=false`) costs 1 credit, a browser-rendered one 10 (residential
+  proxies 25×, never used). KYM renders on its server, so the plain HTML already
+  holds every paragraph, link and image address; a browser would only run ads
+  and analytics. About 40k credits for the whole corpus; failed calls are not
+  billed.
+- **Never pay twice.** Work is chunked, and every chunk re-filters against Mongo
+  before fetching, so an Airflow retry never buys a page twice.
 - **Two retry tiers, two kinds of failure.** Quick backoff inside the task, then
   Airflow retries. Errors have a *kind*: permanent (400/403/404/405/422) are never
   re-queued; retryable ones are.
@@ -75,7 +83,7 @@ parser can re-read it later without asking the site again.
 
 ## If someone asks
 - *Is scraping KYM allowed?* KYM has no API; pages are fetched once per change,
-  politely, through a rendering service. (Check with the lab before publishing
+  politely, through ScrapingAnt. (Check with the lab before publishing
   anything derived from full page text — see the README's licence note.)
 - *Why keep the whole HTML?* Parsers improve. Re-parsing from our copy (parser
   1.0 → 1.7) cost nothing and asked nothing of KYM.

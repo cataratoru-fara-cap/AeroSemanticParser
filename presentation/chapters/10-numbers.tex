@@ -1,0 +1,74 @@
+% Chapter 10 — the graph in numbers: the live build (KG 7.0.0), measured.
+
+\gmenter{numbers}
+\note{Chapter 10: step back and look at the whole graph. Three stops: next to IMKG, where memes
+are born, and Doge's family.}
+
+\gmgo{numbers-imkg}{Next to IMKG}
+\begin{frame}{MemeAtlas next to IMKG}
+  \begin{columns}[t]
+    \column{.5\textwidth}
+      {\large
+      \begin{tabular}{@{}l@{\hspace{5mm}}r@{\hspace{5mm}}r@{}}
+        & \bfseries\color{gm@col@numbers}MemeAtlas & \bfseries\color{gmMuted}IMKG\\\midrule
+        entries       & \textbf{\NFrames}    & \FImkgFrames\\
+        nodes (core)  & \textbf{\NCoreNodes} & \FImkgKymNodes\\
+        edges (core)  & \textbf{\NCoreTE}    & \FImkgKymEdges\\
+        rebuilt       & monthly              & once\\
+      \end{tabular}}\par\vskip5mm
+      {\normalsize\color{gmInk2}\NFramesRatio$\times$ the entries, and layers IMKG did not have: \NEdgesShort\ edges in all}
+    \column{.46\textwidth}
+      {\normalsize\color{gmInk2}entries with \dots}\par\vskip1mm
+      \input{figures/generated/fig-numbers-layers}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item The fair comparison is with the Know Your Meme part of IMKG (its Table 2), the same source:
+      entries, entry types, tags, series and links --- the ``core''.
+    \item 24,291 entries against 12,585: 1.93 times as many.
+    \item Edges counted the RDF way (every literal is an edge in RDF; a property graph keeps literals
+      on the nodes): the core has 921,120 against IMKG's 914,941 --- the same density over twice the
+      entries.
+    \item And beyond the core, the layers IMKG did not have: events, templates, curated links ---
+      795,711 nodes and 2.56 million edges in all.
+    \item What each entry carries: 99.5\% at least one Wikidata link; 77.3\% events (nearly all that
+      have a story); 34.4\% a template --- templates exist for picture memes, not for people or
+      events; 33.6\% all three. Only 65 entries have none.
+  \end{itemize}}
+\end{frame}
+
+\gmgo{numbers-origins}{Where memes are born}
+\begin{frame}{Where memes are born}
+  {\normalsize\color{gmInk2}entries per year, by platform of origin --- one scale for all six}\par\vskip2mm
+  \centering
+  \resizebox{!}{5.45cm}{\input{figures/generated/fig-numbers-origins}}
+  \note{
+  \begin{itemize}
+    \item From the origin field, canonicalised (chapter 7: ``Twitter'', ``twitter.com'', ``X'' are
+      one platform), counted per year.
+    \item The eras of Internet culture appear by themselves: 4chan peaks in 2010, Tumblr in 2014,
+      YouTube and Reddit in 2019, Twitter in 2020 (by far the biggest: 3,940 memes since 2005),
+      TikTok in 2022 --- from nothing before 2018.
+    \item Every panel has the same scale, so the heights compare directly.
+    \item Careful with the right side: KYM writes a meme up after it has proved itself, so the last
+      years are not complete. Over all entries the peak year is 2019 (1,868 entries).
+  \end{itemize}}
+\end{frame}
+
+\gmgo{numbers-family}{Doge's family}
+\begin{frame}{Doge's family}
+  \centering
+  \resizebox{!}{5.9cm}{\input{figures/generated/fig-numbers-family}}\par\vskip1mm
+  {\normalsize\color{gmInk2}\NSiblingPairs\ pairs of entries share a series; only \NSiblingLinked\ link to each other on their pages}
+  \note{
+  \begin{itemize}
+    \item The series: KYM says ``part of a series on \dots''. Doge belongs to Interior Monologue
+      Captioning, which belongs to Image Macros, then Memes (the line at the top). Below Doge:
+      Ironic Doge Memes, then Dogelore, then Cheems, then Bonk --- four generations of one dog.
+    \item From the series we derive siblings (7.0.0, at Riccardo's request): two entries with the
+      same parent. 679,392 pairs --- and only 3,602 of them link to each other on their pages.
+      Series and links are different relations; the graph keeps both.
+    \item The longest chain in the graph goes through Doge: Bonk Cheems $\to$ \dots\ $\to$ Memes,
+      seven steps.
+  \end{itemize}}
+\end{frame}

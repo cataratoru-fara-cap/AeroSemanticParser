@@ -1,160 +1,102 @@
 % Chapter 2 — collect: finding the pages (kym_discovery) and keeping a copy (kym_scrape).
 
-\gmzoomin{collect}
-\note{Chapter 2: before reading anything, we need the pages.}
+\gmenter{collect}
+\note{Chapter 2: before reading anything, we need the pages. Three stops: Doge's own journey
+from the site's index to our disk, the twin we found on the way, and the whole corpus.}
 
-\begin{frame}{Doge, step 1: find the page, keep a copy}
+\gmgo{collect-doge}{Doge: found, fetched, kept}
+\begin{frame}{Doge, step 1: found, fetched, kept}
   \centering
   \begin{tikzpicture}[x=1cm, y=1cm,
-      box/.style={rounded corners=2mm, draw=gm@col@collect, line width=1.2pt, fill=gmSurface,
-                  minimum width=3.4cm, minimum height=2.5cm, align=center},
-      go/.style={-{Stealth[length=2.6mm]}, line width=1.1pt, draw=gmBase},
-      cpt/.style={font=\scriptsize, text=gmInk2, align=center, text width=3.4cm}]
-    \node[box] (a) at (0,0) {{\color{gm@col@collect}\Large\faSitemap}\\[1.5mm]
-      {\small\bfseries the site's index}\\[1mm]{\scriptsize\ttfamily knowyourmeme.com/}\\{\scriptsize\ttfamily \NDogeAddress}};
-    \node[box] (b) at (4.8,0) {{\color{gm@col@collect}\Large\faGlobe}\\[1.5mm]
-      {\small\bfseries the page}\\[1mm]{\Large\bfseries \NDogeRawKB\ KB}};
-    \node[box] (c) at (9.6,0) {{\color{gm@col@collect}\Large\faArchive}\\[1.5mm]
-      {\small\bfseries our copy}\\[1mm]{\Large\bfseries \NDogeStoredKB\ KB}};
-    \draw[go] (a) -- node[above, font=\scriptsize, text=gmInk2] {listed \NDogeLastmod} (b);
-    \draw[go] (b) -- node[above, font=\scriptsize, text=gmInk2] {fetched \NDogeFetched} (c);
-    \node[cpt, below=2mm of a] {found in Know Your Meme's sitemap, with the date it last changed};
-    \node[cpt, below=2mm of b] {menus, ads, scripts --- the About text is \NDogeAboutKB\ KB of it};
-    \node[cpt, below=2mm of c] {compressed, and never thrown away};
+      st/.style={circle, minimum size=1.3cm, fill=gm@col@collect, text=white, inner sep=0pt,
+                 font=\fontsize{17}{17}\selectfont},
+      nm/.style={font=\normalsize\bfseries, text=gmInk, align=center},
+      what/.style={text width=2.55cm, align=center, font=\small, text=gmInk2},
+      go/.style={-{Stealth[length=2.8mm]}, line width=1.3pt, draw=gmBase, shorten <=1.5mm, shorten >=1.5mm},
+      lab/.style={font=\small\bfseries, text=gm@col@collect!85!gmInk, fill=gmSurface, inner sep=1pt}]
+    \foreach \i/\ic/\n/\w in {0/\faSitemap/{the index}/{{\ttfamily /\NDogeAddress}\\changed \NDogeLastmod},
+                              1/\faAddressBook/{address book}/{section {\itshape memes},\\confirmed},
+                              2/\faCloudDownload*/ScrapingAnt/{1 credit,\\no browser},
+                              3/\faCode/{the page}/{\textbf{\NDogeRawKB\ KB} of HTML,\\as the server sends it},
+                              4/\faArchive/{our copy}/{\textbf{\NDogeStoredKB\ KB}, zipped,\\fingerprinted}} {
+      \node[st] (s\i) at (\i*2.95,0) {\ic};
+      \node[nm, below=1.2mm of s\i] (n\i) {\n};
+      \node[what, below=0mm of n\i, anchor=north] {\w};}
+    \foreach \i [count=\j] in {0,...,3} \draw[go] (s\i) -- (s\j);
+    \node[circle, minimum size=1.0cm, draw=kFrame, line width=1.5pt,
+          path picture={\node at (path picture bounding box.center)
+                        {\includegraphics[height=1.1cm]{figures/img/doge}};}] (doge) at (0,1.55) {};
+    \node[lab, above=1mm of s2] {fetched \NDogeFetched};
+  \end{tikzpicture}
+  \vskip4mm
+  \begin{tikzpicture}[x=1cm, y=1cm]
+    \node[fill=gmTint, rounded corners=2mm, inner sep=2.8mm, text width=13.6cm, align=left] {
+      \gmwhy{ScrapingAnt, at its cheapest.}\enspace\normalsize Monthly credits: the page as the server
+      sends it costs \textbf{1}, rendered in a browser \textbf{10}. KYM's server writes the whole page.};
   \end{tikzpicture}
   \note{
   \begin{itemize}
-    \item Layman version: we look the page up in the site's own index, download it once, and keep
+    \item Layman version: we look Doge up in the site's own index, download the page once, and keep
       a copy, the way a library keeps a copy of a book.
-    \item Doge's page is listed in KYM's sitemap with the date it last changed (18 June 2026).
-      We fetched it on 10 July.
-    \item The page is 364 KB; the paragraph that says what Doge \emph{is} is less than 1 KB. The
-      rest is the website: menus, ads, scripts. We keep everything anyway --- compressed, 79 KB.
-    \item Why keep it: so we can re-read it later with a better parser, without asking the site
-      again.
+    \item The index: Know Your Meme's sitemap lists every page with the date it last changed ---
+      18 June 2026 for Doge. Discovery (kym\_discovery) reads it every month and files each address
+      in our address book (Mongo, collection urls) with its section --- memes, people, events --- and
+      whether KYM's editors confirmed it.
+    \item The fetch (kym\_scrape) goes through ScrapingAnt, a scraping service that gets past the
+      site's bot checks. It is a subscription with monthly credits; the plain HTML call costs 1
+      credit per page, a browser-rendered one 10. KYM is rendered on its server: the plain HTML
+      already holds every paragraph, link and image address, and what a browser would add is ads
+      and analytics. So: 1 credit, about 40k credits for the whole corpus; failed calls are not
+      billed.
+    \item We fetched Doge on 10 July: 364 KB of HTML (menus and ad slots included, not run), kept
+      compressed (79 KB) with a SHA-256 fingerprint, so a page that did not change is never re-read.
+    \item Why keep the page at all: to re-read it later with a better parser, without asking the
+      site --- or paying --- again.
   \end{itemize}}
 \end{frame}
 
-\begin{frame}{Where the pages go}
-  \begin{columns}[c]
-    \column{.58\textwidth}
-      \input{figures/generated/fig-collect-funnel}
-    \column{.38\textwidth}
-      \gmbig{\NStoredGB\ GB}{stored, from \NRawGB\ GB of HTML --- \NCompress$\times$ smaller}\par\vskip5mm
-      {\small\color{gmInk2}\NDomsFailed\ pages failed, \NDomsPermanent\ of them for good (gone or forbidden)}\par\vskip2mm
-      {\small\color{gmInk2}\NParseFailures\ are not entries --- photos, videos, articles --- and are set aside}
-  \end{columns}
-  \note{
-  \begin{itemize}
-    \item 39,972 addresses discovered. 25,058 are confirmed KYM entries: the others are
-      submissions the editors have not confirmed (we keep their addresses, we do not read them).
-    \item 25,016 pages stored, 6.86 GB of HTML, 1.41 GB on disk.
-    \item 42 failures: 34 permanent (the page is gone, forbidden), 8 retryable.
-    \item 24,291 entries parsed: the 709 others are photo galleries, videos and editorials living
-      under the same addresses --- not memes, set aside on purpose (next chapter).
-  \end{itemize}}
-\end{frame}
-
-\begin{frame}{Finding pages: the index first, then the listings}
-  \begin{columns}[t]
-    \column{.48\textwidth}
-      \begin{itemize}\setlength{\itemsep}{2.6mm}
-        \item \textbf{Sitemaps first}: the site's own list of pages, with the date each changed
-        \item \textbf{Listing pages} for what the sitemaps miss --- every category, every page of it
-        \item Every address gets its \textbf{section}: memes, people, events, sites, subcultures \dots
-        \item Runs on the 1st of every month
-      \end{itemize}
-    \column{.46\textwidth}
-      \begin{tikzpicture}[baseline=(current bounding box.north)]
-        \node[fill=gmTint, rounded corners=2mm, inner sep=3.5mm, text width=5.4cm, align=left] {
-          \gmwhy{Never forget, never undo}\par\vskip1.5mm\small
-          Saving the same address twice changes nothing. An entry the editors confirmed stays
-          confirmed. The date we last fetched a page is never overwritten by a crawl.\par\vskip1.5mm
-          {\color{gmInk2}So a crawl can stop half-way and simply run again.}};
-      \end{tikzpicture}
-  \end{columns}
-  \note{
-  \begin{itemize}
-    \item Discovery (kym\_discovery): sitemaps are cheap and say when a page changed; listing
-      pages catch what the sitemaps leave out.
-    \item Each URL is stored once, keyed by a hash of the address, with its namespace.
-    \item The design rule is idempotence: running discovery twice is the same as running it once.
-      ``Confirmed'' only goes from false to true; ``last scraped'' is never clobbered.
-    \item That is what makes a monthly, interruptible process safe.
-  \end{itemize}}
-\end{frame}
-
-\begin{frame}{Fetching pages: pay once, never lose one}
-  \begin{columns}[t]
-    \column{.5\textwidth}
-      \begin{itemize}\setlength{\itemsep}{2.6mm}
-        \item A rendering service gets past the site's bot checks --- and \textbf{bills per page}
-        \item So every batch re-checks the database first: \textbf{a retry never buys a page twice}
-        \item Two kinds of failure: \textbf{retry} (timeouts, overload) or \textbf{give up} (404, 403 \dots)
-        \item A failed re-fetch \textbf{never replaces} a good copy
-      \end{itemize}
-    \column{.44\textwidth}
-      \gmbig{\NCompress$\times$}{smaller on disk (zlib)}\par\vskip5mm
-      \gmbig{1}{fingerprint per page: a new version is noticed, an identical one is not re-read}
-  \end{columns}
-  \note{
-  \begin{itemize}
-    \item kym\_scrape uses ScrapingAnt, a service that renders pages and passes anti-bot checks.
-      It costs money per request, so the engineering goal is ``never pay twice''.
-    \item Work is split into chunks; a chunk re-filters against Mongo before fetching, so if
-      Airflow retries it, already-fetched pages are skipped.
-    \item Two retry tiers: quick backoff inside the task, then Airflow's own retries. Permanent
-      errors (400, 403, 404, 405, 422) are recorded and never re-queued.
-    \item The page is compressed with zlib and fingerprinted (SHA-256 of the content): the parser
-      only re-reads a page whose content changed.
-  \end{itemize}}
-\end{frame}
-
-\begin{frame}{One entry, one address}
+\gmgo{collect-twins}{Two addresses, one Doge}
+\begin{frame}{Two addresses, one Doge}
+  \framesubtitle{No two entries hold the same name: keep the address the site gave last}
   \begin{columns}[c]
     \column{.6\textwidth}
       \centering
       \begin{tikzpicture}[x=1cm, y=1cm,
-          addr/.style={rounded corners=2mm, draw=gmHair, line width=.9pt, fill=gmSurface,
-                       minimum width=4.4cm, minimum height=1.3cm, align=center},
-          kept/.style={addr, draw=gm@col@collect, line width=1.4pt},
-          fr/.style={circle, fill=kFrame, text=white, minimum size=1.6cm, font=\small\bfseries},
-          go/.style={-{Stealth[length=2.4mm]}, line width=1.2pt, draw=gmBase},
-          ptr/.style={-{Stealth[length=2.2mm]}, line width=.9pt, draw=gmMuted, dash pattern=on 3pt off 2pt}]
-        \node[addr] (old) at (0,1.2) {{\small\ttfamily\color{gmMuted}/memes/doge}\\[.8mm]
-          {\scriptsize\color{gmInk2}since 2013 $\cdot$ our copy: 10 July}};
-        \node[kept] (new) at (0,-1.2) {{\small\ttfamily /sensitive/memes/doge}\\[.8mm]
-          {\scriptsize\color{gmInk2}since July 2026 $\cdot$ our copy: 9 September}};
-        \node[fr] (doge) at (4.4,-1.2) {Doge};
+          addr/.style={rounded corners=2mm, draw=gmHair, line width=1pt, fill=gmSurface,
+                       minimum width=4.6cm, minimum height=1.35cm, align=center},
+          kept/.style={addr, draw=gm@col@collect, line width=1.6pt},
+          fr/.style={circle, minimum size=1.7cm, draw=kFrame, line width=2pt,
+                     path picture={\node at (path picture bounding box.center)
+                                   {\includegraphics[height=1.85cm]{figures/img/doge}};}},
+          go/.style={-{Stealth[length=2.8mm]}, line width=1.3pt, draw=gmBase},
+          ptr/.style={-{Stealth[length=2.6mm]}, line width=1.1pt, draw=gmMuted, dash pattern=on 3pt off 2pt}]
+        \node[addr] (old) at (0,1.25) {{\normalsize\ttfamily\color{gmMuted}/memes/doge}\\[.8mm]
+          {\small\color{gmInk2}since 2013; our copy: 10 July}};
+        \node[kept] (new) at (0,-1.25) {{\normalsize\ttfamily /sensitive/memes/doge}\\[.8mm]
+          {\small\color{gmInk2}since July 2026; our copy: 9 September}};
+        \node[fr] (doge) at (3.95,-1.25) {};
         \draw[go] (new) -- (doge);
-        \draw[ptr] (old.east) to[out=0, in=95]
-          node[pos=.35, above right, font=\scriptsize, text=gmInk2] {its links come here} (doge.north);
-        \node[font=\scriptsize, text=gmInk2, anchor=north] at (1.2,-2.25)
-          {the newest page says: \emph{I live at} {\ttfamily /sensitive/memes/doge}};
+        \draw[ptr] (old.east) to[out=0, in=100] (doge.north);
+        \node[font=\small, text=gmInk2, anchor=west] at (2.45,1.25) {its links come here};
+        \node[font=\small, text=gmInk2, anchor=north] at (1.1,-2.15)
+          {the newest page says: \emph{I live at} {\ttfamily /sensitive/\dots}};
       \end{tikzpicture}
     \column{.37\textwidth}
-      \gmbig{\FDupEntries}{entries at two addresses --- \FDupInGraph\ of them twice in the graph}\par\vskip4mm
-      {\small\color{gmInk2}\FDupKeptSensitive\ moved into ``sensitive'', \FDupKeptPublic\ moved back or renamed}\par\vskip2mm
-      {\small\color{gmInk2}\FCorpusBefore\ $\rightarrow$ \FCorpusAfter\ entries; \FDupLinks\ links re-pointed}
+      \gmbig{\FDupEntries}{entries at two addresses}\par\vskip4mm
+      \gmbig{\FDupInGraph}{of them twice in the graph}\par\vskip4mm
+      {\normalsize\color{gmInk2}\FCorpusBefore\ $\rightarrow$ \textbf{\color{gmInk}\FCorpusAfter} entries;\\\FDupLinks\ links re-pointed}
   \end{columns}
-  \vskip4mm
-  \centering
-  \begin{tikzpicture}
-    \node[fill=gmTint, rounded corners=2mm, inner sep=3mm, text width=12.2cm, align=center] {
-      \gmwhy{No two entries hold the same name.}\ \small Keep the address the site gave last;
-      the others point to it.};
-  \end{tikzpicture}
   \note{
   \begin{itemize}
     \item Found while preparing this talk: Doge was in the graph twice. In July KYM moved him into
       its ``sensitive'' section, \texttt{/sensitive/memes/doge} --- and the old address still opens.
       Discovery keeps every address it ever found, so we had both, each parsed, linked and drawn.
-    \item 835 entries like that; 813 were two frames in the published graph. 811 had been moved into
-      ``sensitive'', 24 moved back out or renamed.
-    \item The rule: normally no two entries hold the same name; keep the most recently discovered
-      address. Discovery never recorded when it found an address, so the date comes from KYM
-      itself: every page names its own address, and the newest page's answer wins. That also gets
-      the moves back right (Hide the Pain Harold) and the renames.
+    \item 835 entries like that; 813 were two frames in the published graph. 811 had been moved
+      into ``sensitive'', 24 moved back out or renamed.
+    \item The rule: no two entries hold the same name; keep the most recently discovered address.
+      Discovery never recorded when it found an address, so the date comes from KYM itself: every
+      page names its own address, and the newest page's answer wins. That also gets the moves back
+      (Hide the Pain Harold) and the renames right.
     \item A step at the end of collection, every month. Parse drops the duplicates (24,291 $\to$
       23,477 entries); the graph sends their links to the kept address --- KYM's pages still link
       the old ones, 16,008 times.
@@ -163,4 +105,37 @@
   \end{itemize}}
 \end{frame}
 
-\gmzoomout{collect}
+\gmgo{collect-corpus}{The whole corpus}
+\begin{frame}{\NDomsOk\ pages, one credit each}
+  \begin{columns}[c]
+    \column{.56\textwidth}
+      \input{figures/generated/fig-collect-funnel}\par\vskip3mm
+      {\normalsize\color{gmInk2}\NStoredGB\ GB on disk, from \NRawGB\ GB of HTML --- \NCompress$\times$ smaller}
+    \column{.42\textwidth}
+      \begin{tikzpicture}[x=1cm, y=-1.6cm,
+          ic/.style={circle, minimum size=.9cm, fill=gm@col@collect, text=white,
+                     font=\fontsize{13}{13}\selectfont, inner sep=0pt},
+          tx/.style={anchor=west, text width=4.6cm, font=\normalsize, text=gmInk, align=left}]
+        \node[ic] at (0,0) {\faCoins};    \node[tx] at (.6,0) {\textbf{Never pay twice}\\[-.4mm]{\small\color{gmInk2}each batch re-checks what is stored}};
+        \node[ic] at (0,1) {\faShield*};  \node[tx] at (.6,1) {\textbf{Never lose a good copy}\\[-.4mm]{\small\color{gmInk2}a failed re-fetch keeps the old one}};
+        \node[ic] at (0,2) {\faRedo};     \node[tx] at (.6,2) {\textbf{Run it again}\\[-.4mm]{\small\color{gmInk2}a crawl can stop half-way and resume}};
+      \end{tikzpicture}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item 39,972 addresses discovered: the sitemaps first (cheap, and they say when a page
+      changed), then KYM's listing pages for what the sitemaps miss. 25,058 are confirmed entries;
+      the others are submissions the editors have not confirmed --- we keep their addresses, we do
+      not fetch them.
+    \item 25,016 pages stored, 6.86 GB of HTML, 1.41 GB on disk. 42 failures: 34 for good (gone,
+      forbidden), 8 to retry. 24,291 entries parsed: the 709 others are photo galleries, videos and
+      articles living under the same addresses (next chapter).
+    \item Never pay twice: work is split into chunks, and a chunk re-checks Mongo before fetching,
+      so if Airflow retries it, pages already bought are skipped.
+    \item Never lose a good copy: two kinds of failure, retry (timeouts, overload) or give up (404,
+      403 \dots); a failed re-fetch never replaces a good page.
+    \item Idempotent: saving the same address twice changes nothing; ``confirmed'' only goes from
+      false to true; the fetch date is never overwritten by a crawl. That is what makes a monthly,
+      interruptible process safe.
+  \end{itemize}}
+\end{frame}

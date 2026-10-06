@@ -69,7 +69,7 @@ shows — linked to Wikidata, like the text.
 ## If someone asks
 - *Why imgflip and not KYM's own images?* KYM's images are examples of a meme;
   imgflip's templates are its reusable blank. 7.1.0 now also reads each entry's
-  own image (chapter 10).
+  own image (chapter 11).
 - *Cost?* No paid API: imgflip public pages; the GPU is the lab's. Gap 10
   estimated the first full pass at ~32 h of search, ~15–30 h of details and days
   of vision, run in parallel.

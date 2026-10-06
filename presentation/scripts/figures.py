@@ -128,6 +128,7 @@ N.update(
     TemplatesShort=f"{short(tpl['kept'])} templates",
     # the graph
     Nodes=fmt(counts["nodes"]), Edges=fmt(counts["edges"]), Triples=fmt(counts["triples"]),
+    NodesShort=short(counts["nodes"]), EdgesShort=f"{counts['edges'] / 1e6:.2f}M",
     TriplesShort=short(counts["triples"]), RelTypes=fmt(len(counts["edges_by_type"])),
     Frames=fmt(counts["nodes_by_kind"]["frame"]),
     RmlTriples=fmt(live["build"]["validation"].get("rml_triples", 0)),
@@ -171,6 +172,18 @@ N.update(
     DogeSiblings=fmt(len(ex["kg"]["siblings"])),
     DogeEdges=fmt(sum(r["n"] for r in ex["kg"]["edges_by_type"])),
 )
+# curation, rule by rule (kg/curation.py's order), and the judge's roles
+ck, cd_ = cur["kept"], cur["dropped"]
+N.update(CurTitle=fmt(ck.get("title", 0) + ck.get("own_item", 0)), CurDenyItem=fmt(cd_.get("deny_item", 0)),
+         CurPlatform=fmt(ck.get("platform", 0)), CurFormat=fmt(ck.get("format", 0)),
+         CurTitleAgrees=fmt(ck.get("title_agrees", 0)), CurTagText=fmt(ck.get("tag_and_text", 0)),
+         CurDenyClass=fmt(cd_.get("deny_class", 0)), CurTagNamed=fmt(ck.get("tag_named", 0)),
+         CurGeneric=fmt(cd_.get("generic_item", 0)),
+         CurJudged=fmt(ck.get("judge", 0) + cd_.get("judge", 0)),
+         CurConfirmOverturned=fmt(cur.get("confirm_overturned", 0)),
+         CurFramesJudged=fmt(cur.get("frames_judged", 0)))
+roles = cur.get("judge_roles", {})
+N.update({f"Role{k.title().replace('_', '')}": fmt(v) for k, v in roles.items()})
 lines = [f"\\newcommand{{\\N{k}}}{{{v}}}" for k, v in N.items()]
 write("numbers.tex", "\n".join(lines) + "\n")
 
@@ -197,6 +210,8 @@ og = e["og_image"]
 og_src = AIRFLOW_DATA / "kg" / "frame_images" / "files" / hashlib.sha1(og.encode()).hexdigest()[:2] / (
     hashlib.sha1(og.encode()).hexdigest() + os.path.splitext(og)[1])
 doge_img = place_image(og_src, "doge")
+# IMKG's own example meme (its Fig. 7): One Does Not Simply, imgflip template 61579
+place_image(AIRFLOW_DATA / "templates" / "blank" / "61579.jpg", "onedoes", 700)
 tpl_imgs = {}
 for t in ex["templates"]["selected"]:
     bp = t.get("blank_path") or ""
@@ -232,7 +247,7 @@ miss_names = {"region": "region", "section:spread": "Spread", "section:origin": 
               "entry_type": "entry type", "section:about": "About", "year": "year", "tags": "tags"}
 write("fig-read-missing.tex", hbars([
     (miss_names.get(k, k), v, f"{fmt(v)}\\enspace({pct(v, par['entries_total'], 0)}\\%)")
-    for k, v in sorted(miss.items(), key=lambda kv: -kv[1])], "gm@col@read"))
+    for k, v in sorted(miss.items(), key=lambda kv: -kv[1])[:5]], "gm@col@read", height="2.9cm"))
 
 kept_names = {"tag_and_text": "a tag and the text agree", "judge": "the LLM judge", "platform": "a platform",
               "title_agrees": "the title agrees", "tag_named": "a whole tag names it",
@@ -252,7 +267,7 @@ write("fig-events-precision.tex", hbars([
     ("to the month", prec["month"], f"{pct(prec['month'], evs['events_total'], 0)}\\%"),
     ("to the year", prec["year"], f"{pct(prec['year'], evs['events_total'], 0)}\\%"),
     ("no date", prec["none"], f"{pct(prec['none'], evs['events_total'], 0)}\\%"),
-], "gm@col@events", height="2.7cm", xmax_pad=1.25))
+], "gm@col@events", height="2.6cm", xmax_pad=1.45, width=".72\\linewidth"))
 
 
 def years_chart(per_year: dict[int, int], color: str, first=1995, last=2026, note_from=None) -> str:
@@ -295,7 +310,7 @@ layer_rows = [("a Wikidata link", lay["with_wikidata"]), ("events", lay["with_ev
               ("an imgflip template", lay["with_template"]), ("all three", lay["with_all"]),
               ("none of them", lay["with_none"])]
 write("fig-numbers-layers.tex", hbars([(lab, v, f"{pct(v, lay['frames'])}\\%") for lab, v in layer_rows],
-                                      "gm@col@numbers", height="3.0cm", xmax_pad=1.2))
+                                      "gm@col@numbers", height="3.0cm", xmax_pad=1.45, width=".6\\linewidth"))
 
 write("fig-numbers-items.tex", hbars([(esc(r["label"]), r["frames"], fmt(r["frames"]))
                                       for r in live["top_items_by_frames"][:10]], "kWikidata", height="5.0cm"))
@@ -336,16 +351,17 @@ for i, p in enumerate(eras):
     pts = " ".join(f"({y},{oy[y].get(p, 0)})" for y in years)
     peak_y = max(years, key=lambda y: oy[y].get(p, 0))
     total = sum(oy[y].get(p, 0) for y in years)
+    row, col = divmod(i, 3)
     panels.append(
-        f"\\begin{{scope}}[xshift={i * 2.38:.2f}cm]\n"
-        "\\begin{axis}[gm axis, width=2.75cm, height=3.0cm, scale only axis=false, at={(0,0)},\n"
-        f"  xmin=2005, xmax=2025, ymin=0, ymax={ymax * 1.05:.0f}, axis x line*=bottom, axis y line=none,\n"
-        "  xtick={2005,2025}, x tick label style={/pgf/number format/1000 sep={}, font=\\fontsize{4.5}{5}\\selectfont},\n"
-        f"  title={{{era_label[p]}}}, title style={{font=\\scriptsize\\bfseries, yshift=-1.5mm}}]\n"
-        f"\\addplot[fill=gm@col@numbers!70!gmSurface, draw=gm@col@numbers, line width=.6pt] coordinates {{{pts}}} \\closedcycle;\n"
-        f"\\node[font=\\fontsize{{4.8}}{{5.5}}\\selectfont, text=gmInk2, anchor=south] at (axis cs:{peak_y},{oy[peak_y].get(p, 0)}) {{{peak_y}}};\n"
+        f"\\begin{{scope}}[xshift={col * 4.75:.2f}cm, yshift={-row * 3.25:.2f}cm]\n"
+        "\\begin{axis}[gm axis, width=3.9cm, height=1.75cm, scale only axis, at={(0,0)},\n"
+        f"  xmin=2005, xmax=2025, ymin=0, ymax={ymax * 1.08:.0f}, axis x line*=bottom, axis y line=none,\n"
+        "  xtick={2005,2015,2025}, x tick label style={/pgf/number format/1000 sep={}, font=\\small},\n"
+        f"  title={{{era_label[p]}}}, title style={{font=\\large\\bfseries, yshift=-1mm}}]\n"
+        f"\\addplot[fill=gm@col@numbers!45!gmSurface, draw=gm@col@numbers, line width=1pt] coordinates {{{pts}}} \\closedcycle;\n"
+        f"\\node[font=\\small\\bfseries, text=gmInk, anchor=south] at (axis cs:{peak_y},{oy[peak_y].get(p, 0)}) {{{peak_y}}};\n"
         "\\end{axis}\n"
-        f"\\node[font=\\fontsize{{5}}{{6}}\\selectfont, text=gmMuted, anchor=north] at (1.17,-.42) {{{fmt(total)} memes}};\n"
+        f"\\node[font=\\small, text=gmInk2, anchor=north west] at (0,-.5) {{{fmt(total)} memes}};\n"
         "\\end{scope}")
 write("fig-numbers-origins.tex", "\\begin{tikzpicture}\n" + "\n".join(panels) + "\n\\end{tikzpicture}\n")
 
@@ -375,24 +391,26 @@ def show_date(date, precision) -> str:
 
 
 evs_d = ex["events"]
-per_row = 8
-tl = ["\\begin{tikzpicture}[x=1cm, y=1cm, ev/.style={circle, draw=gm@col@events, line width=.8pt, minimum size=3.2mm, inner sep=0pt}]"]
+per_row = 6          # three rows: the snake reads left to right, right to left, left to right
+tl = ["\\begin{tikzpicture}[x=1cm, y=1cm, ev/.style={circle, draw=gm@col@events, line width=1pt, minimum size=4.2mm, inner sep=0pt}]"]
 for i, ev in enumerate(evs_d):
     row, col = divmod(i, per_row)
-    x = (col if row % 2 == 0 else per_row - 1 - col) * 1.9
-    y = -row * 2.25
+    x = (col if row % 2 == 0 else per_row - 1 - col) * 2.45
+    y = -row * 2.05
     fill = {"day": "fill=gm@col@events", "month": "fill=gm@col@events!55!gmSurface",
             "year": "fill=gm@col@events!25!gmSurface"}.get(ev["date_precision"], "fill=gmSurface, dashed")
     tl.append(f"\\node[ev, {fill}] (e{i}) at ({x:.2f},{y:.2f}) {{}};")
-    tl.append(f"\\node[font=\\fontsize{{6}}{{7}}\\selectfont\\bfseries, text=gmInk, above=.9mm of e{i}] {{{show_date(ev['date'], ev['date_precision'])}}};")
-    tl.append(f"\\node[font=\\fontsize{{5.6}}{{6.6}}\\selectfont, text=gmInk2, align=center, below=.9mm of e{i}] {{{TL_LABEL.get(i, '')}}};")
+    tl.append(f"\\node[font=\\fontsize{{8.5}}{{9.5}}\\selectfont\\bfseries, text=gmInk, above=1mm of e{i}] {{{show_date(ev['date'], ev['date_precision'])}}};")
+    tl.append(f"\\node[font=\\fontsize{{7.6}}{{8.8}}\\selectfont, text=gmInk2, align=center, below=1mm of e{i}] {{{TL_LABEL.get(i, '')}}};")
 for i in range(1, len(evs_d)):
     same_row = (i // per_row) == ((i - 1) // per_row)
     if same_row:
-        tl.append(f"\\draw[gm@col@events, line width=.7pt, -{{Stealth[length=1.6mm]}}] (e{i - 1}) -- (e{i});")
+        tl.append(f"\\draw[gm@col@events, line width=.9pt, -{{Stealth[length=2mm]}}] (e{i - 1}) -- (e{i});")
     else:
-        tl.append(f"\\draw[gm@col@events, line width=.7pt, -{{Stealth[length=1.6mm]}}] (e{i - 1}.east) "
-                  f"to[out=0, in=0, looseness=1.6] (e{i}.east);")
+        side = "east" if (i // per_row) % 2 == 1 else "west"
+        bend = "out=0, in=0" if side == "east" else "out=180, in=180"
+        tl.append(f"\\draw[gm@col@events, line width=.9pt, -{{Stealth[length=2mm]}}] (e{i - 1}.{side}) "
+                  f"to[{bend}, looseness=1.5] (e{i}.{side});")
 tl.append("\\end{tikzpicture}")
 write("fig-events-doge.tex", "\n".join(tl) + "\n")
 
@@ -434,14 +452,14 @@ def boxes_figure(tid: int, width_cm: float) -> str:
         col = "kWikidata" if r["index"] in linked else "gmMuted"
         name = linked.get(r["index"], r["name"])
         out.append(f"\\draw[{col}, line width=1.4pt, rounded corners=1pt] ({x0_:.3f},{y0f:.3f}) rectangle ({x1_:.3f},{y1f:.3f});")
-        out.append(f"\\node[anchor=north west, fill={col}, text=white, font=\\tiny\\bfseries, inner sep=1.2pt] "
+        out.append(f"\\node[anchor=north west, fill={col}, text=white, font=\\scriptsize\\bfseries, inner sep=1.2pt] "
                    f"at ({x0_:.3f},{y1f:.3f}) {{{esc(name)}}};")
     out += ["\\end{scope}", "\\end{tikzpicture}"]
     return "\n".join(out) + "\n"
 
 
-write("fig-picture-boxes-a.tex", boxes_figure(247375501, 5.6))
-write("fig-picture-boxes-b.tex", boxes_figure(299142114, 5.6))
+write("fig-picture-boxes-a.tex", boxes_figure(247375501, 5.2))
+write("fig-picture-boxes-b.tex", boxes_figure(299142114, 5.0))
 
 print("numbers:", len(N), "| images:", doge_img, sum(1 for v in tpl_imgs.values() if v), "templates")
 
@@ -477,12 +495,14 @@ for t in ex["templates"]["selected"]:
             tpl_items.setdefault(lm["qid"], lm["label"])
 children = sorted({c["chain"][-2] for c in kg["descendants"] if len(c["chain"]) >= 2})
 ancestors = (kg["ancestors"][0]["chain"] if kg["ancestors"] else ["Doge"])[1:]
-siblings = [s["label"] for s in kg["siblings"]]
+# 7.0.0 still holds Doge twice (/memes/doge and /sensitive/memes/doge, gap 14): the twin is the
+# same entry, not a sibling, and 7.1.0 holds it once — so it is not drawn as one.
+siblings = [s["label"] for s in kg["siblings"] if s["label"] != "Doge"]
 tags, types = kg["tags"], kg["entry_types"]
 
 g = ["\\begin{tikzpicture}[x=1cm, y=1cm,",
      " dot/.style={circle, inner sep=0pt, minimum size=#1},",
-     " lab/.style={font=\\fontsize{5.6}{6.4}\\selectfont, text=gmInk, inner sep=.7pt},",
+     " lab/.style={font=\\fontsize{7.4}{8.4}\\selectfont, text=gmInk, inner sep=.8pt},",
      " edge/.style={draw=gmBase, line width=.35pt}]"]
 nodes_out: list[str] = []
 edges_out: list[str] = []
@@ -520,19 +540,19 @@ half = (len(items) + 1) // 2
 for i, (qid, label) in enumerate(items.items()):
     col, row = divmod(i, half)
     ys = column(half, 2.55, -0.25)
-    put(f"wd{qid}", 2.6 + col * 1.95, ys[row], "wikidata_entity", label=label)
+    put(f"wd{qid}", 3.8 + col * 2.05, ys[row], "wikidata_entity", label=label)
     edges_out.append(f"\\draw[edge] (doge) -- (wd{qid});")
 # lower right: its templates, and what their images show
 tsel = ex["templates"]["selected"]
-for i, (t, y) in enumerate(zip(tsel, column(len(tsel), -0.9, -2.85))):
-    put(f"t{i}", 2.2 + (i % 2) * 0.4, y, "template", "2.7mm", label=t.get("name"))
+for i, (t, y) in enumerate(zip(tsel, column(len(tsel), -0.75, -2.95))):
+    put(f"t{i}", 2.45, y, "template", "2.7mm", label=t.get("name"))
     edges_out.append(f"\\draw[edge] (doge) -- (t{i});")
 extra = [q for q in tpl_items if q not in items]
-for i, (qid, y) in enumerate(zip(extra, column(len(extra), -1.2, -2.6))):
-    put(f"wd{qid}", 6.6, y, "wikidata_entity", label=tpl_items[qid])
+for i, (qid, y) in enumerate(zip(extra, column(len(extra), -1.1, -2.7))):
+    put(f"wd{qid}", 6.55, y, "wikidata_entity", label=tpl_items[qid])
 for i, t in enumerate(tsel):
     for lm in t["links"]:
-        if lm.get("in_graph") and lm.get("qid"):
+        if lm.get("in_graph") and lm.get("qid") in extra:
             edges_out.append(f"\\draw[edge, draw=kTemplate!55!gmSurface] (t{i}) -- (wd{lm['qid']});")
 # lower left: what kind of thing it is (entry types, tags)
 for i, (name, y) in enumerate(zip(types, column(len(types), -1.55, -2.6))):
@@ -554,11 +574,11 @@ for i in range(evn):
 nodes_out.append(f"\\node[lab, text=gmInk2, anchor=north] at (0,-2.62) {{{evn} events, one story}};")
 write("fig-graph-doge.tex", "\n".join(g + nodes_out + ["\\begin{pgfonlayer}{background}"] + edges_out
                                       + ["\\end{pgfonlayer}", "\\end{tikzpicture}"]) + "\n")
-legend = [("frames", "kFrame"), ("Wikidata items", "kWikidata"), ("templates", "kTemplate"),
-          ("events", "kEvent"), ("types and tags", "kConcept")]
+legend = [("frames", "kFrame", 0), ("Wikidata items", "kWikidata", 2.0), ("templates", "kTemplate", 4.85),
+          ("events", "kEvent", 7.2), ("types and tags", "kConcept", 9.15)]
 write("fig-graph-legend.tex", "\\begin{tikzpicture}[x=1cm]\n" + "\n".join(
-    f"\\fill[{col}] ({i * 2.1:.2f},0) circle (.75mm); \\node[anchor=west, font=\\scriptsize, text=gmInk2] at ({i * 2.1 + .1:.2f},0) {{{lab}}};"
-    for i, (lab, col) in enumerate(legend)) + "\n\\end{tikzpicture}\n")
+    f"\\fill[{col}] ({x:.2f},0) circle (1mm); \\node[anchor=west, font=\\small, text=gmInk2] at ({x + .12:.2f},0) {{{lab}}};"
+    for lab, col, x in legend) + "\n\\end{tikzpicture}\n")
 
 
 # Everything Doge touches: one dot per edge, grouped by kind — its size, not its names.
@@ -592,106 +612,203 @@ fl.append(f"\\node[anchor=west, font=\\scriptsize\\bfseries, text=gmInk] at (3.9
 fl.append("\\end{tikzpicture}")
 write("fig-graph-doge-all.tex", "\n".join(fl) + "\n")
 
-# Doge's family: its ancestors and every series that hangs under it, left to right.
+# Doge's family: the series above it as one line, and every series that hangs under it as a
+# tree, left to right — at the size it is read, not shrunk to fit.
 parent_of = {}
 for c in kg["descendants"]:
     ch = c["chain"]
     for a_, b_ in zip(ch, ch[1:]):
         parent_of[a_] = b_
-chain_up = ["Doge"] + ancestors
-for a_, b_ in zip(chain_up, chain_up[1:]):
-    parent_of[a_] = b_
 kids = defaultdict(list)
 for c_, p_ in parent_of.items():
-    if c_ != p_:
+    if c_ != p_ and c_ not in kids[p_]:
         kids[p_].append(c_)
-root = chain_up[-1]
 depth, ypos = {}, {}
 leaf_y = [0.0]
+ROW = 0.5
 
 
 def lay_out(n: str, d: int) -> float:
     depth[n] = d
-    ch = sorted(set(kids.get(n, [])))
+    ch = sorted(kids.get(n, []), key=lambda c_: (-len(kids.get(c_, [])), c_))
     if not ch:
         ypos[n] = leaf_y[0]
-        leaf_y[0] -= 0.66
+        leaf_y[0] -= ROW
         return ypos[n]
     ys = [lay_out(c_, d + 1) for c_ in ch]
     ypos[n] = sum(ys) / len(ys)
     return ypos[n]
 
 
-lay_out(root, 0)
+lay_out("Doge", 0)
 
 
 def _hid(name: str) -> str:
     return hashlib.md5(name.encode()).hexdigest()[:10]
 
 
-ft = ["\\begin{tikzpicture}[x=2.75cm, y=1cm, fam/.style={rounded corners=1.2mm, inner xsep=1.4mm, inner ysep=.9mm,"
-      " font=\\fontsize{6.2}{7}\\selectfont, text width=2.45cm, align=center}]"]
+def short_name(n: str) -> str:
+    n = n.split(" / ")[0] if len(n) > 24 else n
+    if len(n) > 24:
+        n = n[:22].rsplit(" ", 1)[0] + "\u2026"
+    return esc(n)
+
+
+ft = ["\\begin{tikzpicture}[x=3.05cm, y=1cm, fam/.style={rounded corners=1.4mm, inner xsep=1.6mm, inner ysep=1mm,"
+      " font=\\fontsize{9}{10}\\selectfont, text width=2.6cm, align=center, fill=gmSurface, draw=kFrame!50!gmSurface,"
+      " line width=.6pt}]"]
 for n_, d_ in depth.items():
-    style = ("fill=kFrame, text=white, font=\\scriptsize\\bfseries" if n_ == "Doge"
-             else "fill=kFrame!14!gmSurface, draw=kFrame!45!gmSurface" if n_ in chain_up
-             else "fill=gmSurface, draw=kFrame!45!gmSurface")
-    ft.append(f"\\node[fam, {style}] (n{_hid(n_)}) at ({d_},{ypos[n_]:.2f}) {{{esc(n_)}}};")
+    style = "fill=kFrame, draw=kFrame, text=white, font=\\large\\bfseries, text width=1.6cm" if n_ == "Doge" else ""
+    ft.append(f"\\node[fam, {style}] (n{_hid(n_)}) at ({d_},{ypos[n_]:.2f}) {{{short_name(n_)}}};")
 for c_, p_ in parent_of.items():
     if c_ in depth and p_ in depth:
-        ft.append(f"\\draw[kFrame!50!gmSurface, line width=.5pt, -{{Stealth[length=1.3mm]}}] "
-                  f"(n{_hid(c_)}.west) -- (n{_hid(p_)}.east);")
+        ft.append(f"\\draw[kFrame!55!gmSurface, line width=.8pt, -{{Stealth[length=1.8mm]}}] "
+                  f"(n{_hid(c_)}.west) -- ++(-.1,0) |- (n{_hid(p_)}.east);")
+# the series above Doge, as one line over the tree
+up = " \\enspace{\\color{kFrame}\\faAngleRight}\\enspace ".join(esc(a_) for a_ in reversed(ancestors))
+ft.append(f"\\node[anchor=south west, font=\\normalsize, text=gmInk2] at (-.15,{max(ypos.values()) + .55:.2f}) "
+          f"{{{up} \\enspace{{\\color{{kFrame}}\\faAngleRight}}\\enspace \\textbf{{\\color{{gmInk}}Doge}}}};")
 ft.append("\\end{tikzpicture}")
 write("fig-numbers-family.tex", "\n".join(ft) + "\n")
 
-# The graph of the graph: every kind of node, every kind of edge, sized by count.
-POS = {"frame": (5.2, 3.0), "event": (9.9, 3.0), "external_ref": (13.2, 5.6), "image": (13.2, 0.4),
-       "wikidata_entity": (1.9, 5.7), "template": (5.6, -0.2), "frame_stub": (7.6, 6.1),
-       "tag_concept": (0.5, 3.0), "entry_type_concept": (1.2, 1.2), "origin_concept": (2.9, 0.1),
-       "region_concept": (0.9, 4.75), "badge_concept": (3.0, 4.95)}
+# The graph of the graph: every kind of node, and the arrows between two kinds, sized by count.
+# Parallel arrows between the same two kinds are drawn as one, labelled in words; a kind's
+# arrows to itself are one loop, labelled beside it. (The badge kind, one node, is left out.)
+POS = {"frame": (4.3, 3.05), "event": (8.5, 3.05), "external_ref": (11.7, 5.5), "image": (11.7, 0.6),
+       "wikidata_entity": (0.9, 5.75), "template": (6.6, 0.0), "frame_stub": (6.0, 6.05),
+       "tag_concept": (0.7, 2.75), "entry_type_concept": (1.3, 0.35), "origin_concept": (3.4, -0.45),
+       "region_concept": (3.2, 6.05)}
 NAME = {"frame": "frame", "event": "event", "external_ref": "external page", "image": "image",
         "wikidata_entity": "Wikidata item", "template": "template", "frame_stub": "frame stub",
         "tag_concept": "tag", "entry_type_concept": "entry type", "origin_concept": "origin",
-        "region_concept": "region", "badge_concept": "badge"}
+        "region_concept": "region"}
+WORDS = {("frame", "frame"): "siblings, links", ("event", "event"): "nextInStory",
+         ("tag_concept", "tag_concept"): "coOccursWith", ("origin_concept", "origin_concept"): "subTypeOf",
+         ("entry_type_concept", "entry_type_concept"): "subTypeOf",
+         ("frame", "wikidata_entity"): "about, tags, title", ("event", "external_ref"): "citations, embeds",
+         ("frame", "frame_stub"): "citesMediaFrame", ("event", "frame"): "eventLink",
+         ("event", "frame_stub"): "eventLink"}
+LABEL_AT = {("frame", "tag_concept"): .5, ("frame", "external_ref"): .38, ("frame", "image"): .3,
+            ("event", "image"): .45, ("event", "external_ref"): .38, ("frame", "wikidata_entity"): .4,
+            ("event", "frame"): .5, ("frame", "event"): .5, ("template", "wikidata_entity"): .7,
+            ("frame", "template"): .5, ("template", "image"): .5, ("template", "external_ref"): .55,
+            ("frame", "frame_stub"): .45, ("frame", "entry_type_concept"): .55}
+BEND = {("event", "frame"): "bend left=14", ("frame", "event"): "bend left=14",
+        ("frame", "image"): "bend right=10", ("template", "external_ref"): "bend right=24",
+        ("template", "wikidata_entity"): "bend left=26", ("event", "frame_stub"): "bend right=12"}
 nk = counts["nodes_by_kind"]
 nmax = max(nk.values())
-mg = ["\\begin{tikzpicture}[x=1cm, y=1cm]"]
-BEND = {("template", "external_ref"): "bend right=28", ("event", "frame_stub"): "bend right=18",
-        ("template", "image"): "bend right=8", ("frame", "external_ref"): "bend left=18",
-        ("event", "frame"): "bend left=16", ("template", "wikidata_entity"): "bend left=22"}
-loop_labels = defaultdict(list)
-for r in sorted(live["metagraph"], key=lambda r: -r["n"]):
-    s_, t_, n = r["src"], r["dst"], r["n"]
-    w = 0.25 + 0.55 * max(0.0, math.log10(n / 50))
-    lab = (f"node[font=\\fontsize{{4.8}}{{5.4}}\\selectfont, text=gmInk2, fill=gmSurface, inner sep=.6pt, pos=.5] "
-           f"{{{r['rel']} {short(n)}}}" if n >= 25000 and s_ != t_ else "")
+pairs = defaultdict(lambda: [0, []])
+for r in live["metagraph"]:
+    if r["src"] in POS and r["dst"] in POS:
+        pairs[(r["src"], r["dst"])][0] += r["n"]
+        pairs[(r["src"], r["dst"])][1].append(r["rel"])
+
+
+def radius(kind: str) -> float:
+    return 0.2 + 0.92 * math.sqrt(nk.get(kind, 0) / nmax)
+
+
+mg = ["\\begin{tikzpicture}[x=1cm, y=1cm, lab/.style={font=\\fontsize{8}{9}\\selectfont, text=gmInk2, fill=gmSurface,"
+      " inner sep=.7pt}]"]
+# a kind's arrows to itself: a line under its name, not a loop among the other arrows
+loops = {s_: (n, WORDS.get((s_, t_), rels[0])) for (s_, t_), (n, rels) in pairs.items() if s_ == t_ and n >= 1000}
+for kind, (x, y) in POS.items():
+    mg.append(f"\\node[circle, fill={KCOL[kind]}, minimum size={2 * radius(kind):.2f}cm, inner sep=0pt] (k-{kind}) at ({x},{y}) {{}};")
+    loop = (f"\\\\{{\\color{{gmInk2}}$\\circlearrowleft$ {loops[kind][1]} {short(loops[kind][0])}}}"
+            if kind in loops else "")
+    mg.append(f"\\node[font=\\fontsize{{8.5}}{{9.5}}\\selectfont, text=gmInk, align=center, below=.5mm of k-{kind}, fill=gmSurface, inner sep=.6pt] "
+              f"{{\\textbf{{{NAME[kind]}}} {fmt(nk.get(kind, 0))}{loop}}};")
+mg.append("\\begin{pgfonlayer}{background}")
+for (s_, t_), (n, rels) in sorted(pairs.items(), key=lambda kv: -kv[1][0]):
+    w = 0.35 + 0.6 * max(0.0, math.log10(n / 50))
+    words = WORDS.get((s_, t_), rels[0])
     if s_ == t_:
-        x, y = POS[s_]
-        rr = 0.18 + 0.95 * math.sqrt(nk[s_] / nmax)
-        k = len(loop_labels[s_])
-        mg.append(f"\\draw[gmBase, line width={w:.2f}pt] ({x - .2 - k * .1:.2f},{y + rr - .05:.2f}) "
-                  f"to[out={120 + k * 12},in={60 - k * 12},looseness={8 + k * 4}] ({x + .2 + k * .1:.2f},{y + rr - .05:.2f});")
-        if n >= 10000:
-            loop_labels[s_].append(f"{r['rel']} {short(n)}")
         continue
     bend = BEND.get((s_, t_), "")
-    arrow = f"-{{Stealth[length={1.2 + w * .6:.1f}mm]}}"
-    if bend:
-        mg.append(f"\\draw[gmBase, line width={w:.2f}pt, {arrow}] (k-{s_}) to[{bend}] {lab} (k-{t_});")
-    else:
-        mg.append(f"\\draw[gmBase, line width={w:.2f}pt, {arrow}] (k-{s_}) -- {lab} (k-{t_});")
-for kind, labs in loop_labels.items():
-    x, y = POS[kind]
-    rr = 0.18 + 0.95 * math.sqrt(nk[kind] / nmax)
-    joined = "\\\\".join(labs)
-    mg.append(f"\\node[font=\\fontsize{{4.8}}{{5.6}}\\selectfont, text=gmInk2, align=center, anchor=south] "
-              f"at ({x:.2f},{y + rr + 0.62 + 0.12 * len(labs):.2f}) {{{joined}}};")
-nodes_mg = []
-for kind, (x, y) in POS.items():
-    rr = 0.18 + 0.95 * math.sqrt(nk.get(kind, 0) / nmax)
-    nodes_mg.append(f"\\node[circle, fill={KCOL[kind]}, minimum size={2 * rr:.2f}cm, inner sep=0pt] (k-{kind}) at ({x},{y}) {{}};")
-    nodes_mg.append(f"\\node[font=\\fontsize{{5.6}}{{6.4}}\\selectfont, text=gmInk, align=center, below=.4mm of k-{kind}] "
-                    f"{{\\textbf{{{NAME[kind]}}}\\\\{fmt(nk.get(kind, 0))}}};")
-# edges first would hide under the nodes; draw nodes first, then edges on the background layer
-out_mg = ["\\begin{tikzpicture}[x=1cm, y=1cm]"] + nodes_mg + ["\\begin{pgfonlayer}{background}"] + mg[1:] + ["\\end{pgfonlayer}", "\\end{tikzpicture}"]
-write("fig-graph-meta.tex", "\n".join(out_mg) + "\n")
+    path = f"to[{bend}]" if bend else "--"
+    lab = (f" node[lab, sloped, above, pos={LABEL_AT.get((s_, t_), .5)}] {{{words} {short(n)}}}"
+           if n >= 25000 else "")
+    mg.append(f"\\draw[gmBase, line width={w:.2f}pt, -{{Stealth[length={1.6 + w * .5:.1f}mm]}}] "
+              f"(k-{s_}) {path}{lab} (k-{t_});")
+mg += ["\\end{pgfonlayer}", "\\end{tikzpicture}"]
+write("fig-graph-meta.tex", "\n".join(mg) + "\n")
 print("graphs written")
+
+
+# -- the link chapter: how the line was drawn, how the judge was chosen ------------------------
+# kg/entities.py, MIN_LINK_SCORE: 403 random frames, 25 links hand-judged per score band
+# ("right item for the phrase in its sentence")
+BANDS = [("0.40", 12), ("0.45", 18), ("0.50", 18), ("0.55", 22), ("0.60", 23), ("0.70+", 23)]
+bd = ["\\begin{tikzpicture}[x=1cm, y=1cm]"]
+for i, (lab, ok) in enumerate(BANDS):
+    x = i * 1.15
+    h = 2.3 * ok / 25
+    col = "gmBase" if i == 0 else "gm@col@link"
+    bd.append(f"\\fill[{col}, rounded corners=.6mm] ({x:.2f},0) rectangle ({x + .8:.2f},{h:.2f});")
+    bd.append(f"\\node[font=\\small\\bfseries, text=gmInk, anchor=south] at ({x + .4:.2f},{h:.2f}) {{{ok}/25}};")
+    bd.append(f"\\node[font=\\small, text=gmInk2, anchor=north] at ({x + .4:.2f},-.08) {{{lab}}};")
+bd.append("\\draw[gmInk, line width=1.2pt, dashed] (1.03,-.1) -- (1.03,2.75) node[anchor=south, font=\\small\\bfseries, text=gmInk] {the line: 0.45};")
+bd.append("\\end{tikzpicture}")
+write("fig-link-bands.tex", "\n".join(bd) + "\n")
+
+# kg/curation.py, the bake-off: kept precision and lost (relevant among dropped), per setup.
+# Round 1 = 280 hand-labelled items; round 2 = 353 items, projected over the corpus.
+BAKE = [("v1, mistral-small", .72, .21, 1), ("v1, ministral", .63, .14, 1), ("v1, qwen3:8b", .61, .18, 1),
+        ("ministral v3", .855, .135, 2), ("ministral v4", .853, .124, 2),
+        ("v4 + mistral confirming", .878, .162, 2), ("v4 + v3 confirming", .875, .126, 3)]
+bk = ["\\begin{tikzpicture}",
+      "\\begin{axis}[gm axis, width=7.0cm, height=5.0cm, scale only axis=false, xmin=.58, xmax=.92, ymin=.10, ymax=.23,",
+      "  xlabel={relevant among kept}, ylabel={relevant among dropped}, y dir=reverse,",
+      "  xtick={.6,.7,.8,.9}, ytick={.10,.15,.20}, tick label style={/pgf/number format/fixed}, clip=false]",
+      "\\fill[gm@col@link!12!gmSurface] (axis cs:.85,.10) rectangle (axis cs:.92,.15);",
+      "\\node[font=\\small\\bfseries, text=gm@col@link!80!gmInk, anchor=east] at (axis cs:.848,.106) {the bar};"]
+for lab, x, y, rnd in BAKE:
+    style = {1: "fill=gmBase", 2: "fill=gm@col@link!55!gmSurface", 3: "fill=gm@col@link"}[rnd]
+    size = "2.6mm" if rnd == 3 else "1.9mm"
+    bk.append(f"\\node[circle, {style}, minimum size={size}, inner sep=0pt] at (axis cs:{x},{y}) {{}};")
+bk.append("\\draw[gmInk, line width=.8pt] (axis cs:.877,.127) -- (axis cs:.905,.142) node[anchor=north, font=\\small\\bfseries, text=gmInk] {chosen};")
+bk.append("\\node[font=\\small, text=gmInk2, anchor=west] at (axis cs:.615,.205) {first prompts};")
+bk += ["\\end{axis}", "\\end{tikzpicture}"]
+write("fig-link-bakeoff.tex", "\n".join(bk) + "\n")
+
+
+# -- the meaning chapter: the curated files and the census, counted ---------------------------
+CFG = HERE.parent / "airflow" / "dags" / "kg_config"
+M: dict[str, str] = {}
+try:
+    import yaml
+    tx = yaml.safe_load(open(CFG / "entry_type_taxonomy.yaml", encoding="utf-8"))
+    og_ = yaml.safe_load(open(CFG / "origin_taxonomy.yaml", encoding="utf-8"))
+    nf = yaml.safe_load(open(CFG / "tag_normalization_exceptions.yaml", encoding="utf-8"))
+    for key, name in (("broader_confirmed", "Confirmed"), ("broader_semantic_only", "SemanticOnly"),
+                      ("contested", "Contested"), ("demoted", "Demoted"), ("do_not_encode_as_broader", "NotIsA"),
+                      ("crosscutting_qualifiers", "Qualifiers"), ("missing_umbrellas", "Umbrellas")):
+        M[f"Tax{name}"] = str(len([e for e in tx.get(key) or [] if "note" not in e or len(e) > 1]))
+    M["TaxEdges"] = str(len(tx["broader_confirmed"]) + len(tx["broader_semantic_only"]))
+    M["OriginAliases"] = fmt(len(og_["aliases"]))
+    M["OriginConcepts"] = fmt(len(set(og_["aliases"].values())))
+    M["OriginEdges"] = fmt(len(og_["broader_confirmed"]) + len(og_.get("broader_semantic_only") or []))
+    M["OriginUmbrellas"] = fmt(len({e["broader"] for e in og_["broader_confirmed"]}))
+    M["NoFold"] = fmt(len(nf["do_not_fold"]))
+except FileNotFoundError:
+    pass
+etc_census = json.load(open(HERE.parent / "airflow" / "data" / "kg_census_entry_type.json"))
+tag_census = json.load(open(HERE.parent / "airflow" / "data" / "kg_census_tags.json"))
+tv = tag_census["value_counts"]
+M.update(EntryTypes=fmt(etc_census["distinct_values"]), TypePairs=fmt(etc_census["total_pairs_returned"]),
+         TagConcepts=fmt(counts["nodes_by_kind"].get("tag_concept", 0)),
+         TagsRaw=fmt(tag_census["distinct_values"]),
+         CoOccurs=fmt(counts["edges_by_type"].get("coOccursWith", 0)),
+         SubTypeOf=fmt(counts["edges_by_type"].get("subTypeOf", 0)))
+for a_, b_ in (("exploitable", "exploitables"), ("catchphrase", "catchphrases"), ("meme", "memes")):
+    M[f"Fold{a_.capitalize()}"] = f"{fmt(tv.get(a_, 0))}"
+    M[f"Fold{a_.capitalize()}s"] = f"{fmt(tv.get(b_, 0))}"
+pairs = {(r["a"], r["b"]): r["count"] for r in tag_census["pair_cooccurrence"]}
+for (a_, b_), name in ((("gaming", "video games"), "Gaming"), (("anime", "manga"), "Anime"),
+                       (("donald trump", "politics"), "Trump"), (("film", "movies"), "Film"),
+                       (("twitter", "x"), "TwitterX")):
+    M[f"Pair{name}"] = fmt(pairs.get((a_, b_), 0))
+with open(GEN / "numbers.tex", "a", encoding="utf-8") as fh:
+    fh.write("% the meaning chapter\n" + "\n".join(f"\\newcommand{{\\N{k}}}{{{v}}}" for k, v in M.items()) + "\n")
+print("meaning numbers:", len(M))

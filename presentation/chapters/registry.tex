@@ -1,12 +1,31 @@
-% The chapters: id, number, title, colour, text on that colour, map x, map y
-% (cm, 16 x 9 canvas), icon, label on the map.
-\gmdefchapter{before}{1}{Where it started}{gmMuted}{white}{1.55}{8.15}{\faHistory}{IMKG, 2023}
-\gmdefchapter{collect}{2}{Collect}{gmRed}{white}{2.65}{4.45}{\faGlobe}{Collect}
-\gmdefchapter{read}{3}{Read}{kFrame}{white}{5.45}{4.45}{\faFile*}{Read}
-\gmdefchapter{link}{4}{Link}{kWikidata}{white}{8.45}{6.55}{\faLink}{Link}
-\gmdefchapter{events}{5}{Tell the story}{kEvent}{gmInk}{8.45}{4.45}{\faStream}{Events}
-\gmdefchapter{picture}{6}{See the picture}{kTemplate}{white}{8.45}{2.35}{\faImage}{Templates}
-\gmdefchapter{graph}{7}{Weave the graph}{gmViolet}{white}{11.45}{4.45}{\faProjectDiagram}{Graph}
-\gmdefchapter{operate}{8}{Keep it running}{gmInk2}{white}{7.0}{0.75}{\faCogs}{Airflow, every month}
-\gmdefchapter{numbers}{9}{The graph in numbers}{gmGreen}{white}{14.3}{6.4}{\faChartBar}{Numbers}
-\gmdefchapter{next}{10}{What comes next}{gmMagenta}{white}{14.3}{2.5}{\faForward}{Next: 7.1.0}
+% The map: chapters and the data flowing between them. scripts/world.py reads this file too.
+%
+% \gmdefchapter{id}{number}{title}{colour}{text on colour}{x}{y}{icon}{label on the map}
+%   (x, y) in cm on the 16 x 9 map; every node has the same radius (world.py's R).
+\gmdefchapter{before}{1}{Where it started}{gmMuted}{white}{0.95}{7.95}{\faHistory}{IMKG, 2023}
+\gmdefchapter{collect}{2}{Collect}{gmRed}{white}{2.55}{4.5}{\faGlobe}{Collect}
+\gmdefchapter{read}{3}{Read}{kFrame}{white}{5.25}{4.5}{\faFile*}{Read}
+\gmdefchapter{link}{4}{Link}{kWikidata}{white}{8.15}{6.6}{\faLink}{Link}
+\gmdefchapter{events}{5}{Tell the story}{kEvent}{white}{8.15}{4.5}{\faStream}{Events}
+\gmdefchapter{picture}{6}{See the picture}{kTemplate}{white}{8.15}{2.4}{\faImage}{Templates}
+\gmdefchapter{meaning}{7}{Give it meaning}{kConcept}{gmInk}{5.25}{7.65}{\faTags}{Ontology, taxonomy, tags}
+\gmdefchapter{graph}{8}{Weave the graph}{gmInk}{white}{11.05}{4.5}{\faProjectDiagram}{Graph}
+\gmdefchapter{operate}{9}{Keep it running}{gmInk2}{white}{6.65}{0.8}{\faCogs}{Airflow, every month}
+\gmdefchapter{numbers}{10}{The graph in numbers}{gmGreen}{white}{13.95}{6.5}{\faChartBar}{Numbers}
+\gmdefchapter{next}{11}{What comes next}{gmMuted}{white}{13.95}{2.5}{\faForward}{Next: 7.1.0}
+\gmdashednodes{before,next}
+
+% \gmdefedge{from}{to}{style}{path}{label}{label options}: the arrows of the map
+\gmdefedge{before}{collect}{dashed}{to[out=-75, in=115]}{2023}{pos=.42, left}
+\gmdefedge{before}{meaning}{dashed}{to[out=-2, in=178]}{its vocabulary}{pos=.5, above}
+\gmdefedge{collect}{read}{}{--}{\NPagesShort}{above}
+\gmdefedge{read}{link}{}{to[out=45, in=180]}{text}{pos=.5, above left}
+\gmdefedge{read}{events}{}{--}{stories}{above}
+\gmdefedge{read}{picture}{}{to[out=-45, in=180]}{titles}{pos=.5, below left}
+\gmdefedge{read}{meaning}{}{--}{types, tags}{pos=.5, left}
+\gmdefedge{meaning}{graph}{}{to[out=0, in=110]}{concepts}{pos=.62, above right}
+\gmdefedge{link}{graph}{}{to[out=-10, in=145]}{\NLinksShort}{pos=.45, above right}
+\gmdefedge{events}{graph}{}{--}{\NEventsShort}{above}
+\gmdefedge{picture}{graph}{}{to[out=10, in=-145]}{\NTemplatesShort}{pos=.45, below right}
+\gmdefedge{graph}{numbers}{}{to[out=40, in=180]}{}{}
+\gmdefedge{graph}{next}{dashed}{to[out=-40, in=180]}{7.1.0}{pos=.6, below left}

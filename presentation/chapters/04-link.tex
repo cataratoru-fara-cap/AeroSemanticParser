@@ -1,181 +1,238 @@
-% Chapter 4 — link: names in the text become Wikidata items (kym_entities), and only those
-% that matter to the meme are kept (kym_entity_curation).
+% Chapter 4 — link: spaCy finds the names (kym_entities), a lexicon built from the Wikidata
+% dump links them, and curation keeps only those that matter to the meme (kym_entity_curation).
 
-\gmzoomin{link}
-\newcommand{\hl}[1]{\colorbox{gm@col@link!20!gmSurface}{\strut #1}}
-\note{Chapter 4: who and what is this page about? Linking names to Wikidata.}
+\gmenter{link}
+\note{Chapter 4: who and what is this page about? Five stops, in the order the machine works:
+find the names in the text, turn a name into a Wikidata item, why we do it this way, which
+links are kept, and how the keeping rules were chosen.}
+\newcommand{\hlN}[1]{{\setlength{\fboxsep}{1.6pt}\colorbox{kWikidata!30!gmSurface}{\strut #1}}}
+\newcommand{\hlP}[1]{{\setlength{\fboxsep}{1.2pt}\fcolorbox{kWikidata}{gmSurface}{\strut #1}}}
+\newcommand{\hlC}[1]{{\setlength{\fboxsep}{1.6pt}\colorbox{gmHair}{\strut #1}}}
+\newcommand{\hlT}[1]{\tikz[baseline=(t.base)]\node[rounded corners=1.6mm, draw=kWikidata, line width=.8pt,
+  fill=kWikidata!8!gmSurface, inner xsep=1.4mm, inner ysep=.8mm, font=\normalsize] (t) {#1};}
 
-\begin{frame}{Doge, step 3: who and what is the page about?}
+\gmgo{link-nlp}{spaCy finds the names}
+\begin{frame}{Doge, step 3: find every name in the text}
   \vskip1mm
-  {\setlength{\fboxsep}{1.2pt}%
-  \begin{minipage}{\linewidth}\normalsize\color{gmInk}
-    \hl{Doge} is a slang term for ``dog'' that is primarily associated with pictures of
-    \hl{Shiba Inus} (nicknamed ``Shibe'') and internal monologue captions on \hl{Tumblr}. These
-    photos may be photoshopped to change the dog's face or captioned with interior monologues in
-    \hl{Comic Sans} font. The primary meme and iconography associated with Doge was the Shiba Inu
-    named \hl{Kabosu}, whose photos taken by her owner, Atsuko Sato, in early 2010, went viral
-    \dots
-  \end{minipage}}
-  \vskip7mm
-  \begin{tikzpicture}[x=1cm, y=1cm,
-      item/.style={rounded corners=1.2mm, draw=gm@col@link, line width=.8pt, fill=gmSurface,
-                   inner sep=2.5pt, align=center, text width=2.25cm, minimum height=1.05cm}]
-    \node[item] at (0,0)   {\footnotesize Doge\\[-.4mm]{\tiny\color{gmInk2}Internet meme}\\{\tiny\color{gmInk2}Q15613810}};
-    \node[item] at (2.75,0){\footnotesize Shiba Inu\\[-.4mm]{\tiny\color{gmInk2}dog breed}\\{\tiny\color{gmInk2}Q39315}};
-    \node[item] at (5.5,0) {\footnotesize Tumblr\\[-.4mm]{\tiny\color{gmInk2}microblogging platform}\\{\tiny\color{gmInk2}Q384060}};
-    \node[item] at (8.25,0){\footnotesize Comic Sans MS\\[-.4mm]{\tiny\color{gmInk2}typeface}\\{\tiny\color{gmInk2}Q868492}};
-    \node[item] at (11,0)  {\footnotesize Kabosu\\[-.4mm]{\tiny\color{gmInk2}Japanese dog, meme celebrity}\\{\tiny\color{gmInk2}Q23486479}};
+  \begin{minipage}{\linewidth}\normalsize\color{gmInk}\linespread{1.3}\selectfont
+    \hlP{Doge} is a slang term for ``\hlC{dog}'' that is primarily associated with pictures of
+    \hlN{Shiba Inus} (nicknamed ``Shibe'') and internal monologue captions on \hlN{Tumblr}. These
+    photos may be captioned with interior \hlC{monologues} in \hlN{Comic Sans} font. The primary
+    \hlC{meme} and \hlC{iconography} associated with \hlP{Doge} was the \hlN{Shiba Inu} named
+    \hlN{Kabosu}, whose photos taken by her owner, Atsuko \hlC{Sato}, \dots
+  \end{minipage}
+  \vskip3mm
+  {\normalsize\color{gmInk2}and every tag, whole:}\enspace
+  \hlT{shiba inu}\enspace\hlT{kabosu}\enspace\hlT{dogecoin}\enspace\hlT{doges}\enspace\hlT{japanese}\enspace{\normalsize\dots}
+  \vskip4mm
+  \begin{tikzpicture}[x=1cm, y=1cm, lg/.style={anchor=west, font=\small, text=gmInk2}]
+    \node[lg] at (0,0) {\hlN{name} a named entity};
+    \node[lg] at (4.1,0) {\hlP{name} a run of proper nouns};
+    \node[lg] at (8.9,0) {\hlC{word} a noun phrase};
   \end{tikzpicture}
   \vskip3mm
-  {\small\color{gmInk2}Each name becomes a \textbf{Wikidata} item: a shared, worldwide identity with its own facts.}
+  {\large\color{gmInk}\textbf{\NDogeMentions} names found on Doge's page --- by \textbf{spaCy}, on our own machine.}
   \note{
   \begin{itemize}
-    \item Layman version: the computer underlines the names in the text and looks each one up in
-      Wikidata --- the encyclopedia of facts behind Wikipedia --- where every thing has an ID.
-    \item ``Shiba Inu'' becomes Q39315, the dog breed. Tumblr is Q384060. Kabosu, the real dog, has
-      her own item. Comic Sans MS is the typeface.
-    \item Why IDs matter: ``Shiba Inu'' in the Doge page and ``shiba'' in another page become the
-      same thing, and the graph can connect them.
-    \item Doge itself gets its item from its Know Your Meme ID, recorded in Wikidata --- that link
-      is certain, score 1.0.
+    \item The first step is natural-language processing: spaCy (the en\_core\_web\_sm model) reads
+      the title and the About section and marks every span that could name something. Three ways
+      of finding one: its named entities (Shiba Inus, Tumblr, Kabosu), runs of proper nouns
+      (Doge), and noun phrases with every suffix of them (dog, monologues, meme). Each tag is
+      tried whole: tags are lower-cased keywords, where there is no sentence to analyse.
+    \item On purpose it finds too much: ``meme'', ``iconography'', ``Sato''. Recognition is
+      recall-first; deciding what matters is a separate step, two stops from now.
+    \item NER labels are a hint, never a filter: on the first real text the small model called
+      4chan a number, Reddit a place and Shiba Inus an organisation. A filter on the label would
+      have thrown three good links out of four.
+    \item The title is special: Wikidata records Know Your Meme's own address for Doge (property
+      P13484), so Doge's own item is certain --- score 1.0.
   \end{itemize}}
 \end{frame}
 
-\begin{frame}{Not every name matters}
-  \begin{columns}[t]
-    \column{.47\textwidth}
-      {\bfseries\color{gm@col@link}\faCheck\enspace kept}\par\vskip2mm
-      \small
-      \begin{tabular}{@{}l@{\hspace{3mm}}l@{}}
-        Shiba Inu      & {\color{gmInk2}a tag and the text agree}\\
-        Kabosu         & {\color{gmInk2}a tag and the text agree}\\
-        Tumblr, Reddit & {\color{gmInk2}a platform}\\
-        Dogecoin       & {\color{gmInk2}a whole tag names it}\\
-        monologue      & {\color{gmInk2}the judge: its format}\\
-        Doge           & {\color{gmInk2}the meme's own item}\\
-      \end{tabular}
-    \column{.49\textwidth}
-      {\bfseries\color{gmMuted}\faTimes\enspace dropped}\par\vskip2mm
-      \small
-      \begin{tabular}{@{}l@{\hspace{3mm}}l@{}}
-        ``doges'' $\to$ the doges of Venice & {\color{gmInk2}wrong sense}\\
-        ``Sato'' $\to$ slang for a stray dog & {\color{gmInk2}wrong sense}\\
-        Donald Trump                       & {\color{gmInk2}incidental}\\
-        Internet, internet meme            & {\color{gmInk2}incidental}\\
-        animal, iconography, plan          & {\color{gmInk2}incidental}\\
-      \end{tabular}
-  \end{columns}
-  \vskip6mm
-  {\small\color{gmInk2}Doge: \NDogeMentions\ names found, \NDogeKept\ kept --- each with the reason it was kept.}
-  \note{
-  \begin{itemize}
-    \item Recognising names is easy; deciding which ones \emph{matter to the meme} is the hard part.
-    \item Real decisions on Doge. Kept: the breed, the dog, the platforms, the coin, the
-      monologue format. Dropped: the tag ``doges'' linked to the doge, head of state of Venice and
-      Genoa --- a wrong sense. ``Sato'' (Atsuko Sato, Kabosu's owner) linked to Puerto Rican slang
-      for a mixed-breed dog --- a wrong sense, and a funny one for a dog meme. Donald Trump appears because of DOGE, the US department ---
-      incidental to the meme.
-    \item Every kept link carries its reason (rules first, the LLM judge for the rest), so anyone
-      can see why it is in the graph.
-  \end{itemize}}
-\end{frame}
-
-\begin{frame}{\NMentions\ names, \NItems\ things, \NKept\ kept}
-  \begin{columns}[t]
-    \column{.5\textwidth}
-      {\scriptsize\color{gmInk2}kept, and why (\NKeptPct\%)}\par\vskip1mm
-      \input{figures/generated/fig-link-kept}
+\gmgo{link-lexicon}{From a name to an item}
+\begin{frame}{From a name to a Wikidata item}
+  \centering
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      bx/.style={rounded corners=2mm, draw=gm@col@link, line width=1.2pt, fill=gmSurface, minimum width=3.05cm,
+                 minimum height=1.95cm, align=center, text width=2.9cm, font=\small},
+      go/.style={-{Stealth[length=2.8mm]}, line width=1.3pt, draw=gmBase, shorten <=1mm, shorten >=1mm}]
+    \node[bx] (a) at (0,0) {{\normalsize\bfseries ``Shiba Inus''}\\[1mm]{\color{gmInk2}a name spaCy found}};
+    \node[bx] (b) at (3.6,0) {{\normalsize\bfseries look it up}\\[1mm]{\color{gmInk2}\NLexEntities\ items, \NLexAliases\ names, from the \NDumpGB\ GB dump}};
+    \node[bx] (c) at (7.2,0) {{\normalsize\bfseries rank the items}\\[1mm]{\color{gmInk2}popularity, context, label, type, KYM --- and the lead}};
+    \node[bx, fill=gm@col@link, text=white] (d) at (10.8,0) {{\normalsize\bfseries Shiba Inu}\\[.5mm]dog breed, Q39315};
+    \draw[go] (a) -- (b); \draw[go] (b) -- (c); \draw[go] (c) -- node[above, font=\small\bfseries, text=gmInk] {$\ge$ .45} (d);
+  \end{tikzpicture}
+  \vskip3mm
+  \begin{columns}[c]
+    \column{.5\textwidth}\centering
+      \input{figures/generated/fig-link-bands}
     \column{.46\textwidth}
-      {\scriptsize\color{gmInk2}dropped, and by what}\par\vskip1mm
-      \input{figures/generated/fig-link-dropped}
-      \vskip3mm
-      \gmbig{\NLexEntities}{Wikidata items in our own lexicon, from the \NDumpGB\ GB dump}
+      {\large Where to draw the line?}\par\vskip2mm
+      {\normalsize\color{gmInk2}\textbf{\color{gmInk}25 links read by hand per band} of the winner's score:
+      below 0.45, half are wrong; above it, most are right.}
   \end{columns}
   \note{
   \begin{itemize}
-    \item 305,359 names found in 24,242 entries, pointing at 31,085 different Wikidata items.
-    \item Curation kept 209,827 links (68.7\%) and dropped 95,532.
-    \item Kept: mostly by rules --- a tag and the text agree, a platform, the title agrees --- and
-      42,114 by the LLM judge. Dropped: mostly by the judge (67,455), then items too generic to say
-      anything (21,375), then curated deny lists.
-    \item The lexicon: 17.3 million Wikidata items with 22.6 million names, built from the full
-      156 GB Wikidata dump (121.7 million lines), stored locally (3.3 GB).
+    \item The lexicon is our own copy of Wikidata's names: the full dump of 14 September 2026
+      (156 GB, 121.7 million lines), filtered to 17.3 million items with 22.6 million names ---
+      items with an English name and a Wikipedia article, or a Know Your Meme identifier (many
+      memes are on Wikidata and KYM and nowhere else), never a disambiguation page. 3.3 GB, built
+      in about an hour.
+    \item A name is looked up as written, then without a possessive, then with its plural folded
+      (Shiba Inus $\to$ Shiba Inu); longer names first, and a linked name claims its characters.
+    \item Every item that carries the name is ranked on five things: popularity (Wikipedia
+      articles), context (its description shares words with the page), the label itself, the
+      type agreeing with spaCy's label (a hint), and whether the item is itself on KYM. The
+      winner's score adds how far it leads the runner-up: a unique exact match is strong evidence,
+      a close race between two senses is weak.
+    \item The line, 0.45, was drawn by reading: 403 random pages, 25 links per score band judged
+      right or wrong by hand. 0.45--0.50 was as good as 0.50--0.55, so the line sits at 0.45:
+      about 40\% more links, about 82\% of them the right item.
   \end{itemize}}
 \end{frame}
 
-\begin{frame}{Linking like IMKG --- but at home, with evidence}
-  \begin{columns}[t]
-    \column{.47\textwidth}
-      {\scriptsize\bfseries\color{gmMuted}IMKG}\par\vskip1mm
-      \begin{itemize}\setlength{\itemsep}{2mm}\small
-        \item DBpedia Spotlight, a web service, confidence $\ge$ 0.5
-        \item then DBpedia $\to$ Wikidata
-        \item a link, and nothing about it
-      \end{itemize}
-    \column{.49\textwidth}
-      {\scriptsize\bfseries\color{gm@col@link}MemeAtlas}\par\vskip1mm
-      \begin{itemize}\setlength{\itemsep}{2mm}\small
-        \item language analysis \textbf{on our machine} (spaCy): names, noun phrases, whole tags
-        \item a \textbf{lexicon of \NLexEntities\ items} built from the full Wikidata dump
-        \item every link keeps its \textbf{score, method, and reason}
-        \item the meme's own item from its \textbf{KYM ID} in Wikidata: score 1.0
-      \end{itemize}
-  \end{columns}
+\gmgo{link-why}{Why spaCy, not Spotlight}
+\begin{frame}{Why spaCy and our lexicon, not DBpedia Spotlight}
+  \centering
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      st/.style={rounded corners=2mm, minimum height=1.0cm, minimum width=2.45cm, inner xsep=1.5mm, font=\normalsize, align=center},
+      im/.style={st, fill=gmHair!70!gmSurface, text=gmInk2},
+      ma/.style={st, fill=gm@col@link!14!gmSurface, draw=gm@col@link, line width=1pt, text=gmInk},
+      go/.style={-{Stealth[length=2.4mm]}, line width=1.2pt, draw=gmBase, shorten <=1mm, shorten >=1mm},
+      who/.style={anchor=east, font=\normalsize\bfseries}]
+    \node[who, text=gmMuted] at (1.4,1.25) {IMKG};
+    \node[im] (i1) at (2.9,1.25) {the text};
+    \node[im] (i2) at (5.85,1.25) {Spotlight};
+    \node[im] (i3) at (8.8,1.25) {DBpedia};
+    \node[im] (i4) at (11.75,1.25) {Wikidata item};
+    \draw[go] (i1) -- (i2); \draw[go] (i2) -- (i3); \draw[go] (i3) -- (i4);
+    \node[who, text=gm@col@link] at (1.4,-.1) {MemeAtlas};
+    \node[ma] (m1) at (2.9,-.1) {text, title, tags};
+    \node[ma] (m2) at (5.85,-.1) {spaCy};
+    \node[ma] (m3) at (8.8,-.1) {our lexicon};
+    \node[ma, fill=gm@col@link, text=white] (m4) at (11.75,-.1) {item + evidence};
+    \draw[go] (m1) -- (m2); \draw[go] (m2) -- (m3); \draw[go] (m3) -- (m4);
+  \end{tikzpicture}
   \vskip6mm
-  \begin{tikzpicture}
-    \node[fill=gmTint, rounded corners=2mm, inner sep=3mm, text width=12.8cm, align=left] {
-      \gmwhy{Why at home?}\enspace\small The same dump gives the same links, every time --- no quota, no
-      service that changes its answers, no second knowledge base in between.};
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      ic/.style={circle, minimum size=.95cm, fill=gm@col@link, text=white, font=\fontsize{13}{13}\selectfont, inner sep=0pt},
+      tx/.style={anchor=west, text width=5.4cm, font=\normalsize, text=gmInk, align=left}]
+    \node[ic] at (0,0) {\faBullseye};          \node[tx] at (.65,0) {\textbf{Straight to Wikidata}\\[-.4mm]{\small\color{gmInk2}nothing in between}};
+    \node[ic] at (7.0,0) {\faRedo};            \node[tx] at (7.65,0) {\textbf{Same text, same links}\\[-.4mm]{\small\color{gmInk2}a dated dump, a fixed model}};
+    \node[ic] at (0,-1.35) {\faBinoculars};    \node[tx] at (.65,-1.35) {\textbf{Reads more}\\[-.4mm]{\small\color{gmInk2}noun phrases, the title, every tag}};
+    \node[ic] at (7.0,-1.35) {\faBalanceScale};\node[tx] at (7.65,-1.35) {\textbf{Keeps the evidence}\\[-.4mm]{\small\color{gmInk2}so the next step can judge}};
   \end{tikzpicture}
   \note{
   \begin{itemize}
-    \item IMKG used DBpedia Spotlight, a remote API, then mapped DBpedia to Wikidata. Remote,
-      rate-limited, and its answers change over time.
-    \item MemeAtlas: spaCy (en\_core\_web\_sm) finds candidate spans --- named entities, noun
-      chunks, runs of proper nouns, the title, each whole tag --- and a local lexicon built from
-      the dated Wikidata dump (wikidata-20260914) links them. Same dump, same answer.
-    \item Every link records score, method, the NER label, and the reason curation kept it. In RDF
-      these are RDF-star annotations on the link itself.
-    \item The meme's own item: Wikidata has a property for Know Your Meme IDs (P13484, the slug);
-      when it matches, the link is certain.
-    \item IMKG's predicates are kept word for word: m4s:fromAbout, m4s:fromTags.
+    \item IMKG sent the About text and the tags to DBpedia Spotlight (confidence 0.5), then mapped
+      each DBpedia resource to Wikidata. A good choice for a one-off graph.
+    \item For a graph rebuilt every month, four things decided it. One: we want Wikidata items,
+      and the DBpedia-to-Wikidata mapping is incomplete --- going straight to Wikidata loses
+      nothing on the way. Two: reproducibility --- the same text, the same dated dump and the same
+      spaCy model always give the same links, so the dump's version is a stamp, and a page is
+      re-linked exactly when its text, the dump or the model changes. Three: we read more ---
+      noun phrases, the title (IMKG did not link titles), every tag whole. Four: every link keeps
+      its score, method and features, which is what made curation possible.
+    \item The suggestion to download all of Wikidata, instead of calling an API, came from the
+      lab; the Wikidata API also refuses parallel anonymous calls (HTTP 429), and we link 24k
+      pages at a time.
+    \item The price: one long download and one long build per dump --- paid once, not per page.
   \end{itemize}}
 \end{frame}
 
-\begin{frame}{Measuring changed the design}
+\gmgo{link-curation}{Keep what matters}
+\begin{frame}{Keep what matters: rules first, then a judge}
   \begin{columns}[t]
-    \column{.5\textwidth}
-      \begin{itemize}\setlength{\itemsep}{2.6mm}
-        \item \textbf{\FCurCommonNouns\%} of the About links came from common nouns:
-          ``popularity'', ``man'', ``photograph''
-        \item ``a series of videos'' $\to$ the \textbf{mathematical series}, \FCurSeries\ times
-        \item So: a curated list of senses, then \textbf{curation} --- rules first, then an LLM judge
-          asked twice, in two wordings
-      \end{itemize}
-    \column{.44\textwidth}
-      {\scriptsize\color{gmInk2}the bar, set before measuring --- and the result}\par\vskip2mm
-      \begin{tabular}{@{}lcc@{}}
-        & \small bar & \small measured\\\midrule
-        \small relevant among kept    & $\ge$\,\FCurBarKept & \textbf{\FCurKept}\\
-        \small relevant among dropped & $\le$\,\FCurBarDropped & \textbf{\FCurDropped}\\
-      \end{tabular}\par\vskip3mm
-      {\scriptsize\color{gmMuted}projected over the corpus from 353 labelled links}
+    \column{.56\textwidth}
+      \begin{tikzpicture}[x=1cm, y=-.5cm, baseline=(current bounding box.north),
+          k/.style={rounded corners=1.2mm, fill=gm@col@link, text=white, font=\small\bfseries, minimum width=1.05cm, inner sep=1.2pt},
+          d/.style={rounded corners=1.2mm, fill=gmMuted, text=white, font=\small\bfseries, minimum width=1.05cm, inner sep=1.2pt},
+          r/.style={anchor=west, font=\small, text=gmInk},
+          n/.style={anchor=east, font=\small, text=gmInk2}]
+        \foreach \y/\s/\w/\rl/\cnt in {0/k/keep/{the title, or the meme's own item}/\NCurTitle,
+                                       1/d/drop/{on a deny list (``popularity'')}/\NCurDenyItem,
+                                       2/k/keep/{a platform}/\NCurPlatform,
+                                       3/k/keep/{a meme format}/\NCurFormat,
+                                       4/k/keep/{also in the title}/\NCurTitleAgrees,
+                                       5/k/keep/{a tag and the text agree}/\NCurTagText,
+                                       6/d/drop/{About only: a body part, a measure}/\NCurDenyClass,
+                                       7/k/keep/{a whole tag that names something}/\NCurTagNamed,
+                                       8/d/drop/{About only: a generic word}/\NCurGeneric} {
+          \if k\s\node[k] at (0,\y) {\w};\else\node[d] at (0,\y) {\w};\fi
+          \node[r] at (.6,\y) {\rl};
+          \node[n] at (7.6,\y) {\cnt};}
+        \draw[gm@col@link, line width=1.2pt, -{Stealth[length=2.4mm]}] (0,8.55) -- (0,9.55);
+        \node[anchor=west, font=\normalsize\bfseries, text=gmInk] at (.6,9.9) {the rest, \NCurJudged\ links: to the judge};
+      \end{tikzpicture}
+    \column{.4\textwidth}
+      \begin{tikzpicture}[baseline=(current bounding box.north)]
+        \node[fill=gm@col@link!10!gmSurface, rounded corners=2mm, inner sep=3mm, text width=4.9cm, align=left] {
+          {\large\color{gm@col@link}\faGavel}\enspace{\normalsize\bfseries The judge: ministral-3:14b}\par\vskip1mm
+          \small on the lab's GPUs, one call per page; each undecided item with its sentence. It answers a \textbf{role}:\par\vskip1mm
+          {\color{gm@col@link}\bfseries keep}\enspace subject, source, format, platform\par
+          {\color{gmMuted}\bfseries drop}\enspace incidental, wrong sense\par\vskip1mm
+          {\color{gmInk2}Doge: \emph{monologue} kept (format); \emph{doges} (the doge of Venice), \emph{Donald Trump} dropped}};
+      \end{tikzpicture}
+  \end{columns}
+  \vskip0mm
+  {\normalsize \NMentions\ names $\rightarrow$ \textbf{\NKept\ kept} (\NKeptPct\%), each with its reason.}
+  \note{
+  \begin{itemize}
+    \item Recognising names is easy; deciding which matter to the meme is the hard part.
+      Relevant (my definition, set before building): what the meme is about or shows, the work it
+      comes from, the kind of meme it is, the platforms where it started or spread.
+    \item Rules decide the clear cases, in this order; the count is links decided by that rule
+      over the whole corpus. The title is always kept (it is the meme's name); deny lists drop
+      words like ``popularity'' or ``the term''; platforms and meme formats are kept; a link both a
+      tag and the text agree on is kept; About-only body parts, measures and generic words are
+      dropped.
+    \item The rest --- 109,569 links on 22,988 pages --- go to an LLM judge: ministral-3:14b,
+      running on the lab's GPU server. It is extractive: it sees each item's label, description and
+      the words it was read from, and can only classify. It answers a role, which makes it commit
+      to why. A keep based on the About alone must be confirmed by the same model asked in a
+      second wording (6,214 overturned).
+    \item Doge: monologue kept as a format; ``doges'' had been linked to the doge of Venice and
+      ``Sato'' to a Puerto Rican slang word --- wrong senses, dropped; Donald Trump appears because
+      of the DOGE department --- incidental, dropped.
+    \item Nothing is deleted: every decision, with its reason, stays in the database; only kept
+      links reach the graph.
+  \end{itemize}}
+\end{frame}
+
+\gmgo{link-bakeoff}{How the rules were chosen}
+\begin{frame}{How the rules and the judge were chosen}
+  \begin{columns}[c]
+    \column{.47\textwidth}
+      \begin{tikzpicture}[x=1cm, y=-1.42cm,
+          nb/.style={circle, fill=gm@col@link, text=white, font=\normalsize\bfseries, minimum size=.62cm, inner sep=0pt},
+          tx/.style={anchor=west, text width=5.6cm, font=\normalsize, text=gmInk}]
+        \draw[gm@col@link!40!gmSurface, line width=1.4pt] (0,0) -- (0,3);
+        \node[nb] at (0,0) {1}; \node[tx] at (.5,0) {\textbf{Measure the first run}: \FCurCommonNouns\% common nouns; ``series'' read as maths, \FCurSeries\ times};
+        \node[nb] at (0,1) {2}; \node[tx] at (.5,1) {\textbf{Set the bar first}: kept $\ge$ \FCurBarKept\ relevant, dropped $\le$ \FCurBarDropped};
+        \node[nb] at (0,2) {3}; \node[tx] at (.5,2) {\textbf{Bake-off}: 3 models, 4 prompts, 353 links labelled by hand};
+        \node[nb] at (0,3) {4}; \node[tx] at (.5,3) {\textbf{Rules where judges failed}; the judge asked twice};
+      \end{tikzpicture}
+    \column{.5\textwidth}\centering
+      \input{figures/generated/fig-link-bakeoff}\par\vskip1mm
+      {\normalsize\color{gmInk2}chosen: kept \textbf{\color{gmInk}\FCurKept}, dropped \textbf{\color{gmInk}\FCurDropped}}
   \end{columns}
   \note{
   \begin{itemize}
-    \item The first full linking run (282,914 links) was measured before anything else was built
-      on it. 59\% of About links came from spans with no proper noun --- common-noun concepts.
-    \item Worse, some hubs were wrong: KYM's stock phrase ``X is a series of \dots'' linked to the
-      mathematical series (Q170198) 5,531 times; ``game'' to games in general, where KYM means
-      video games.
-    \item Fixes: a curated sense list (entity\_senses.yaml); then a curation stage: rules decide
-      first (title, own item, platform, format, a tag and the text agree, a whole tag), an LLM
-      (ministral-3:14b on the lab's GPUs) judges the rest with two differently worded prompts.
-    \item The bar was set before measuring: of kept links $\ge$ 0.85 relevant, of dropped $\le$
-      0.15. A first review failed on the dropped side (0.25), which produced curation 1.1.0; it
-      now projects to 0.875 / 0.126. Caveat to say out loud: projected from 353 labelled items; the
-      holdout review is the next step.
+    \item Measuring changed the design. The first full linking run (282,914 links) was measured
+      before anything was built on it: 59\% of About links came from spans with no proper noun ---
+      common nouns. Some hubs were plain wrong: KYM's stock phrase ``X is a series of \dots''
+      linked to the mathematical series 5,531 times. That gave the sense list (``series'' is a
+      series of works, ``game'' is a video game) and the curation stage.
+    \item The bar was set before measuring: of kept links $\ge$ 0.85 relevant, of dropped $\le$ 0.15.
+    \item The bake-off: 280 links labelled by hand, then 353, each setup projected over the corpus.
+      Grey dots: the first prompts, three models (mistral-small, ministral, qwen3) --- none near the
+      bar. What moved it was the rules: whole tags naming something were relevant 34 times in 39,
+      and both judges dropped a third to half of them, not knowing a tag from the About --- so a
+      rule keeps them; meme formats kept and generic About words dropped by list. Then asking
+      ministral twice, in two wordings, beat asking a second model.
+    \item The chosen setup projects to 0.875 kept, 0.126 lost. Caveat to say out loud: projected
+      from labels the setup was chosen on; the holdout review is the measurement still to do.
+    \item Two bigger models (llama3.3:70b, qwen3.6:35b) crashed the lab's GPU server and were
+      dropped from the comparison.
   \end{itemize}}
 \end{frame}
-
-\gmzoomout{link}

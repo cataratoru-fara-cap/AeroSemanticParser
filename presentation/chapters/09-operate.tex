@@ -1,0 +1,159 @@
+% Chapter 9 — keep it running: orchestration, quality, operations.
+
+\gmenter{operate}
+\note{Chapter 9: the machine around all of it --- the dashed box on the map. Three stops: the
+monthly chain, the machine it runs on and the rules that made it hold, and how it is checked.}
+
+\gmgo{operate-chain}{The monthly chain}
+\begin{frame}{Every month, the chain redoes only what changed}
+  \centering
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      st/.style={circle, minimum size=1.15cm, inner sep=0pt, line width=1.6pt, fill=gmSurface,
+                 font=\fontsize{15}{15}\selectfont},
+      lb/.style={font=\small, text=gmInk, align=center, text width=2.05cm},
+      go/.style={-{Stealth[length=2.6mm]}, line width=1.2pt, draw=gmBase, shorten <=1mm, shorten >=1mm}]
+    \foreach \i/\c/\ic/\t in {0/collect/\faSitemap/find pages, 1/collect/\faGlobe/fetch pages,
+                              2/read/\faFile*/read pages, 3/link/\faLink/link the names,
+                              4/link/\faGavel/keep what matters, 5/events/\faStream/tell the story} {
+      \node[st, draw=gm@col@\c, text=gm@col@\c] (a\i) at (\i*2.4,1.75) {\ic};
+      \node[lb, below=1mm of a\i] {\t};}
+    \foreach \i/\c/\ic/\t in {0/graph/\faProjectDiagram/build \& publish, 1/link/\faBook/Wikidata facts,
+                              2/picture/\faImage/read the meme's own image, 3/picture/\faEye/read the templates,
+                              4/picture/\faImages/find templates} {
+      \node[st, draw=gm@col@\c, text=gm@col@\c] (b\i) at (\i*2.4+1.2,-1.45) {\ic};
+      \node[lb, below=1mm of b\i] {\t};}
+    \foreach \i [count=\j] in {0,...,4} \draw[go] (a\i) -- (a\j);
+    \draw[go] (a5.east) to[out=0, in=0, looseness=1.4] (b4.east);
+    \foreach \i [count=\j] in {0,...,3} \draw[go] (b\j) -- (b\i);
+    \coordinate (lk) at ($(a3.south)+(0,-1.2)$);
+    \draw[gm@col@link, line width=1.2pt, dash pattern=on 3pt off 2.5pt, -{Stealth[length=2.4mm]}] (lk) to[out=-90, in=90] (b3.north);
+    \draw[gm@col@link, line width=1.2pt, dash pattern=on 3pt off 2.5pt, -{Stealth[length=2.4mm]}] (lk) to[out=-90, in=90] (b2.north);
+    \node[fill=gmSurface, font=\small\bfseries, text=gm@col@link!85!gmInk, inner sep=1.5pt, anchor=west] at ($(lk)+(.15,-.05)$) {the same linker};
+    \node[font=\normalsize\bfseries, text=gm@col@operate, anchor=south] at ($(a0.north)+(0,.1)$) {1st of the month};
+  \end{tikzpicture}
+  \vskip4mm
+  {\large Each step does \textbf{only what is new or changed} --- and can stop and restart safely.}
+  \note{
+  \begin{itemize}
+    \item Layman version: every month a robot repeats the whole journey we just made with Doge ---
+      but only for the pages that are new or changed. Doge, unchanged, is not read again.
+    \item The chain, as the stages trigger each other: find pages, fetch them, read them, link the
+      names in the text, keep what matters, tell the story, find templates, read them, read each
+      meme's own image, fetch the Wikidata facts of everything linked, build and publish the
+      graph. Twelve Airflow DAGs; each starts the next.
+    \item Why linking is this early: linking the text needs only the parsed page. The events are not
+      linked (their people and places stay the page's words), and the pictures come later --- their
+      names go through the same linker, which prefers the items the page's own text already
+      linked. So the text has to be linked first.
+    \item If anything fails half-way, running it again finishes the job without redoing or losing
+      work. That is the property everything is built around.
+  \end{itemize}}
+\end{frame}
+
+\gmgo{operate-machine}{The machine}
+\begin{frame}{The machine, and the rules that made it hold}
+  \begin{columns}[c]
+    \column{.58\textwidth}\centering
+      \resizebox{\linewidth}{!}{\begin{tikzpicture}[x=1cm, y=1cm,
+          bx/.style={rounded corners=1.6mm, draw=gmBase, line width=1pt, fill=gmSurface, align=center, font=\normalsize,
+                     minimum height=1.1cm, inner sep=2pt},
+          go/.style={-{Stealth[length=2mm]}, line width=.9pt, draw=gmBase},
+          grp/.style={rounded corners=2.5mm, draw=gmHair, line width=.8pt, fill=gmTint}]
+        \draw[grp] (-0.4,-0.7) rectangle (5.2,3.4);  \node[font=\normalsize\bfseries, text=gmInk2, anchor=north west] at (-0.3,3.35) {Airflow 3: \FDags\ DAGs};
+        \draw[grp] (5.6,-0.7) rectangle (10.3,3.4); \node[font=\normalsize\bfseries, text=gmInk2, anchor=north west] at (5.7,3.35) {stores};
+        \node[bx, draw=gm@col@operate, minimum width=2.2cm] (sch) at (1.1,2.2) {scheduler};
+        \node[bx, draw=gm@col@operate, minimum width=2.2cm] (wk) at (3.7,2.2) {workers};
+        \node[bx, minimum width=2.2cm] (pg) at (1.1,0.4) {run history};
+        \node[bx, minimum width=2.2cm] (dag) at (3.7,0.4) {stage code};
+        \node[bx, draw=gm@col@read, minimum width=2.0cm] (mo) at (6.9,2.2) {MongoDB};
+        \node[bx, draw=gm@col@graph, minimum width=2.0cm] (n4) at (9.1,2.2) {Neo4j};
+        \node[bx, draw=gm@col@graph, minimum width=2.0cm] (fu) at (9.1,0.4) {Fuseki};
+        \node[bx, minimum width=2.0cm] (fi) at (6.9,0.4) {files};
+        \node[bx, draw=gm@col@collect, minimum width=3.2cm] (web) at (2.4,4.75) {Know Your Meme, imgflip};
+        \node[bx, draw=gm@col@events, minimum width=3.2cm] (gpu) at (7.9,4.75) {the lab's GPUs};
+        \node[bx, draw=gm@col@numbers, minimum width=5.2cm] (px) at (4.9,-2.0) {one door: port 8080};
+        \draw[go] (web) -- (wk);  \draw[go] (wk) -- (gpu);
+        \draw[go] (wk) -- (mo);   \draw[go] (wk.south east) -- (fi.north west);
+        \draw[go] (mo) -- (n4);   \draw[go] (fi) -- (fu);
+        \draw[go] (px.north) -- ++(0,.8);
+      \end{tikzpicture}}
+    \column{.4\textwidth}
+      \begin{tikzpicture}[x=1cm, y=-1.3cm,
+          ic/.style={circle, minimum size=.9cm, fill=gm@col@operate, text=white, font=\fontsize{12}{12}\selectfont, inner sep=0pt},
+          tx/.style={anchor=west, text width=4.5cm, font=\normalsize, text=gmInk, align=left}]
+        \node[ic] at (0,0) {\faStamp};     \node[tx] at (.6,0) {\textbf{Stamps}\\[-.4mm]{\small\color{gmInk2}redo only what changed}};
+        \node[ic] at (0,1) {\faInbox};     \node[tx] at (.6,1) {\textbf{Dead letters}\\[-.4mm]{\small\color{gmInk2}failures kept, with the reason}};
+        \node[ic] at (0,2) {\faMicrochip}; \node[tx] at (.6,2) {\textbf{Models on record}\\[-.4mm]{\small\color{gmInk2}every output names its model}};
+        \node[ic] at (0,3) {\faChartLine}; \node[tx] at (.6,3) {\textbf{A summary per run}\\[-.4mm]{\small\color{gmInk2}read by the dashboard}};
+      \end{tikzpicture}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item 15 services in Docker Compose on one server. Airflow 3 orchestrates 12 DAGs: a scheduler,
+      Celery workers with Redis, Postgres for Airflow's own history. The stage code is layered: a
+      pure library, a store module that owns its collection, the DAG; a DAG never issues a query,
+      a library never touches a database.
+    \item MongoDB holds every stage's output; the graph goes to Neo4j and Fuseki, plus files.
+      Models run on the lab's GPU servers (Ollama behind Open WebUI): ministral-3:14b for text,
+      qwen3-vl:32b for images. One door: the campus firewall lets only port 8080 through, so one
+      proxy serves the dashboard, Neo4j Browser, the SPARQL endpoint and the admin tools.
+    \item Stamps, not timestamps: each output records the versions that produced it --- parser,
+      prompt, schema, model, lexicon, linker. Changing the event prompt re-extracts events; it
+      does not re-scrape pages.
+    \item Dead letters: parse, event and template failures are stored with their reason, and not
+      retried until something relevant changes.
+    \item Models on record: every output names the model that produced it, so the graph never
+      mixes readings without saying so. The shared GPUs shaped everything: reading 36,673 stories
+      and 26,868 pictures took days, one call at a time, so every step had to survive
+      interruption and resume where it stopped.
+  \end{itemize}}
+\end{frame}
+
+\gmgo{operate-checked}{Checked and versioned}
+\begin{frame}{Checked, measured, versioned}
+  \begin{columns}[t]
+    \column{.3\textwidth}
+      \gmbig{\FTests}{automated tests}\par\vskip3mm
+      \gmbig{\FGaps}{technical gaps, written down}\par\vskip3mm
+      \gmbig{\FCommits}{commits since \FStart}
+    \column{.3\textwidth}
+      {\normalsize\color{gmInk2}every build, measured}\par\vskip3mm
+      {\large\begin{tabular}{@{}rl@{}}
+        \textbf{\NIsolated}       & isolated nodes\\[1mm]
+        \textbf{\NDuplicateEdges} & duplicate edges\\[1mm]
+        \textbf{0}                & cycles in a series\\[1mm]
+        \textbf{=}                & RDF, derived twice\\
+      \end{tabular}}
+    \column{.36\textwidth}
+      {\normalsize\color{gmInk2}a graph with a version}\par\vskip3mm
+      {\normalsize\begin{tabular}{@{}rl@{}}
+        \textbf{4.0} & nodes: only what is shared\\
+        \textbf{5.0} & origins, folded tags\\
+        \textbf{6.0} & events\\
+        \textbf{6.1} & Wikidata links\\
+        \textbf{6.4} & templates\\
+        \textbf{6.5} & curated links\\
+        \textbf{7.0} & siblings; a rename\\
+        \textbf{7.1} & images; Wikidata's facts\\
+      \end{tabular}}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item 1,175 tests, about 9k of the 40k lines of Python. Parsers are tested on saved pages;
+      model-facing code on recorded answers; the chain itself is tested (who triggers whom, with
+      which parameters). Every model layer is reviewed in a loop --- sample, read, fix, read again
+      --- on contact sheets, blind audits and held-out sets never used for tuning.
+    \item 14 technical gaps logged in the repository: each says what is weak, what it costs, and the
+      fix. Several chapters today closed one.
+    \item After every publish, kg/metrics.py measures the IMKG-comparable core: no isolated node, no
+      duplicate edge, no cycle in any series chain; and the RDF derived independently through the
+      mapping equals the published RDF. Worth knowing: 26\% of series parents are pages not in
+      the corpus (they exist as stubs); 18.8\% of entries have no entry type on KYM.
+    \item Versions follow semantic versioning: a renamed term breaks queries, so 7.0.0 is major
+      (relatesToMeme became citesMediaFrame); a new layer only adds, so 7.1.0 is minor. The build
+      compares every input's stamp with the published build's: nothing changed, nothing rebuilt.
+    \item A version worth telling: 4.0.0 decided what deserves to be a node --- only what things
+      share. The graph went from 985,481 to 476,794 nodes with no data lost.
+    \item 96 commits since 24 June: the whole project in about three and a half months.
+  \end{itemize}}
+\end{frame}

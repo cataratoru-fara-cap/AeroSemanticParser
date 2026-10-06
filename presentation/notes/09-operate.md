@@ -1,4 +1,4 @@
-# Chapter 8 — Keep it running: orchestration and quality (≈4 min)
+# Chapter 9 — Keep it running: orchestration and quality (≈5 min)
 
 Everything in `airflow/`: `docker-compose.yml` (15 services), `dags/` (12 DAGs),
 `dashboard/` (Streamlit), `proxy/Caddyfile`.
@@ -44,7 +44,7 @@ next; a run started by hand never builds the graph unless asked (tested in
   every step had to survive interruption.
 
 ## Quality
-- 1,195 tests (~14k of the ~44k lines of Python): parsers on saved pages, model
+- 1,175 tests (~9k of the ~40k lines of Python): parsers on saved pages, model
   code on recorded answers, the DAG chain itself.
 - Review loops for every model layer: sample, read, fix, re-read; contact sheets
   (templates), blind audits (images), a review page and a holdout (events),

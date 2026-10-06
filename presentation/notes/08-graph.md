@@ -1,4 +1,4 @@
-# Chapter 7 — Weave the graph: one build, every representation (≈8 min)
+# Chapter 8 — Weave the graph: one build, every representation (≈7 min)
 
 DAG: `kym_kg` (and `kym_kg_validate`). Modules: `kg/build.py` (the only
 producer), `kg/serialize.py`, `kg/rdf.py`, `kg/loaders.py`, `kg/metrics.py`,
@@ -14,9 +14,11 @@ live.
 ## Doge as a graph (the first KG_QUERIES query, drawn from the live graph)
 Up: its series (Interior Monologue Captioning → Image Macros → Memes). Upper
 left: its children (Doge 2 / Caesar, Ironic Doge Memes, Shiba Inus / Shibes, The
-Death of Kabosu / Doge). Left, dashed: its 9 siblings (including its own
-"sensitive" twin: in 7.0.0 Doge is two frames — fixed since, chapter 2; in 7.1.0
-the twin is gone and Doge's frame is the `/sensitive/` address). Right: Wikidata items. Lower right: its 8
+Death of Kabosu / Doge). Left, dashed: its 8 siblings. (7.0.0 also lists Doge's
+own "sensitive" twin among them — Doge is two frames there, fixed since,
+chapter 2 — so the drawing leaves the twin out: it is the same entry, and in
+7.1.0 it is gone and Doge's frame is the `/sensitive/` address. This is what
+"looked off" in the first draft.) Right: Wikidata items. Lower right: its 8
 templates and what their images show — some are the same items the text names
 (Shiba Inu, Doge): text and picture agree. Bottom: 16 events in one chain. Lower
 left: 5 entry types and 21 tags. In total 379 edges touch Doge.
@@ -44,9 +46,12 @@ nextInStory 124,014.
   section nodes held no text, every link node was a detour. Dissolving them:
   985,481 → 476,794 nodes, 1.74M → 856k edges, no data lost. Events are the one
   exception (things point at them).
-- **One producer, many representations.** `build.py` is the only code that
-  makes nodes and edges; `serialize.py` writes N-Triples, the RML CSVs and the
-  view CSVs from the same stream; loaders fill Neo4j and Fuseki.
+- **One producer, many representations** (the "four stores" slide, redrawn to
+  match `kym_kg`). `build.py` is the only code that makes nodes and edges; the
+  build streams them into Mongo, the authority, under a new build id. From
+  Mongo, `serialize.py` writes the files (N-Triples, the RML CSVs, view CSVs,
+  the manifest) and the loader fills Neo4j; Fuseki loads graph.nt from the
+  files.
 - **Generational builds, verified, then published.** Each build has an id;
   stores keep the live build and the previous one for rollback. `verify` checks
   that Mongo, the files, Fuseki and Neo4j agree on every count; `publish` flips

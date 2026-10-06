@@ -1,0 +1,137 @@
+% Chapter 8 — weave the graph: one build, every representation (kym_kg).
+
+\gmenter{graph}
+\note{Chapter 8: everything we learned becomes one graph. Four stops: Doge's corner of it, the
+two languages it is published in, the shape of the whole graph, and how a build is published
+without ever showing a half-built graph.}
+
+\gmgo{graph-doge}{Doge, as dots and arrows}
+\begin{frame}{Doge, step 6: all of it, as dots and arrows}
+  \centering
+  \resizebox{\linewidth}{!}{\input{figures/generated/fig-graph-doge}}\par\vskip1mm
+  \input{figures/generated/fig-graph-legend}
+  \note{
+  \begin{itemize}
+    \item Layman version: every fact from the previous chapters is now an arrow from Doge.
+    \item Up: the series it belongs to --- Interior Monologue Captioning, Image Macros, Memes. Upper
+      left: the memes that grew out of it (Ironic Doge Memes, Shiba Inus, Doge 2, the death of
+      Kabosu). Left, dashed: its siblings in the same series.
+    \item Right: the Wikidata items its text names. Lower right: its templates, and what their
+      images show --- some are the same items the text names (Shiba Inu, Doge): text and picture
+      agree, and the graph shows it.
+    \item Bottom: its 16 events, one chain. Lower left: its types and 22 tags.
+    \item Drawn from the live graph, version 7.0.0 (build of 2 October). One correction: 7.0.0 still
+      holds Doge twice --- the twin at /sensitive/memes/doge would show up among his own siblings;
+      it is the same entry (chapter 2), so it is not drawn, and 7.1.0 holds it once.
+  \end{itemize}}
+\end{frame}
+
+\gmgo{graph-languages}{Two languages}
+\begin{frame}{The same facts, in two languages}
+  \begin{columns}[t]
+    \column{.55\textwidth}
+      {\large\bfseries\color{gmInk}RDF}\enspace{\normalsize\color{gmInk2}asked with SPARQL}\par\vskip3mm
+      {\normalsize\ttfamily\linespread{1.25}\selectfont
+      kym:doge \textcolor{gmInk2}{a} m4s:MediaFrame, kym:Meme ;\\
+      \hspace*{4mm}m4s:year 2010 ;\\
+      \hspace*{4mm}m4s:fromTags wd:Q144 ;\\
+      \hspace*{4mm}mk:hasTemplate mk:template/8072285 .\\[3mm]
+      \textcolor{gmInk2}{<<} kym:doge m4s:fromTags wd:Q144 \textcolor{gmInk2}{>>}\\
+      \hspace*{4mm}mk:mentionText "dog" ;\\
+      \hspace*{4mm}mk:linkScore 0.616 .}
+    \column{.42\textwidth}
+      {\large\bfseries\color{gmInk}A property graph}\enspace{\normalsize\color{gmInk2}asked with Cypher}\par\vskip3mm
+      {\normalsize\ttfamily\linespread{1.25}\selectfont
+      MATCH (f:Frame \{label: 'Doge'\})\\
+      \hspace*{4mm}-[r:fromTags]->\\
+      \hspace*{4mm}(e \{qid: 'Q144'\})\\
+      RETURN f.year,\\
+      \hspace*{4mm}r.mention\_texts,\\
+      \hspace*{4mm}r.link\_scores}
+  \end{columns}
+  \vskip5mm
+  {\large\color{gmInk2}One build, two languages: \textbf{\color{gmInk}IMKG's words} in RDF; the details \textbf{\color{gmInk}on the arrow} in both.}
+  \note{
+  \begin{itemize}
+    \item The graph is published twice, from the same data: as RDF (the W3C standard, queried with
+      SPARQL, in Fuseki) and as a property graph (Neo4j, queried with Cypher).
+    \item Left: Doge in RDF. m4s: and kym: are IMKG's own vocabulary; a series is skos:broader ---
+      exactly what IMKG emits, so IMKG's queries still run. mk: is MemeAtlas's namespace, for
+      what IMKG has no word for (templates, events, curation \dots).
+    \item The double angle brackets are RDF-star: a statement about a statement. ``Doge's tags
+      mention dog'' carries the words it was read from and the link's score.
+    \item Right: the same fact in Cypher; a property-graph edge carries those details as its own
+      properties.
+  \end{itemize}}
+\end{frame}
+
+\gmgo{graph-meta}{The shape of the graph}
+\begin{frame}{The graph of the graph}
+  \begin{columns}[c]
+    \column{.8\textwidth}\centering
+      \resizebox{\linewidth}{!}{\input{figures/generated/fig-graph-meta}}
+    \column{.18\textwidth}
+      \gmbig{\NNodesShort}{nodes}\par\vskip3mm
+      \gmbig{\NEdgesShort}{edges}\par\vskip3mm
+      \gmbig{\NTriplesShort}{RDF triples}\par\vskip3mm
+      {\normalsize\color{gmInk2}version \NVersion,\\\NRelTypes\ kinds of arrow}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item Every kind of node, every kind of edge between two kinds, sized by how many there are
+      (area: nodes; width: edges, on a log scale) --- the schema of the graph, measured, not drawn
+      on a whiteboard.
+    \item The frame is the hub. The biggest flows: siblings (679k, derived from the series), links
+      to external pages (244k), tags (226k), images (193k), events (143k) and the story chain
+      between events (124k).
+    \item The live graph, version 7.0.0, published 2 October: 795,711 nodes, 2,564,089 edges,
+      8.79 million RDF triples, 26 kinds of relation.
+  \end{itemize}}
+\end{frame}
+
+\gmgo{graph-stores}{One build, four stores}
+\begin{frame}{One build, four stores, checked before publishing}
+  \centering
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      st/.style={rounded corners=2mm, draw=gm@col@graph, line width=1.2pt, fill=gmSurface, minimum width=2.75cm,
+                 minimum height=1.35cm, align=center, font=\large\bfseries},
+      ck/.style={rounded corners=2mm, fill=gm@col@graph, text=white, minimum width=3.2cm, minimum height=1.35cm,
+                 align=center, font=\large\bfseries},
+      go/.style={-{Stealth[length=3mm]}, line width=1.4pt, draw=gmBase, shorten <=1mm, shorten >=1mm}]
+    \node[st, fill=gm@col@graph!8!gmSurface] (b) at (0,0) {build\\[-.3mm]{\normalsize\mdseries\color{gmInk2} every entry, in chunks}};
+    \node[st] (m) at (3.55,0) {Mongo\\[-.3mm]{\normalsize\mdseries\color{gmInk2} the authority}};
+    \node[st] (f) at (7.05,1.45) {files\\[-.3mm]{\normalsize\mdseries\color{gmInk2} graph.nt, CSV}};
+    \node[st] (u) at (10.55,1.45) {Fuseki\\[-.3mm]{\normalsize\mdseries\color{gmInk2} RDF, SPARQL}};
+    \node[st] (n) at (7.05,-1.45) {Neo4j\\[-.3mm]{\normalsize\mdseries\color{gmInk2} Cypher}};
+    \draw[go] (b) -- (m); \draw[go] (m) -- (f); \draw[go] (f) -- (u); \draw[go] (m) -- (n);
+    \draw[gm@col@graph!45!gmSurface, line width=1.2pt, dash pattern=on 4pt off 3pt, rounded corners=3mm]
+      (1.9,-2.45) rectangle (12.15,2.45);
+    \node[anchor=north west, font=\small, text=gmInk2] at (2.05,2.35) {beside the live build};
+    \node[ck] (v) at (10.55,-1.1) {verify\\[-.3mm]{\normalsize\mdseries all four agree}};
+    \draw[go, draw=gm@col@graph!50!gmSurface] (n.east) -- (v.west|-n.east);
+    \draw[go, draw=gm@col@graph!50!gmSurface] (u) -- (v);
+  \end{tikzpicture}
+  \vskip2mm
+  \begin{tikzpicture}[x=1cm, y=1cm]
+    \node[rounded corners=2mm, fill=gm@col@graph, text=white, inner sep=3mm, text width=13.4cm, align=left] {
+      {\large\bfseries publish}\enspace\normalsize files, then Fuseki, then Neo4j, \textbf{Mongo last}; every pointer
+      read back. Weekly, the RDF is derived a second way: equal but for \NTriplesDiff\ provenance triples.};
+  \end{tikzpicture}
+  \note{
+  \begin{itemize}
+    \item kym\_kg: build.py is the only producer of nodes and edges. It streams every entry, with
+      its events, links and templates, in chunks, into Mongo --- the authority --- under a new build
+      id, beside the published build. Readers never see a half-built graph: nobody reads the new
+      id yet.
+    \item From Mongo, one stream writes the files (graph.nt, the CSVs the mapping reads, the
+      manifest); Fuseki loads the RDF from graph.nt; Neo4j is loaded from Mongo.
+    \item Verify: Mongo, the manifest, the RML rows, Fuseki and Neo4j must hold the same counts;
+      if not, the build fails and nothing moves.
+    \item Publish flips pointers: followers first, the authority last, each read back --- a crash
+      leaves a follower ahead of the authority, never behind, and the next run reconciles it. A
+      torn publish fails loudly. The stores keep the live build and the one before, for rollback.
+    \item Independently, kym\_kg\_validate re-derives the RDF from the CSVs through the YARRRML
+      mapping (morph-kgc) and diffs it with graph.nt: 8,790,365 against 8,790,369 --- the 4 extra
+      are the build's own provenance triples.
+  \end{itemize}}
+\end{frame}

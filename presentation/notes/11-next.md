@@ -1,4 +1,4 @@
-# Chapter 10 — What comes next (≈3 min, then questions)
+# Chapter 11 — What comes next (≈3 min, then questions)
 
 ## The story
 7.1.0 is built and running: the vision model now reads each entry's own image,
@@ -28,8 +28,6 @@ queries word for word, because the vocabulary was kept.
 `scripts/figures.py`, and fill the MemeAtlas column.
 
 ## Open questions (each logged in the gaps folder)
-- **The mk: namespace** (gap 01) sits under meme4.science, IMKG's domain: it
-  needs IMKG's authors' agreement before a public release.
 - **Things Wikidata does not know** (gap 11): 22,614 recognised names in frame
   text, and a fifth of named people/characters in template images, have no item
   (Morty Smith, Springtrap…). Options range from a larger lexicon to minting

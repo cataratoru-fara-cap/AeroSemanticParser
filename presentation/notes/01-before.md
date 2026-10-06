@@ -23,15 +23,15 @@ Tolkien's work?") by following them.
 | **IMKG** | **4,850,636** | **16,549,810** | **836** | 12,585 | 1,338,617 |
 
 Most of IMKG's size is imgflip memes and their captions. The fair comparison for
-MemeAtlas is the KYM part (chapter 9).
+MemeAtlas is the KYM part (chapter 10).
 
 ## How it was built (section 4 of the paper)
 1. **Model** — media frames (KYM entries), memes (imgflip instances), templates.
 2. **Collect** — a Selenium crawler over all of KYM (about two days), imgflip
    memes, 556 Wikidata memes as seeds.
 3. **Enrich** — DBpedia Spotlight on About/Origin/Spread and captions (confidence
-   ≥ 0.5, then DBpedia → Wikidata); Google Vision on the frame image only
-   (paid); KGTK over Wikidata dumps for background statements.
+   ≥ 0.5, then DBpedia → Wikidata); Google Vision on the frame image;
+   KGTK over Wikidata dumps for background statements.
 4. **Integrate** — RML mappings to RDF; KYM ↔ Wikidata on 276 memes (P6760);
    KYM ↔ imgflip by hand plus ~60 title matches above 85% similarity; 96 frames
    linked to 241 templates.
@@ -40,8 +40,6 @@ MemeAtlas is the KYM part (chapter 9).
 IMKG did what a research paper needs. These are the properties a *living* graph
 needs, which is what you were asked to build:
 - a one-off snapshot, while KYM changes daily;
-- remote, paid services in the middle (Spotlight, Google Vision): answers change
-  over time, cost money, not reproducible;
 - most of each page unread: links, references, the story;
 - bridges made by hand (276 memes, 96 frames) do not scale to new entries;
 - a link carries no score and no reason.
@@ -58,10 +56,10 @@ handle scalability in terms of volume and velocity".
   (Airflow DAGs, local NLP, a local Wikidata lexicon). What was kept is IMKG's
   *model and vocabulary* (m4s:, kym:, skos:broader, rdfs:seeAlso,
   m4s:fromAbout/fromTags/fromImage, m4s:templateOf).
-- *Why not just re-run IMKG?* Its crawler targets KYM's layout of 2022 and its
-  enrichment depends on paid/remote services; re-running gives a different graph
-  each time and still a snapshot. (Do not claim the crawler is broken unless you
-  have tried it.)
+- *Why not just re-run IMKG?* Its crawler targets KYM's layout of 2022, and a
+  re-run would still be a snapshot. (Do not claim the crawler is broken unless
+  you have tried it.) Using outside services where they do the job was a sound
+  choice for a paper; it is not one of the things to fix.
 - *Is MemeAtlas a replacement?* An extension: same vocabulary, more depth,
   continuous. IMKG's imgflip memes (1.3M instances) are not re-collected.
 

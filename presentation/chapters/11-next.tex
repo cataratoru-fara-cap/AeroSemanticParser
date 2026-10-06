@@ -1,0 +1,103 @@
+% Chapter 11 — what comes next: KG 7.1.0 (the entries' own images, Wikidata's facts), open gaps.
+% Then the epilogue: the closing slide, to the right of the map, and the map once more.
+
+\gmenter{next}
+\note{Chapter 11: what is built and running now, and what is open.}
+
+\gmgo{next-710}{7.1.0 and IMKG's questions}
+\begin{frame}{7.1.0: each meme's image, and Wikidata's facts}
+  \begin{columns}[t]
+    \column{.37\textwidth}
+      \gmpill{the meme's own image}\par\vskip2mm
+      {\normalsize The vision model reads every entry's picture, not only its templates.}\par\vskip4mm
+      \gmpill{Wikidata's facts}\par\vskip2mm
+      {\normalsize Each linked item brings its facts: Kabosu \emph{is a} dog \dots}\par\vskip2mm
+      \gmbig{\FStatements}{facts about \FStatementItems\ items}
+    \column{.6\textwidth}
+      {\normalsize\color{gmInk2}IMKG's four published questions, and its answers}\par\vskip3mm
+      \begin{tikzpicture}[x=1cm, y=-1.05cm,
+          q/.style={anchor=west, font=\normalsize\bfseries, text=gmInk, text width=4.0cm, align=left},
+          a/.style={anchor=west, font=\normalsize, text=gmInk2, text width=4.1cm, align=left}]
+        \node[q] at (0,0) {memes showing SpongeBob};   \node[a] at (4.3,0) {130};
+        \node[q] at (0,1) {the most meme-able people}; \node[a] at (4.3,1) {Trump, Kyle Craven, Kanye West};
+        \node[q] at (0,2) {memes based on films};      \node[a] at (4.3,2) {413};
+        \node[q] at (0,3) {people by sex or gender};   \node[a] at (4.3,3) {male 10,333, female 2,798};
+      \end{tikzpicture}\par\vskip3mm
+      {\normalsize On 7.1.0: \textbf{the same queries, word for word} --- answered when it is published.}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item Version 7.1.0 is built and tested; the image reading is running on the lab's GPU now
+      (every entry's picture, about two days), and the graph will be published when it finishes.
+    \item The meme's own image: IMKG used Google Vision on the meme's main picture; MemeAtlas reads
+      it with the same vision model as the templates, and links what it sees from the meme itself.
+    \item Wikidata facts: 753,854 statements of 32,494 linked items (1,183 properties), read from the
+      same Wikidata dump as the lexicon. Now ``which memes show a human?'' is a question the graph
+      can answer.
+    \item The four use cases of IMKG's paper (Table 4), with IMKG's answers from its own notebook.
+      They did not run on 7.0.0: three need Wikidata facts (is a human, is a film, sex or gender),
+      one needs what the meme's image shows. 7.1.0 adds exactly that --- and because the vocabulary
+      was kept, the queries run unchanged. [Update this slide when 7.1.0 is published:
+      scripts/extract.py on the 7.1.0 build.]
+  \end{itemize}}
+\end{frame}
+
+\gmgo{next-open}{Open questions}
+\begin{frame}{Open questions}
+  \begin{columns}[t]
+    \column{.55\textwidth}
+      \begin{tikzpicture}[x=1cm, y=-1.5cm, baseline=(current bounding box.north),
+          ic/.style={circle, minimum size=1.0cm, fill=gm@col@next, text=white, font=\fontsize{14}{14}\selectfont, inner sep=0pt},
+          tx/.style={anchor=west, text width=6.4cm, font=\normalsize, text=gmInk, align=left}]
+        \node[ic] at (0,0) {\faQuestion}; \node[tx] at (.7,0) {\textbf{What Wikidata does not know}\\[-.4mm]{\small\color{gmInk2}Cheems is there; most meme characters are not}};
+        \node[ic] at (0,1) {\faClone};    \node[tx] at (.7,1) {\textbf{One event, many pages}\\[-.4mm]{\small\color{gmInk2}two entries telling one happening, not yet joined}};
+        \node[ic] at (0,2) {\faHistory};  \node[tx] at (.7,2) {\textbf{An old address}\\[-.4mm]{\small\color{gmInk2}no IRI says where an entry used to live}};
+      \end{tikzpicture}
+    \column{.41\textwidth}
+      \begin{tikzpicture}[baseline=(current bounding box.north)]
+        \node[fill=gmTint, rounded corners=2mm, inner sep=3.2mm, text width=4.6cm, align=left] {
+          \gmwhy{Each one is written down}\par\vskip1mm\normalsize
+          with what it costs and the fix, so the next person starts from there.};
+      \end{tikzpicture}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item Gap 11: names with no Wikidata item --- 22,614 in frame text, a fifth of the named people
+      and characters in template images (Morty Smith, Springtrap \dots). Fixes range from a bigger
+      lexicon to minting our own items.
+    \item Cross-entry event identity: two pages telling the same happening produce two events.
+    \item Gap 14, closed this week: one entry, one address. What remains open is the old IRIs:
+      Doge's frame is now \texttt{/sensitive/memes/doge}, IMKG's was \texttt{/memes/doge}. Neo4j lists
+      the old address on the frame; RDF says nothing (owl:sameAs would --- a modelling decision).
+    \item The common thread: every weakness is documented with its cost and its fix.
+  \end{itemize}}
+\end{frame}
+
+\gmepilogue
+\gmgo{thanks}{Thank you}
+{\setbeamertemplate{background}{}
+\begin{frame}[plain]
+  \begin{tikzpicture}[remember picture, overlay]
+    \coordinate (c) at ($(current page.center)+(4.3cm,-.1cm)$);
+    \foreach \a/\r/\col in {15/3.05/kWikidata, 48/2.55/kTemplate, 88/2.95/kFrame, 128/2.6/kEvent,
+                            205/3.0/kConcept, 248/2.55/kWikidata, 292/2.95/kEvent, 328/2.5/kFrame} {
+      \draw[gmBase, line width=.8pt] (c) -- ($(c)+(\a:\r)$);
+      \fill[\col] ($(c)+(\a:\r)$) circle (.2);}
+    \node[circle, minimum size=4.3cm, draw=kFrame, line width=3pt,
+          path picture={\node at (path picture bounding box.center)
+                        {\includegraphics[height=4.5cm]{figures/img/doge}};}] at (c) {};
+    \node[anchor=south west, text width=7.9cm, font=\fontsize{20}{25}\selectfont\bfseries, text=gmInk, align=left]
+      at ($(current page.west)+(11mm,-2mm)$) {\hyphenpenalty=10000 From a 2023 snapshot to a graph that renews itself every month.};
+    \node[anchor=north west, font=\Large, text=gmInk2] at ($(current page.west)+(11.5mm,-6mm)$) {Thank you. Questions?};
+  \end{tikzpicture}
+  \note{
+  \begin{itemize}
+    \item One sentence to end: IMKG was a snapshot; MemeAtlas is a process --- it reads every page in
+      depth, says how sure it is of every derived fact, keeps IMKG's language, and renews itself
+      every month.
+    \item Thank Riccardo and the lab. Questions.
+  \end{itemize}}
+\end{frame}}
+
+\gmoverview{One meme,\\ eleven stops}
+\note{The map again, every node visited. Leave it on screen during questions.}

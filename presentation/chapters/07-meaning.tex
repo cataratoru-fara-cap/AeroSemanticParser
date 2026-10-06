@@ -1,0 +1,182 @@
+% Chapter 7 — give it meaning: the ontology the graph is written in (memeatlas.ttl, an
+% extension of IMKG), the curated taxonomies (entry types, origins) and the folksonomy (tags).
+
+\gmenter{meaning}
+\note{Chapter 7: before weaving the graph, the words it is written in. Three kinds of
+vocabulary, each built differently: an ontology (the classes and relations), taxonomies (is-a
+trees, decided by hand), and a folksonomy (the tags people chose, kept as they are, measured).}
+
+\gmgo{meaning-ontology}{The ontology}
+\begin{frame}{An ontology: IMKG's words, and ours}
+  \centering
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      cl/.style={rounded corners=2mm, minimum height=.78cm, minimum width=2.75cm, inner xsep=1.5mm, font=\normalsize\bfseries, align=center},
+      imkg/.style={cl, fill=gmHair!80!gmSurface, draw=gmMuted, line width=.8pt, text=gmInk},
+      ours/.style={cl, fill=gm@col@meaning!22!gmSurface, draw=gm@col@meaning, line width=1.1pt, text=gmInk},
+      rel/.style={font=\small\ttfamily, text=gmInk2, fill=gmSurface, inner sep=1pt},
+      go/.style={-{Stealth[length=2.4mm]}, line width=1.1pt, draw=gmBase, shorten <=.5mm, shorten >=.5mm}]
+    \node[imkg, minimum width=2.8cm, minimum height=1.05cm, font=\large\bfseries] (mf) at (0,0) {MediaFrame\\[-.7mm]{\small\mdseries Doge}};
+    \node[imkg] (cat) at (-5.2,1.35) {kym:Meme};
+    \node[imkg] (wd)  at (-5.2,0) {Wikidata item};
+    \node[ours] (tp)  at (-5.2,-1.35) {mk:MemeTemplate};
+    \node[imkg] (ser) at (5.2,1.35) {MediaFrame};
+    \node[ours] (ev)  at (5.2,0) {mk:Event};
+    \node[ours] (im)  at (5.2,-1.35) {mk:Image};
+    \draw[go] (mf) -- node[rel, sloped, above] {rdf:type} (cat);
+    \draw[go] (mf) -- node[rel, above, pos=.52] {m4s:fromAbout} (wd);
+    \draw[go] (mf) -- node[rel, sloped, below] {mk:hasTemplate} (tp);
+    \draw[go] (mf) -- node[rel, sloped, above] {skos:broader} (ser);
+    \draw[go] (mf) -- node[rel, above] {mk:hasEvent} (ev);
+    \draw[go] (mf) -- node[rel, sloped, below] {mk:hasImage} (im);
+    \node[imkg, minimum width=.45cm, minimum height=.4cm] at (-1.9,-2.15) {};
+    \node[anchor=west, font=\small, text=gmInk2] at (-1.6,-2.15) {IMKG's};
+    \node[ours, minimum width=.45cm, minimum height=.4cm] at (.25,-2.15) {};
+    \node[anchor=west, font=\small, text=gmInk2] at (.55,-2.15) {ours (mk:), aligned};
+  \end{tikzpicture}
+  \vskip3mm
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      nb/.style={circle, fill=gm@col@meaning, text=gmInk, font=\small\bfseries, minimum size=.52cm, inner sep=0pt},
+      chip/.style={rounded corners=2mm, fill=gm@col@meaning!12!gmSurface, inner sep=2mm, text width=2.95cm,
+                   align=left, font=\small, anchor=north west, minimum height=1.15cm}]
+    \foreach \i/\t/\w in {0/{IMKG's words}/{kept as they are}, 1/{New terms}/{only where IMKG has none},
+                          2/{A node}/{only for what is shared}, 3/{Checked}/{every term declared}} {
+      \node[chip] (c\i) at (\i*3.55,0) {\textbf{\t}\\\color{gmInk2}\w};
+      \node[nb] at (c\i.north west) {\the\numexpr\i+1\relax};}
+  \end{tikzpicture}
+  \note{
+  \begin{itemize}
+    \item The ontology is the graph's grammar: which kinds of things exist and which arrows can
+      join them. Ours is memeatlas.ttl, an extension of IMKG's.
+    \item How it was derived, in four rules. One: where IMKG already has a word, use it as is ---
+      m4s:MediaFrame, m4s:title, the kym: category classes and kymt: entry-type classes,
+      skos:broader for a series, rdfs:seeAlso for siblings, m4s:fromAbout for Wikidata items. So
+      IMKG's own queries still run.
+    \item Two: what IMKG never modelled gets a MemeAtlas term (mk:), declared in the ontology and
+      aligned to a standard where one fits: an mk:Event is a sem:Event (the Simple Event Model,
+      EventKG's), an mk:MemeTemplate a schema:CreativeWork, an mk:Image a schema:ImageObject,
+      provenance terms PROV's. Aligned, never emitted: the graph carries only IMKG's and ours.
+    \item Three, the rule of version 4.0.0: a node only for something other things can share (an
+      entry, a type, a tag, a URL, an image, an item). What belongs to one entry is a value on it;
+      what belongs to one mention --- a link's anchor text, its score --- annotates the arrow
+      (RDF-star).
+    \item Four: tests check that every mk: term the graph can emit is declared and nothing declared
+      is unused, and the RDF is re-derived a second way, through a mapping, and compared. 14
+      deliberate differences from IMKG are written down, each with its reason (MODEL.md).
+  \end{itemize}}
+\end{frame}
+
+\gmgo{meaning-taxonomy}{The taxonomies}
+\begin{frame}{Taxonomies: is-a, by hand, checked by numbers}
+  \begin{columns}[t]
+    \column{.56\textwidth}
+      {\large\bfseries entry types}\enspace{\normalsize\color{gmInk2}\NEntryTypes, KYM's own list}\par\vskip2mm
+      {\normalsize For every pair: \textbf{how often they appear together}, and \textbf{what each means}
+      (an LLM's definition, embedded). Then \textbf{a person files the pair}:}\par\vskip3mm
+      \begin{tikzpicture}[x=1cm, y=1cm,
+          bk/.style={rounded corners=1.2mm, minimum width=.85cm, minimum height=.66cm, font=\large\bfseries}]
+        \foreach \i/\n/\w/\k in {0/\NTaxConfirmed/{is-a, both agree}/1, 1/\NTaxSemanticOnly/{is-a, by meaning}/1,
+                                 2/\NTaxNotIsA/{causal, part-of}/0, 3/\NTaxDemoted/rejected/0,
+                                 4/\NTaxContested/{to sample}/0} {
+          \ifnum\k=1
+            \node[bk, fill=gm@col@meaning, text=gmInk] (b\i) at (\i*1.6,0) {\n};
+          \else
+            \node[bk, fill=gmHair, text=gmInk2] (b\i) at (\i*1.6,0) {\n};
+          \fi
+          \node[below=.6mm of b\i, font=\small, text=gmInk2, text width=1.55cm, align=center] {\w};}
+      \end{tikzpicture}\par\vskip3mm
+      {\normalsize$\rightarrow$ \textbf{\NTaxEdges\ is-a edges}: a streamer \emph{is a} creator, a snowclone \emph{is a} catchphrase}
+    \column{.4\textwidth}
+      {\large\bfseries origins}\enspace{\normalsize\color{gmInk2}free text}\par\vskip2mm
+      {\normalsize ``Twitter'', ``X'', ``twitter.com'' $\rightarrow$ \textbf{twitter}}\par\vskip1mm
+      {\normalsize\color{gmInk2}\NOriginAliases\ spellings $\rightarrow$ \NOriginConcepts\ origins}\par\vskip4mm
+      \begin{tikzpicture}[x=1cm, y=1cm,
+          u/.style={rounded corners=1.4mm, fill=gm@col@meaning!22!gmSurface, font=\small\bfseries, inner sep=1.5mm, anchor=west},
+          p/.style={font=\small, text=gmInk, anchor=west}, go/.style={line width=1pt, draw=gmBase}]
+        \node[u] (sn) at (0,0) {social network};  \node[p] (x1) at (2.95,0) {Twitter, Tumblr};
+        \node[u] (ib) at (0,-.8) {imageboard};      \node[p] (x2) at (2.95,-.8) {4chan};
+        \node[u] (vp) at (0,-1.6) {video platform}; \node[p] (x3) at (2.95,-1.6) {YouTube, TikTok};
+        \draw[go] (sn) -- (x1); \draw[go] (ib) -- (x2); \draw[go] (vp) -- (x3);
+      \end{tikzpicture}\par\vskip3mm
+      {\small\color{gmInk2}\NOriginEdges\ is-a edges, platforms only: a country or a person gets no forced parent}
+  \end{columns}
+  \note{
+  \begin{itemize}
+    \item A taxonomy says what is a kind of what. Ours are curated by hand, with numbers as the
+      check --- ``meaning first, statistics as audit''.
+    \item Entry types: Know Your Meme's own controlled list, 119 types (image macro, exploitable,
+      catchphrase \dots). Two kinds of evidence for every pair. Statistics: how often two types
+      appear on the same entry (pointwise mutual information, containment) over the corpus census.
+      Meaning: a language model wrote a definition of each type (9 rewritten by hand), each
+      definition embedded with qwen3-embedding; two types that mean nearly the same but never
+      appear together are substitution candidates --- the same idea filed twice.
+    \item Then a person filed every candidate pair into buckets: is-a where statistics and meaning
+      agree (5); is-a by meaning alone where the statistics cannot see it (8); real relations of
+      the wrong type, causal or part-of (5: a trial follows a crime, a song is part of an album);
+      rejected (3: anime and manga co-occur because franchises span both, they are not one
+      thing); contested, to be sampled (2); plus adjective-like types with no parent and three
+      missing umbrellas (comics, games, screen media). Only the two is-a buckets become edges ---
+      13, as rdfs:subClassOf --- and a check refuses any pair filed in two buckets.
+    \item Origins: the infobox's ``Origin'' is free text --- platforms, but also countries, films,
+      companies, people. 300 curated spellings collapse into 202 origins (the long tail keeps its
+      own slug). The is-a tree covers platforms only: 42 edges under 12 umbrellas (social network,
+      imageboard, video platform \dots). A country or a person is de-duplicated but never given a
+      fake parent.
+  \end{itemize}}
+\end{frame}
+
+\gmgo{meaning-folksonomy}{The folksonomy}
+\begin{frame}{A folksonomy: the tags editors chose}
+  \begin{columns}[t]
+    \column{.3\textwidth}
+      {\normalsize\color{gmInk2}Doge's \NDogeTags\ tags}\par\vskip2mm
+      {\raggedright\small
+      \foreach \t in {shiba inu, such doge, doges, dogges, japanese, tumblr, comic sans, reddit, bitcoin,
+                      dogecoin, doge meme, doge memes, kabosu, dogelore, kabosumama} {%
+        \tikz[baseline=(t.base)]\node[rounded corners=1.4mm, fill=gm@col@meaning!20!gmSurface, inner xsep=1.2mm,
+          inner ysep=.6mm] (t) {\t};\hspace{.5mm}\allowbreak}{\normalsize\dots}\par}
+    \column{.33\textwidth}
+      {\normalsize\color{gmInk2}one tag, one spelling}\par\vskip3mm
+      \begin{tikzpicture}[x=1cm, y=-1cm, n/.style={anchor=west, font=\normalsize}]
+        \node[n] at (0,0) {exploitable \textbf{\NFoldExploitable}};
+        \node[n] at (0,.55) {exploitables \textbf{\NFoldExploitables}};
+        \node[n] at (0,1.45) {catchphrase \textbf{\NFoldCatchphrase}};
+        \node[n] at (0,2.0) {catchphrases \textbf{\NFoldCatchphrases}};
+        \draw[gm@col@meaning, line width=1.6pt, decorate, decoration={brace, amplitude=5pt}] (3.55,-.2) -- (3.55,.75);
+        \draw[gm@col@meaning, line width=1.6pt, decorate, decoration={brace, amplitude=5pt}] (3.55,1.25) -- (3.55,2.2);
+        \node[anchor=west, font=\large\bfseries] at (3.85,.27) {1};
+        \node[anchor=west, font=\large\bfseries] at (3.85,1.72) {1};
+        \node[anchor=north west, font=\small, text=gmInk2, text width=4.4cm] at (0,2.6) {never \emph{news}, \emph{star wars},
+          \emph{the simpsons}: \NNoFold\ checked by hand};
+      \end{tikzpicture}
+    \column{.33\textwidth}
+      {\normalsize\color{gmInk2}tags that go together}\par\vskip3mm
+      \begin{tikzpicture}[x=1cm, y=1cm, t/.style={rounded corners=1.4mm, fill=gm@col@meaning!20!gmSurface, font=\small, inner sep=1.3mm},
+          c/.style={line width=1.4pt, draw=gm@col@meaning!70!gmSurface}, w/.style={font=\small\bfseries, text=gmInk, fill=gmSurface, inner sep=.8pt}]
+        \node[t] (g) at (0,0) {gaming};          \node[t] (v) at (2.85,0) {video games};
+        \node[t] (a) at (0,-.95) {anime};         \node[t] (m) at (2.85,-.95) {manga};
+        \node[t] (d) at (0,-1.9) {donald trump};  \node[t] (p) at (2.85,-1.9) {politics};
+        \draw[c] (g) -- node[w] {\NPairGaming} (v); \draw[c] (a) -- node[w] {\NPairAnime} (m); \draw[c] (d) -- node[w] {\NPairTrump} (p);
+      \end{tikzpicture}\par\vskip2mm
+      {\small\color{gmInk2}\NCoOccurs\ pairs: a count, kept apart from the taxonomy}
+  \end{columns}
+  \vskip3mm
+  {\large \NTagsRaw\ tags as written $\rightarrow$ \textbf{\NTagConcepts} in the graph}
+  \note{
+  \begin{itemize}
+    \item The tags are a folksonomy: keywords KYM's editors and users chose freely, no tree, no
+      rules. That is valuable --- it is how people describe memes --- and noisy: the same tag in
+      two spellings, plurals, near-synonyms.
+    \item How we treat them: keep the editors' words (in RDF IMKG's own m4s:tag), and fold only
+      the variants that are certainly one tag. Plurals: exploitable 905 and exploitables 825 were
+      two tags; now one. The rule is mechanical, so a list of exceptions, seeded by reading every
+      tag of the top-300 census the rule would touch: news, politics, star wars, the simpsons \dots\
+      are never folded (12 so far; the list only grows).
+    \item What goes together is measured, not decided: a census counts tag pairs on the same entry,
+      and frequent pairs become coOccursWith edges --- gaming and video games 396 times, anime and
+      manga 189. 4,984 such edges. On purpose they are a different relation from the taxonomy's
+      is-a: one is a person's judgement, the other a threshold on a count, and the graph keeps the
+      two stories apart. (The same co-occurrence was tried for entry types and removed: next to a
+      curated taxonomy it was noise.)
+    \item 104,251 distinct tags as written; 101,883 tags in the graph.
+  \end{itemize}}
+\end{frame}

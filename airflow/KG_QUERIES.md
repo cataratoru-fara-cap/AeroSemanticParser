@@ -74,17 +74,20 @@ same panel.
 | `FrameStub` | dark blue `#184f95` (a frame not in the corpus) | small | KYM URL |
 | `WikidataEntity` | orange `#d95926` | large | label |
 | `Template` | aqua `#199e70` | large | name |
-| `Event` | yellow `#c98500` | medium | the sentence it was read from |
-| `EntryTypeConcept`, `OriginConcept` | green `#008300` | medium | label |
-| `TagConcept`, `RegionConcept`, `BadgeConcept` | green `#008300` | small | label |
+| `Event` | violet `#4a3aa7` | medium | the sentence it was read from |
+| `EntryTypeConcept`, `OriginConcept` | pink `#e87ba4` | medium | label |
+| `TagConcept`, `RegionConcept`, `BadgeConcept` | pink `#e87ba4` | small | label |
 | `Image`, `ExternalRef` | light grey `#b5b4ad` | smallest | URL |
 
 Frame, Wikidata item and template link to each other, so they take the
 three hues that stay apart from each other under protanopia, deuteranopia and
-normal vision, on both the light and the dark theme. No fourth hue does that
-(checked with the data-viz palette validator). Events and concepts link mostly to frames, so
-each hue is checked against blue and grey only. The concepts share one green
-and are told apart by size and caption, as are images and external links.
+normal vision, on both the light and the dark theme. With events (violet) and
+concepts (pink) the five hues still pass every pair on the light theme, the
+Browser's default (checked with the data-viz palette validator; the same
+colours as the talk's slides). On the dark theme the violet sits below 3:1
+against the background, so there an event is told by its caption. The
+concepts share one pink and are told apart by size and caption, as are images
+and external links.
 
 ## The queries
 

@@ -46,13 +46,38 @@ measuring that changed the design.
   scholarly articles).
 
 ## Design decisions — the why
-- **At home, not a web service.** IMKG used DBpedia Spotlight (remote, rate
-  limited, answers drift) then mapped DBpedia → Wikidata. MemeAtlas: spaCy
-  (`en_core_web_sm`) finds candidate spans — NER, noun chunks and their
-  suffixes, proper-noun runs, the whole title, each whole tag — and a local
-  lexicon links them. Same dump, same answer; no quota; no second KB between.
-  (NOTES.md records the suggestion to download all of Wikidata rather than call
-  an API.)
+- **Why spaCy and our own lexicon, not DBpedia Spotlight** (the slide's four
+  reasons). IMKG sent the text to Spotlight, then mapped DBpedia to Wikidata —
+  right for a one-off graph. For a graph rebuilt monthly: (1) *straight to
+  Wikidata*: the DBpedia→Wikidata mapping is incomplete, and nothing is lost on
+  the way; (2) *same text, same links*: a dated dump and a fixed spaCy model
+  give the same answer every time, so the dump's version is a stamp and a page
+  is re-linked exactly when something moved; (3) *reads more*: noun phrases,
+  the title (IMKG did not link titles) and each whole tag; (4) *keeps the
+  evidence*: every link carries its score, method and features, which is what
+  made curation possible. spaCy (`en_core_web_sm`) finds candidate spans — NER,
+  noun chunks and their suffixes, proper-noun runs, the whole title, each whole
+  tag — and the local lexicon links them. (NOTES.md records the lab's
+  suggestion to download all of Wikidata rather than call an API; the Wikidata
+  API also answers 429 to parallel anonymous calls.)
+- **Why linking comes before events and templates** (asked in the review). In
+  the chain, `kym_entities` runs right after parse: linking the text needs only
+  the parsed page. Events are not linked — their people and places stay the
+  page's words (an open question, chapter 11). The pictures come later: names
+  the vision model reads in templates (and, from 7.1.0, in each meme's image)
+  go through the same `Linker`, which prefers the items the page's own text
+  already linked (`frame_agree`). So the text must be linked first; chapter 6
+  and chapter 9's chain slide show that dependency.
+- **How the rules were derived, and who the judge is.** Rules came from
+  measuring, not guessing: the first full run (282,914 links) showed 59% common
+  nouns and wrong hubs ("series" → the maths series, 5,531 times); the bar was
+  set before measuring (kept ≥ 0.85 relevant, dropped ≤ 0.15); a bake-off over
+  280, then 353 hand-labelled links compared three models and four prompts;
+  where every judge failed, a rule took over (whole tags naming something:
+  relevant 34 times in 39; meme formats kept; generic About words dropped). The
+  judge is ministral-3:14b on the lab's GPU server, one call per page, asked
+  for a role per item; an About-only keep must be confirmed by the same model
+  under a second wording.
 - **Evidence on every link.** Score, method, NER label, and (after curation) the
   relevance basis. In RDF these are RDF-star annotations on the link itself
   (`<< kym:doge m4s:fromTags wd:Q144 >> mk:linkScore 0.616`).

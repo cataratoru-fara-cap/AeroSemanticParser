@@ -4,10 +4,18 @@ DAG: `kym_parse`. Modules: `kym_parse.py` (pure), `kym_models.py` (schema and
 CorpusPolicy), store `parse_store.py` (entries, parse_failures).
 
 ## The story
-A person reading Doge's page sees a title, a picture, a box of facts, the
-story underneath. The parser does the same and writes a tidy record — the same
-fields for every page. Every later step works from that record; nobody reads
-HTML again.
+A person reading Doge's page sees a picture with the title and the series it
+belongs to beside it; below, a column of facts on the left (status, type, year,
+origin, region, then the tags and the additional references) and the story in
+the middle (About, Origin, Spread and 22 more sections, its numbered references
+at the end). Around it is the site: menus, ads, the interview and video strip,
+the sidebar of top entries and editors, related-entries strips. The parser
+reads the entry and ignores the site, and writes a tidy record — the same fields
+for every page. Every later step works from that record; nobody reads HTML again.
+
+The slide's page model is drawn from the real layout of Doge's saved page (the
+test fixture `airflow/dags/tests/fixtures/doge.html`): numbered badges match the
+record's fields; grey is never read.
 
 ## Doge's record
 title Doge · category meme, status confirmed · year 2010 · origin Tumblr ·

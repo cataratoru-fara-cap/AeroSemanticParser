@@ -1,11 +1,41 @@
 # Build the talk without a local TeX installation (Docker), and refresh its data.
-TEX = docker run --rm -v $(CURDIR):/w -w /w texlive/texlive:latest latexmk -pdf -interaction=nonstopmode -halt-on-error
+#
+#   make          everything: the world, the thumbnails, then the four PDFs
+#   make stops    one page per stop, no motion — quick to proof (needs the thumbnails)
+#
+# The deck is built in two passes. thumbs.pdf holds every slide, one page each; Ghostscript
+# renders it into figures/thumbs/ at three sizes; the camera then flies over those pictures
+# and lands on the real slide. Re-run `make` after editing any slide, or the camera flies
+# over the old picture of it.
+UID := $(shell id -u)
+GID := $(shell id -g)
+RUN = docker run --rm -u $(UID):$(GID) -v $(CURDIR):/w -w /w texlive/texlive:latest
+TEX = $(RUN) latexmk -pdf -interaction=nonstopmode -halt-on-error
 COMPOSE = docker compose -f ../airflow/docker-compose.yml
+SOURCES = deck.tex theme/beamerthememeatlas.sty chapters/*.tex figures/generated/*.tex
 
-all: slides.pdf presenter.pdf notes.pdf
+all: slides.pdf presenter.pdf notes.pdf stops.pdf
 
-%.pdf: %.tex deck.tex theme/beamerthememeatlas.sty chapters/*.tex figures/generated/*.tex
+# where every chapter and slide sits, and the camera between them
+figures/generated/world.tex: scripts/world.py deck.tex chapters/*.tex
+	python3 scripts/world.py
+
+thumbs.pdf: thumbs.tex $(SOURCES) figures/generated/world.tex
+	$(TEX) thumbs.tex
+
+# small, medium and large pictures of every slide (SAFER off: our own file, and SAFER
+# refuses the page-numbered output names)
+figures/thumbs/.stamp: thumbs.pdf
+	mkdir -p figures/thumbs && rm -f figures/thumbs/*.png
+	$(RUN) sh -c 'for l in s:48 m:120 l:300; do n=$${l%%:*}; r=$${l##*:}; \
+	  gs -q -dNOSAFER -dNOPAUSE -dBATCH -sDEVICE=png16m -r$$r -dTextAlphaBits=4 -dGraphicsAlphaBits=4 \
+	     -sOutputFile=figures/thumbs/t%03d-$$n.png thumbs.pdf || exit 1; done'
+	touch $@
+
+slides.pdf presenter.pdf notes.pdf stops.pdf: %.pdf: %.tex $(SOURCES) figures/generated/world.tex figures/thumbs/.stamp
 	$(TEX) $<
+
+stops: stops.pdf
 
 # the live graph and the stages -> data/, then the figures
 data:
@@ -19,4 +49,4 @@ figures:
 clean:
 	rm -f *.aux *.log *.nav *.out *.snm *.toc *.fls *.fdb_latexmk *.vrb *.synctex.gz
 
-.PHONY: all data figures clean
+.PHONY: all stops data figures clean

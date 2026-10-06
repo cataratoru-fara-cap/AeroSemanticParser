@@ -1,50 +1,52 @@
-% Opening: the title, Doge, and the map of the talk.
+% Opening: the title and Doge, to the left of the map; then the camera pulls back to the map.
 
+\gmgo{title}{MemeAtlas}
 {\setbeamertemplate{background}{}
 \begin{frame}[plain]
   \begin{tikzpicture}[remember picture, overlay]
     \coordinate (c) at ($(current page.center)+(4.3cm,-.1cm)$);
     \foreach \a/\r/\col in {15/3.05/kWikidata, 48/2.55/kTemplate, 88/2.95/kFrame, 128/2.6/kEvent,
                             205/3.0/kConcept, 248/2.55/kWikidata, 292/2.95/kEvent, 328/2.5/kFrame} {
-      \draw[gmBase, line width=.7pt] (c) -- ($(c)+(\a:\r)$);
-      \fill[\col] ($(c)+(\a:\r)$) circle (.17);}
+      \draw[gmBase, line width=.8pt] (c) -- ($(c)+(\a:\r)$);
+      \fill[\col] ($(c)+(\a:\r)$) circle (.2);}
     \node[circle, minimum size=4.3cm, draw=kFrame, line width=3pt,
           path picture={\node at (path picture bounding box.center)
                         {\includegraphics[height=4.5cm]{figures/img/doge}};}] at (c) {};
-    \node[anchor=south west, font=\fontsize{42}{46}\selectfont\bfseries, text=gmInk]
+    \node[anchor=south west, font=\fontsize{44}{48}\selectfont\bfseries, text=gmInk]
       at ($(current page.west)+(11mm,4mm)$) {MemeAtlas};
-    \node[anchor=north west, text width=7.4cm, font=\large, text=gmInk2, align=left]
+    \node[anchor=north west, text width=7.4cm, font=\Large, text=gmInk2, align=left]
       at ($(current page.west)+(11.5mm,1mm)$) {\hyphenpenalty=10000 Turning Know Your Meme into a living knowledge graph};
-    \node[anchor=south west, font=\small, text=gmInk2, align=left]
-      at ($(current page.south west)+(11.5mm,10mm)$) {\insertauthor\\[1mm]\insertinstitute\quad\textperiodcentered\quad\insertdate};
+    \node[anchor=south west, font=\large, text=gmInk2, align=left]
+      at ($(current page.south west)+(11.5mm,9mm)$) {\insertauthor\\[1mm]{\normalsize\insertinstitute\quad\textperiodcentered\quad\insertdate}};
   \end{tikzpicture}
   \note{
   \begin{itemize}
-    \item Welcome. One hour, one meme, ten stops.
+    \item Welcome. One hour, one meme, eleven stops.
     \item The picture already says the whole talk: a meme in the middle, and everything we
       know about it connected around it, each colour a different kind of knowledge.
     \item Hold on to that dog. We will follow him through every step.
   \end{itemize}}
 \end{frame}}
 
+\gmgo{meet}{Meet Doge}
 \begin{frame}{Meet Doge}
   \begin{columns}[c]
     \column{.42\textwidth}\centering
       \begin{tikzpicture}
-        \node[circle, minimum size=4.1cm, draw=kFrame, line width=3pt,
+        \node[circle, minimum size=4.3cm, draw=kFrame, line width=3pt,
               path picture={\node at (path picture bounding box.center)
-                            {\includegraphics[height=4.3cm]{figures/img/doge}};}] {};
+                            {\includegraphics[height=4.5cm]{figures/img/doge}};}] {};
       \end{tikzpicture}\par\vskip2mm
-      {\scriptsize\color{gmMuted}Kabosu, photographed in 2010 --- Know Your Meme's ``Doge''}
+      {\normalsize\color{gmMuted}Kabosu, 2010 --- Know Your Meme's ``Doge''}
     \column{.54\textwidth}
-      \Large
-      \begin{itemize}\setlength{\itemsep}{2.5mm}
+      \LARGE
+      \begin{itemize}\setlength{\itemsep}{4mm}
         \item Who is this dog?
         \item Where did the joke start?
         \item Which memes grew out of it?
       \end{itemize}
-      \vskip5mm
-      \normalsize\color{gmInk2}A computer can answer only if these facts are \textbf{\color{gmInk}connected}.
+      \vskip7mm
+      \Large\color{gmInk2}A computer can answer only if the facts are \textbf{\color{gmInk}connected}.
   \end{columns}
   \note{
   \begin{itemize}
@@ -57,13 +59,14 @@
   \end{itemize}}
 \end{frame}
 
-\gmmapframe{One meme,\\ ten stops}
+\gmoverview{One meme,\\ eleven stops}
 \note{
 \begin{itemize}
   \item This is the talk, and it is also the system: each circle is one step of the pipeline,
-    each arrow is data flowing from one step to the next.
+    each arrow is data flowing from one step to the next. Everything we will see lives inside
+    one of these circles.
   \item Grey, top left: where the project started, IMKG. The dashed box: the machine that runs
-    every step, every month.
-  \item In each chapter we zoom into one node: first what happens to Doge there, in plain words,
-    then the engineering decisions behind it.
+    every step, every month. Pink, at the top: the vocabulary the graph is written in.
+  \item Doge (the small photo) walks the map with us. In each circle: first what happens to him
+    there, then the engineering decisions behind it.
 \end{itemize}}

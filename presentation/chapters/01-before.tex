@@ -1,169 +1,147 @@
 % Chapter 1 — where it started: IMKG (ESWC 2023).
 
-\gmzoomin{before}
-\note{Chapter 1. Before anything I built: what existed when I arrived.}
+\gmenter{before}
+\note{Chapter 1. Before anything I built: what existed when I arrived. Three stops: what a
+knowledge graph is, what IMKG was, and what I set out to change.}
 
+\gmgo{kg-picture}{A knowledge graph}
 \begin{frame}{A knowledge graph, in one picture}
   \centering
-  \begin{tikzpicture}[x=.95cm, y=.86cm,
-      thing/.style={circle, minimum size=5mm, inner sep=0pt},
-      nm/.style={font=\footnotesize, text=gmInk, inner sep=1.5pt},
-      fact/.style={-{Stealth[length=2mm]}, line width=.9pt, draw=gmBase},
-      rel/.style={font=\scriptsize\itshape, text=gmInk2, fill=gmSurface, inner sep=1pt}]
-    \node[thing, fill=kFrame, minimum size=8mm] (meme) at (0,0) {};
-    \node[nm, below=1mm of meme, align=center, font=\small\bfseries] {One Does Not Simply\\Walk into Mordor};
-    \node[thing, fill=kWikidata] (mordor) at (4.3,1.7) {};      \node[nm, right=1mm of mordor] {Mordor};
-    \node[thing, fill=kWikidata] (boromir) at (-4.1,1.6) {};    \node[nm, left=1mm of boromir] {Boromir};
-    \node[thing, fill=kWikidata] (sauron) at (-4.1,-1.5) {};    \node[nm, left=1mm of sauron] {Sauron};
-    \node[thing, fill=kWikidata] (lotr) at (4.3,-1.5) {};       \node[nm, below=1mm of lotr] {The Lord of the Rings};
-    \node[thing, fill=kWikidata] (tolkien) at (8.0,-1.5) {};    \node[nm, below=1mm of tolkien] {Tolkien};
-    \node[thing, fill=kFrame!60!gmSurface] (sub) at (0,2.9) {};  \node[nm, right=1mm of sub] {Lord of the Rings, the KYM subculture};
-    \draw[fact] (meme) -- node[rel, sloped, above] {its text mentions} (mordor);
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      pic/.style={circle, line width=2pt, inner sep=0pt},
+      ico/.style={circle, minimum size=1.1cm, inner sep=0pt, font=\fontsize{17}{17}\selectfont, text=white},
+      nm/.style={font=\normalsize\bfseries, text=gmInk, inner sep=2pt, align=center},
+      fact/.style={-{Stealth[length=2.6mm]}, line width=1.2pt, draw=gmBase, shorten <=1mm, shorten >=1mm},
+      rel/.style={font=\small\itshape, text=gmInk2, fill=gmSurface, inner sep=1.2pt}]
+    \node[pic, draw=kFrame, minimum size=2.1cm,
+          path picture={\node at (path picture bounding box.center)
+                        {\includegraphics[height=2.2cm]{figures/img/onedoes}};}] (meme) at (0,0) {};
+    \node[nm, below=1mm of meme] {One Does Not Simply\\Walk into Mordor};
+    \node[pic, draw=kWikidata, minimum size=1.25cm,
+          path picture={\node at ($(path picture bounding box.center)+(.13,-.48)$)
+                        {\includegraphics[height=2.95cm]{figures/img/onedoes}};}] (boromir) at (-3.8,1.35) {};
+    \node[nm, left=1mm of boromir] {Boromir};
+    \node[ico, fill=kWikidata] (sauron) at (-3.8,-1.45) {\faEye};
+    \node[nm, left=1mm of sauron] {Sauron};
+    \node[ico, fill=kWikidata] (mordor) at (3.8,1.35) {\faMountain};
+    \node[nm, right=1mm of mordor] {Mordor};
+    \node[ico, fill=kWikidata] (lotr) at (3.8,-1.45) {\faRing};
+    \node[nm, below=1mm of lotr] {The Lord of the Rings};
+    \node[ico, fill=kWikidata] (tolkien) at (6.7,-1.45) {\faFeather*};
+    \node[nm, below=1mm of tolkien] {Tolkien};
+    \node[ico, fill=kFrame, minimum size=.95cm, font=\fontsize{13}{13}\selectfont] (sub) at (0,2.45) {\faUsers};
+    \node[nm, right=1mm of sub, align=left] {Lord of the Rings\\[-.6mm]{\small\mdseries\color{gmInk2}a Know Your Meme subculture}};
     \draw[fact] (meme) -- node[rel, sloped, above] {its picture shows} (boromir);
+    \draw[fact] (meme) -- node[rel, sloped, above] {its text mentions} (mordor);
     \draw[fact] (boromir) -- node[rel, left] {enemy of} (sauron);
     \draw[fact] (mordor) -- node[rel, right] {appears in} (lotr);
     \draw[fact] (tolkien) -- node[rel, above] {wrote} (lotr);
     \draw[fact] (meme) -- node[rel, right] {part of} (sub);
   \end{tikzpicture}
-  \vskip3mm
+  \vskip2mm
   {\large Things are \textbf{dots}. Facts are \textbf{arrows}. A computer can follow the arrows.}
   \gmsource{Redrawn from IMKG's own example (Tommasini, Ilievski, Wijesiriwardene, ESWC 2023, Fig.~7).}
   \note{
   \begin{itemize}
     \item The one idea everyone needs for the rest of the hour.
-    \item A knowledge graph stores facts as arrows between things. ``The meme's text mentions
-      Mordor.'' ``Mordor appears in The Lord of the Rings.'' ``Tolkien wrote it.''
+    \item A knowledge graph stores facts as arrows between things. ``The meme's picture shows
+      Boromir.'' ``Its text mentions Mordor.'' ``Mordor appears in The Lord of the Rings.''
+      ``Tolkien wrote it.''
     \item Because the arrows connect, a computer can answer questions nobody wrote down:
       ``which memes are about Tolkien's work?'' --- follow the arrows backwards.
-    \item This picture is from IMKG, the project I started from.
+    \item Blue dots are Know Your Meme entries, orange dots are Wikidata items: the two colours
+      come back all talk.
+    \item This picture is IMKG's own example --- the project I started from.
   \end{itemize}}
 \end{frame}
 
-\begin{frame}{IMKG, the Internet Meme Knowledge Graph (2023)}
+\gmgo{imkg}{IMKG, 2023}
+\begin{frame}{IMKG, the Internet Meme Knowledge Graph}
+  \framesubtitle{ESWC 2023: a paper, its code, one data release --- four steps, run \textbf{once}}
+  \centering
+  \begin{tikzpicture}[x=1cm, y=1cm,
+      stp/.style={circle, minimum size=1.3cm, fill=gm@col@before, text=white, inner sep=0pt,
+                  font=\fontsize{17}{17}\selectfont},
+      nm/.style={font=\large\bfseries, text=gmInk},
+      what/.style={text width=3.0cm, align=center, font=\small, text=gmInk2},
+      go/.style={-{Stealth[length=2.8mm]}, line width=1.2pt, draw=gmBase, shorten <=1.5mm, shorten >=1.5mm}]
+    \foreach \i/\ic/\n/\w in {0/\faShapes/model/{media frames, memes, templates},
+                              1/\faSpider/collect/{Know Your Meme in two days, imgflip, Wikidata},
+                              2/\faMagic/enrich/{entities in the text and the picture},
+                              3/\faProjectDiagram/integrate/{RDF; KYM and imgflip joined by hand}} {
+      \node[stp] (s\i) at (\i*3.55,0) {\ic};
+      \node[nm, below=1mm of s\i] (n\i) {\n};
+      \node[what, below=0mm of n\i] {\w};}
+    \foreach \i [count=\j] in {0,1,2} \draw[go] (s\i) -- (s\j);
+  \end{tikzpicture}
+  \vskip6mm
   \begin{columns}[t]
-    \column{.31\textwidth}
-      \gmpill{the paper}\par\vskip2mm
-      ESWC 2023\\[1mm]
-      {\small\color{gmInk2}Tommasini, Ilievski, Wijesiriwardene --- LIRIS, USC, South Carolina}
-    \column{.31\textwidth}
-      \gmpill{the code}\par\vskip2mm
-      a crawler, mappings, notebooks\\[1mm]
-      {\scriptsize\color{gmInk2}github.com/riccardotommasini/imkg}
-    \column{.31\textwidth}
-      \gmpill{the data}\par\vskip2mm
-      one release, v0.9\\[1mm]
-      {\small\color{gmInk2}Zenodo, RDF and a property graph}
-  \end{columns}
-  \vskip9mm
-  \begin{columns}[t]
-    \column{.27\textwidth}\gmbig{\FImkgFrames}{Know Your Meme entries}
-    \column{.22\textwidth}\gmbig{\FImkgMemes}{imgflip memes}
-    \column{.22\textwidth}\gmbig{4.85M}{nodes}
-    \column{.22\textwidth}\gmbig{16.5M}{edges}
+    \column{.24\textwidth}\centering\gmbig{\FImkgFrames}{KYM entries}
+    \column{.24\textwidth}\centering\gmbig{\FImkgMemes}{imgflip memes}
+    \column{.24\textwidth}\centering\gmbig{4.85M}{nodes}
+    \column{.24\textwidth}\centering\gmbig{16.5M}{edges}
   \end{columns}
   \note{
   \begin{itemize}
     \item IMKG: the first knowledge graph of Internet memes, published at ESWC 2023 by Riccardo
-      Tommasini (here at LIRIS), Filip Ilievski and Thilini Wijesiriwardene.
-    \item Three things existed: the paper, the code on GitHub, and one data release on Zenodo.
-    \item Sources: Know Your Meme (the encyclopedia of memes), imgflip (the meme generator), and
-      Wikidata. 12,585 KYM entries, 1.3 million imgflip memes, 4.85 million nodes.
-    \item Most of the size is imgflip: 15 of the 16.5 million edges are imgflip memes and their
-      captions. The KYM part is 167,662 nodes and 914,941 edges.
-  \end{itemize}}
-\end{frame}
-
-\begin{frame}{How IMKG was built: once}
-  \centering
-  \begin{tikzpicture}[x=1cm, y=1cm,
-      stp/.style={circle, minimum size=15mm, draw=gm@col@before, line width=1.4pt, fill=gmSurface,
-                   font=\small\bfseries, text=gmInk},
-      what/.style={text width=3.1cm, align=center, font=\scriptsize, text=gmInk2},
-      go/.style={-{Stealth[length=2.4mm]}, line width=1pt, draw=gmBase, shorten <=1mm, shorten >=1mm}]
-    \node[stp] (m) at (0,0) {model};
-    \node[stp] (c) at (3.7,0) {collect};
-    \node[stp] (e) at (7.4,0) {enrich};
-    \node[stp] (i) at (11.1,0) {integrate};
-    \draw[go] (m) -- (c); \draw[go] (c) -- (e); \draw[go] (e) -- (i);
-    \node[what, below=3mm of m] {media frames, memes, templates};
-    \node[what, below=3mm of c] {a crawler over Know Your Meme (two days), imgflip, \FImkgSeeds{} Wikidata memes};
-    \node[what, below=3mm of e] {DBpedia Spotlight on the text, Google Vision on the image, Wikidata via KGTK};
-    \node[what, below=3mm of i] {RML to RDF; \FImkgPsixseven{} memes and \FImkgLinkedFrames{} templates joined by hand};
-  \end{tikzpicture}
-  \vskip8mm
-  {\large\color{gmInk2}Four steps, run once, by hand --- a \textbf{\color{gmInk}snapshot}.}
-  \note{
-  \begin{itemize}
-    \item IMKG's four steps (Fig.~4 of the paper): design the model, collect, enrich, integrate.
-    \item Collect: a Selenium crawler over all of Know Your Meme, about two days; imgflip's memes;
-      Wikidata's 556 memes as seeds.
-    \item Enrich: entities from the text with DBpedia Spotlight (a web API, confidence 0.5), from
-      the image with Google's Vision API (paid, so only one image per meme), background facts
-      from Wikidata with KGTK.
-    \item Integrate: RML mappings to RDF; KYM and Wikidata joined on 276 memes; KYM and imgflip
-      joined by hand and by title matching (about 60 matches above 85\%).
+      Tommasini (here at LIRIS), Filip Ilievski and Thilini Wijesiriwardene. Three things
+      existed: the paper, the code on GitHub, and one data release on Zenodo (v0.9).
+    \item Its four steps (Fig.~4 of the paper). Model: media frames, memes, templates. Collect: a
+      Selenium crawler over all of Know Your Meme, about two days; imgflip's memes; Wikidata's
+      556 memes as seeds. Enrich: entities from the text (DBpedia Spotlight) and the image
+      (Google Vision), background facts from Wikidata (KGTK). Integrate: RML mappings to RDF;
+      KYM and Wikidata joined on 276 memes, KYM and imgflip joined by hand and by title.
+    \item Sources: Know Your Meme (the encyclopedia of memes), imgflip (the meme generator),
+      Wikidata. Most of the size is imgflip: 15 of the 16.5 million edges are imgflip memes and
+      their captions. The KYM part is 167,662 nodes and 914,941 edges.
     \item Then it was published. Nothing re-ran it.
   \end{itemize}}
 \end{frame}
 
-\begin{frame}{What I found}
+\gmgo{goals}{What I set out to build}
+\begin{frame}{From a snapshot to a living graph}
   \begin{columns}[t]
-    \column{.5\textwidth}
-      \begin{itemize}\setlength{\itemsep}{3.2mm}
-        \item \textbf{A snapshot}, not a process: Know Your Meme grows every day
-        \item \textbf{Remote, paid services} in the middle: not repeatable
-        \item \textbf{Most of each page unread}: links, references, the story
-        \item \textbf{Bridges built by hand}: \FImkgPsixseven{} memes, \FImkgLinkedFrames{} frames
-        \item \textbf{No evidence on a link}: no score, no reason
-      \end{itemize}
+    \column{.46\textwidth}
+      {\large\bfseries\color{gmMuted}What I found}\par\vskip3mm
+      \begin{tikzpicture}[x=1cm, y=-1.05cm,
+          ic/.style={circle, minimum size=.85cm, fill=gmMuted!18!gmSurface, text=gmInk2,
+                     font=\fontsize{12}{12}\selectfont, inner sep=0pt},
+          tx/.style={anchor=west, text width=5.3cm, font=\normalsize, text=gmInk, align=left}]
+        \node[ic] at (0,0) {\faCamera};    \node[tx] at (.6,0) {\textbf{A snapshot}\\[-.4mm]{\small\color{gmInk2}the site changes every day}};
+        \node[ic] at (0,1) {\faEyeSlash};  \node[tx] at (.6,1) {\textbf{Most of each page unread}\\[-.4mm]{\small\color{gmInk2}links, references, the story}};
+        \node[ic] at (0,2) {\faHandPaper}; \node[tx] at (.6,2) {\textbf{Bridges built by hand}\\[-.4mm]{\small\color{gmInk2}\FImkgPsixseven\ memes, \FImkgLinkedFrames\ entries}};
+        \node[ic] at (0,3) {\faQuestion};  \node[tx] at (.6,3) {\textbf{No evidence on a link}\\[-.4mm]{\small\color{gmInk2}no score, no reason}};
+      \end{tikzpicture}
+    \column{.06\textwidth}\centering
+      \vskip16mm{\fontsize{24}{24}\selectfont\color{gmBase}\faArrowRight}
     \column{.44\textwidth}
-      \vskip4mm
-      \begin{tikzpicture}[baseline=(current bounding box.north)]
-        \node[fill=gmTint, rounded corners=2mm, inner sep=4mm, text width=5.2cm, align=left] {
-          {\Large\color{gm@col@before}``}{\itshape we plan recurrent releases of the KGs [\dots] to handle
-          scalability in terms of volume and velocity''}\par\vskip2mm
-          {\scriptsize\color{gmMuted}IMKG, ESWC 2023 --- Conclusion and Outlook}};
+      {\large\bfseries\color{gmInk}What I set out to build}\par\vskip3mm
+      \begin{tikzpicture}[x=1cm, y=-1.4cm,
+          ic/.style={circle, minimum size=.85cm, fill=kFrame, text=white,
+                     font=\fontsize{12}{12}\selectfont, inner sep=0pt},
+          tx/.style={anchor=west, text width=5.1cm, font=\normalsize, text=gmInk, align=left}]
+        \node[ic] at (0,0) {\faSync};      \node[tx] at (.6,0) {\textbf{A pipeline}, every month\\[-.4mm]{\small\color{gmInk2}redoing only what changed}};
+        \node[ic] at (0,1) {\faSearch};    \node[tx] at (.6,1) {\textbf{Every page in depth}\\[-.4mm]{\small\color{gmInk2}and how sure we are of each fact}};
+        \node[ic] at (0,2) {\faHandshake}; \node[tx] at (.6,2) {\textbf{IMKG's words}, kept\\[-.4mm]{\small\color{gmInk2}so its queries still run}};
       \end{tikzpicture}
   \end{columns}
+  \vskip3mm
+  {\normalsize\color{gmInk2}\itshape ``we plan recurrent releases of the KGs [\dots] to handle scalability in terms of
+  volume and velocity''\upshape\enspace --- IMKG, Conclusion}
   \note{
   \begin{itemize}
     \item Be fair: IMKG was a research prototype and did what a paper needs. These are the
       things a \emph{living} graph needs, which is what I was asked to build.
-    \item Snapshot: KYM adds and edits entries all the time; a one-off crawl is out of date the
-      next week.
-    \item Remote services: Spotlight and Google Vision answer differently over time, cost money,
-      and can disappear --- you cannot rebuild the same graph twice.
-    \item Unread: IMKG kept About/Origin/Spread as text and annotated it; every link, every
+    \item A snapshot: KYM adds and edits entries all the time; a one-off crawl is out of date
+      the next week.
+    \item Unread: IMKG kept About, Origin and Spread as text and annotated it; every link, every
       reference, every event in the story was left on the page.
-    \item Hand-made bridges do not scale to new entries.
+    \item Hand-made bridges do not scale to new entries; and a link with no score or reason
+      cannot be checked.
+    \item Three goals, which come back in every chapter: a pipeline (re-runnable, incremental,
+      the same inputs give the same graph); depth, with confidence on every derived fact; and
+      compatibility --- MemeAtlas \emph{extends} IMKG, it does not replace it.
     \item And the authors said it themselves: recurrent releases, volume and velocity. That is
-      the brief I took.
+      the brief I took. Now back to the dog, and the first step: getting the pages.
   \end{itemize}}
 \end{frame}
-
-\begin{frame}{What I set out to build}
-  \vskip2mm
-  \begin{tikzpicture}[x=1cm, y=1cm, card/.style={rounded corners=2mm, fill=gmTint, inner sep=3.5mm,
-                      text width=3.75cm, minimum height=3.3cm, align=left, anchor=north west}]
-    \node[card] at (0,0) {{\color{gm@col@before}\Large\faSync}\par\vskip2mm
-      {\bfseries A pipeline, not a snapshot}\par\vskip1mm
-      {\small\color{gmInk2}runs every month, redoes only what changed, rebuilds the same graph from the same inputs}};
-    \node[card] at (4.85,0) {{\color{gm@col@before}\Large\faSearch}\par\vskip2mm
-      {\bfseries Every page, read in depth}\par\vskip1mm
-      {\small\color{gmInk2}fields, links, references, images, the story --- and how sure we are of each}};
-    \node[card] at (9.7,0) {{\color{gm@col@before}\Large\faHandshake}\par\vskip2mm
-      {\bfseries Compatible with IMKG}\par\vskip1mm
-      {\small\color{gmInk2}its vocabulary kept word for word, so its queries still run}};
-  \end{tikzpicture}
-  \note{
-  \begin{itemize}
-    \item Three goals, which come back in every chapter.
-    \item One: a pipeline. Re-runnable, incremental, reproducible: same inputs, same graph.
-    \item Two: depth. Read everything on a page, and record how sure we are of every derived fact.
-    \item Three: stay compatible with IMKG --- MemeAtlas \emph{extends} IMKG, it does not replace
-      it. Where IMKG has a word for something, I use that word.
-    \item Now let's go back to the dog, and to the first step: getting the pages.
-  \end{itemize}}
-\end{frame}
-
-\gmzoomout{before}

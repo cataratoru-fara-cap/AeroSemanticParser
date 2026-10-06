@@ -64,7 +64,7 @@ avoided on the slide.)
   says so.
 - *Why not one event per page?* Events are shared across pages in principle
   ("Elon Musk tweets about Dogecoin" appears in several entries); cross-frame
-  event identity is an open question (chapter 10).
+  event identity is an open question (chapter 11).
 - *Why does the chart fall after 2020?* Documentation lag: KYM writes a meme up
   once it has lasted.
 

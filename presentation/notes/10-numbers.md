@@ -1,4 +1,4 @@
-# Chapter 9 — The graph in numbers (live build, KG 7.0.0) (≈7 min)
+# Chapter 10 — The graph in numbers (live build, KG 7.0.0) (≈5 min)
 
 Every number comes from `data/live.json` (scripts/extract.py on the live build)
 and `data/stages.json` (the dashboard's functions). The queries are listed in
@@ -24,7 +24,7 @@ attributes as edges ("triple-equivalent"), the core matches IMKG's density over
 Wikidata link 99.5% · events 77.3% · a template 34.4% · all three 33.6% · none
 0.3% (65 entries). Templates exist for picture memes, not for people or events.
 
-## When memes are born
+## When memes are born (said over "Where memes are born"; no slide of its own)
 Entries by the year their meme started: rising from the late 1990s to a peak in
 2019 (1,868), then falling — mostly documentation lag (KYM writes a meme up once
 it has lasted). 970 entries start before 1995.
@@ -34,7 +34,7 @@ Peaks: 4chan 2010 · Tumblr 2014 · YouTube and Reddit 2019 · Twitter 2020 ·
 TikTok 2022. Totals 2005–2025: Twitter 3,940 · YouTube 2,248 · TikTok 1,775 ·
 Reddit 1,332 · 4chan 805 · Tumblr 776.
 
-## What the graph talks about most
+## What the graph talks about most (backup slide)
 Wikidata items by entries naming them: Twitter 3,725, TikTok 3,277, image macro
 2,529, YouTube 2,260, catchphrase 2,138, video game, parody, viral video, song,
 Reddit. Templates shared by most entries: Trollface 10, Drake Hotline Bling 9,
@@ -50,7 +50,7 @@ Memes). Siblings (7.0.0, Riccardo's request): 679,392 pairs share a series; only
 relations, and the graph keeps both. This slide's text is small: zoom in (pdfpc
 has a zoom) rather than read it from the back.
 
-## Is the graph sound? (metrics after every publish, on the core)
+## Is the graph sound? (on chapter 9's "Checked, measured, versioned" slide)
 0 isolated nodes · 0 duplicate edges · 0 cycles in a series · 2 connected
 components · the RDF re-derived through the mapping equals the published RDF.
 Worth knowing: 26.0% of series parents (1,061 of 4,074) are not in the corpus
@@ -68,7 +68,7 @@ Worth knowing: 26.0% of series parents (1,061 of 4,074) are not in the corpus
   re-check on 7.0.0 before quoting a rank).
 - **Generic regions:** "a man" in 6,800 templates.
 
-## Live demo (optional, "Try it" slide)
+## Live demo (optional, the "Try it" backup slide)
 Neo4j Browser at `:8080/browser/` with `dags/kg_config/neo4j_browser.grass`
 imported (colours as in the slides). SPARQL at `:8080/sparql/`: the rdfs:seeAlso
 query IMKG would write returns Doge's whole series. **Do not run heavy SPARQL

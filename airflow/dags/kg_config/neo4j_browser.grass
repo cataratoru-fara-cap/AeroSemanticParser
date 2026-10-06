@@ -17,37 +17,37 @@ node.Image {
 }
 
 node.BadgeConcept {
-  color: #008300;
+  color: #e87ba4;
   diameter: 47px;
   caption: '{label}';
 }
 
 node.RegionConcept {
-  color: #008300;
+  color: #e87ba4;
   diameter: 47px;
   caption: '{label}';
 }
 
 node.TagConcept {
-  color: #008300;
+  color: #e87ba4;
   diameter: 47px;
   caption: '{label}';
 }
 
 node.OriginConcept {
-  color: #008300;
+  color: #e87ba4;
   diameter: 56px;
   caption: '{label}';
 }
 
 node.EntryTypeConcept {
-  color: #008300;
+  color: #e87ba4;
   diameter: 56px;
   caption: '{label}';
 }
 
 node.Event {
-  color: #c98500;
+  color: #4a3aa7;
   diameter: 56px;
   caption: '{source_text}';
 }
