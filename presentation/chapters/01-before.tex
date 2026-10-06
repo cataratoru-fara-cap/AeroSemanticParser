@@ -12,22 +12,22 @@ knowledge graph is, what IMKG was, and what I set out to change.}
       ico/.style={circle, minimum size=1.1cm, inner sep=0pt, font=\fontsize{17}{17}\selectfont, text=white},
       nm/.style={font=\normalsize\bfseries, text=gmInk, inner sep=2pt, align=center},
       fact/.style={-{Stealth[length=2.6mm]}, line width=1.2pt, draw=gmBase, shorten <=1mm, shorten >=1mm},
-      rel/.style={font=\small\itshape, text=gmInk2, fill=gmSurface, inner sep=1.2pt}]
+      rel/.style={font=\small\itshape, text=gmInk2, fill=gmSurface, fill opacity=.75, text opacity=1, inner sep=1.2pt}]
     \node[pic, draw=kFrame, minimum size=2.1cm,
           path picture={\node at (path picture bounding box.center)
                         {\includegraphics[height=2.2cm]{figures/img/onedoes}};}] (meme) at (0,0) {};
     \node[nm, below=1mm of meme] {One Does Not Simply\\Walk into Mordor};
     \node[pic, draw=kWikidata, minimum size=1.25cm,
-          path picture={\node at ($(path picture bounding box.center)+(.13,-.48)$)
-                        {\includegraphics[height=2.95cm]{figures/img/onedoes}};}] (boromir) at (-3.8,1.35) {};
+          path picture={\node at ($(path picture bounding box.center)+(.02,-.1)$)
+                        {\includegraphics[height=1.75cm]{figures/img/onedoes}};}] (boromir) at (-4.5,1.5) {};
     \node[nm, left=1mm of boromir] {Boromir};
-    \node[ico, fill=kWikidata] (sauron) at (-3.8,-1.45) {\faEye};
+    \node[ico, fill=kWikidata] (sauron) at (-4.5,-1.45) {\faEye};
     \node[nm, left=1mm of sauron] {Sauron};
-    \node[ico, fill=kWikidata] (mordor) at (3.8,1.35) {\faMountain};
+    \node[ico, fill=kWikidata] (mordor) at (4.5,1.5) {\faMountain};
     \node[nm, right=1mm of mordor] {Mordor};
-    \node[ico, fill=kWikidata] (lotr) at (3.8,-1.45) {\faRing};
+    \node[ico, fill=kWikidata] (lotr) at (4.5,-1.45) {\faRing};
     \node[nm, below=1mm of lotr] {The Lord of the Rings};
-    \node[ico, fill=kWikidata] (tolkien) at (6.7,-1.45) {\faFeather*};
+    \node[ico, fill=kWikidata] (tolkien) at (7.25,-1.45) {\faFeather*};
     \node[nm, below=1mm of tolkien] {Tolkien};
     \node[ico, fill=kFrame, minimum size=.95cm, font=\fontsize{13}{13}\selectfont] (sub) at (0,2.45) {\faUsers};
     \node[nm, right=1mm of sub, align=left] {Lord of the Rings\\[-.6mm]{\small\mdseries\color{gmInk2}a Know Your Meme subculture}};

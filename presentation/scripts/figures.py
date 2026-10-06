@@ -270,23 +270,25 @@ write("fig-events-precision.tex", hbars([
 ], "gm@col@events", height="2.6cm", xmax_pad=1.45, width=".72\\linewidth"))
 
 
-def years_chart(per_year: dict[int, int], color: str, first=1995, last=2026, note_from=None) -> str:
+def years_chart(per_year: dict[int, int], color: str, first=1995, last=2026, note_from=None,
+                height="4.6cm") -> str:
     coords = " ".join(f"({y},{per_year.get(y, 0)})" for y in range(first, last + 1))
     peak_y = max(range(first, last + 1), key=lambda y: per_year.get(y, 0))
     peak = per_year.get(peak_y, 0)
+    top = peak * 1.4            # room above the bars for the peak's number and the note
     shade = ""
     if note_from:
-        shade = (f"\\fill[gmHair, opacity=.55] (axis cs:{note_from - .5},0) rectangle (axis cs:{last + .5},{peak * 1.12:.0f});\n"
-                 f"\\node[font=\\tiny, text=gmInk2, anchor=north east, align=right] at (axis cs:{last + .4},{peak * 1.1:.0f}) "
-                 "{KYM writes up\\\\a meme later};\n")
+        shade = (f"\\fill[gmHair, opacity=.55] (axis cs:{note_from - .5},0) rectangle (axis cs:{last + .5},{top:.0f});\n"
+                 f"\\node[font=\\small, text=gmInk2, anchor=north east, align=right] at (axis cs:{note_from - .7},{top * .99:.0f}) "
+                 "{KYM writes up a meme later};\n")
     return (
-        "\\begin{tikzpicture}\n\\begin{axis}[gm axis, ybar, bar width=4.2pt, width=\\linewidth, height=4.6cm,\n"
-        f"  xmin={first - .8}, xmax={last + .8}, ymin=0, ymax={peak * 1.14:.0f}, axis x line*=bottom, axis y line=none,\n"
+        f"\\begin{{tikzpicture}}\n\\begin{{axis}}[gm axis, ybar, bar width=4.2pt, width=\\linewidth, height={height},\n"
+        f"  xmin={first - .8}, xmax={last + .8}, ymin=0, ymax={top:.0f}, axis x line*=bottom, axis y line=none,\n"
         "  xtick={1995,2000,2005,2010,2015,2020,2025}, x tick label style={/pgf/number format/1000 sep={}},\n"
         "  every axis plot/.append style={draw=none}, clip=false]\n"
         + shade
         + f"\\addplot[fill={color}] coordinates {{{coords}}};\n"
-        f"\\node[font=\\tiny, text=gmInk, anchor=south] at (axis cs:{peak_y},{peak}) {{{fmt(peak)}}};\n"
+        f"\\node[font=\\small, text=gmInk, anchor=south] at (axis cs:{peak_y},{peak}) {{{fmt(peak)}}};\n"
         "\\end{axis}\n\\end{tikzpicture}\n")
 
 
@@ -294,7 +296,7 @@ ev_year = Counter()
 for r in live["events_by_year"]:
     if r["year"]:
         ev_year[r["year"]] += r["n"]
-write("fig-events-years.tex", years_chart(ev_year, "gm@col@events", note_from=2023))
+write("fig-events-years.tex", years_chart(ev_year, "gm@col@events", note_from=2023, height="5.6cm"))
 
 fr_year = Counter()
 for r in live["frames_by_year_category"]:
@@ -353,9 +355,9 @@ for i, p in enumerate(eras):
     total = sum(oy[y].get(p, 0) for y in years)
     row, col = divmod(i, 3)
     panels.append(
-        f"\\begin{{scope}}[xshift={col * 4.75:.2f}cm, yshift={-row * 3.25:.2f}cm]\n"
-        "\\begin{axis}[gm axis, width=3.9cm, height=1.75cm, scale only axis, at={(0,0)},\n"
-        f"  xmin=2005, xmax=2025, ymin=0, ymax={ymax * 1.08:.0f}, axis x line*=bottom, axis y line=none,\n"
+        f"\\begin{{scope}}[xshift={col * 4.75:.2f}cm, yshift={-row * 3.72:.2f}cm]\n"
+        "\\begin{axis}[gm axis, width=3.9cm, height=2.0cm, scale only axis, at={(0,0)},\n"
+        f"  xmin=2005, xmax=2025, ymin=0, ymax={ymax * 1.3:.0f}, axis x line*=bottom, axis y line=none,\n"
         "  xtick={2005,2015,2025}, x tick label style={/pgf/number format/1000 sep={}, font=\\small},\n"
         f"  title={{{era_label[p]}}}, title style={{font=\\large\\bfseries, yshift=-1mm}}]\n"
         f"\\addplot[fill=gm@col@numbers!45!gmSurface, draw=gm@col@numbers, line width=1pt] coordinates {{{pts}}} \\closedcycle;\n"
@@ -673,29 +675,41 @@ write("fig-numbers-family.tex", "\n".join(ft) + "\n")
 
 # The graph of the graph: every kind of node, and the arrows between two kinds, sized by count.
 # Parallel arrows between the same two kinds are drawn as one, labelled in words; a kind's
-# arrows to itself are one loop, labelled beside it. (The badge kind, one node, is left out.)
-POS = {"frame": (4.3, 3.05), "event": (8.5, 3.05), "external_ref": (11.7, 5.5), "image": (11.7, 0.6),
-       "wikidata_entity": (0.9, 5.75), "template": (6.6, 0.0), "frame_stub": (6.0, 6.05),
-       "tag_concept": (0.7, 2.75), "entry_type_concept": (1.3, 0.35), "origin_concept": (3.4, -0.45),
-       "region_concept": (3.2, 6.05)}
+# arrows to itself are written under its name. (The badge kind, one node, is left out.)
+# Placed by hand so that every label has room of its own: the frame on the left with its
+# arrows fanning out to the right; events in the middle, pointing on to the two biggest
+# kinds (pages, images) on the far right; the vocabulary above and below the frame.
+POS = {"frame": (1.6, 3.4), "event": (6.3, 3.35), "external_ref": (11.4, 5.95), "image": (11.4, 0.85),
+       "template": (7.6, 0.4), "wikidata_entity": (4.2, 0.4), "frame_stub": (7.4, 6.45),
+       "tag_concept": (1.9, 6.15), "region_concept": (-0.1, 6.1), "origin_concept": (1.0, 0.7),
+       "entry_type_concept": (-1.0, 4.3)}
 NAME = {"frame": "frame", "event": "event", "external_ref": "external page", "image": "image",
         "wikidata_entity": "Wikidata item", "template": "template", "frame_stub": "frame stub",
         "tag_concept": "tag", "entry_type_concept": "entry type", "origin_concept": "origin",
         "region_concept": "region"}
+# where a kind's name goes, beside its dot
+NAME_AT = {"frame": "below left", "event": "right", "tag_concept": "above", "external_ref": "above",
+           "image": "below", "region_concept": "above", "frame_stub": "above"}
 WORDS = {("frame", "frame"): "siblings, links", ("event", "event"): "nextInStory",
          ("tag_concept", "tag_concept"): "coOccursWith", ("origin_concept", "origin_concept"): "subTypeOf",
          ("entry_type_concept", "entry_type_concept"): "subTypeOf",
          ("frame", "wikidata_entity"): "about, tags, title", ("event", "external_ref"): "citations, embeds",
          ("frame", "frame_stub"): "citesMediaFrame", ("event", "frame"): "eventLink",
          ("event", "frame_stub"): "eventLink"}
-LABEL_AT = {("frame", "tag_concept"): .5, ("frame", "external_ref"): .38, ("frame", "image"): .3,
-            ("event", "image"): .45, ("event", "external_ref"): .38, ("frame", "wikidata_entity"): .4,
-            ("event", "frame"): .5, ("frame", "event"): .5, ("template", "wikidata_entity"): .7,
-            ("frame", "template"): .5, ("template", "image"): .5, ("template", "external_ref"): .55,
-            ("frame", "frame_stub"): .45, ("frame", "entry_type_concept"): .55}
-BEND = {("event", "frame"): "bend left=14", ("frame", "event"): "bend left=14",
-        ("frame", "image"): "bend right=10", ("template", "external_ref"): "bend right=24",
-        ("template", "wikidata_entity"): "bend left=26", ("event", "frame_stub"): "bend right=12"}
+# each arrow's label: how far along it, on which side, and whether it follows the arrow's slope
+LABEL = {("frame", "external_ref"): (.75, "above", True), ("frame", "image"): (.42, "below", True),
+         ("frame", "event"): (.5, "above", False), ("event", "frame"): (.5, "below", False),
+         ("frame", "tag_concept"): (.5, "right", False), ("frame", "wikidata_entity"): (.55, "below", True),
+         ("frame", "template"): (.55, "below", True), ("frame", "frame_stub"): (.55, "above", True),
+         ("frame", "region_concept"): (.6, "left", False), ("frame", "origin_concept"): (.55, "left", False),
+         ("frame", "entry_type_concept"): (.5, "above", True),
+         ("event", "external_ref"): (.5, "below", True), ("event", "image"): (.72, "above", True),
+         ("event", "frame_stub"): (.3, "left", False),
+         ("template", "image"): (.5, "below", False), ("template", "external_ref"): (.5, "right", False),
+         ("template", "wikidata_entity"): (.5, "below", False)}
+BEND = {("frame", "external_ref"): "out=18, in=192"}
+# the two arrows between frame and event run side by side, one lane each way
+LANE = {("frame", "event"): .065, ("event", "frame"): -.065}
 nk = counts["nodes_by_kind"]
 nmax = max(nk.values())
 pairs = defaultdict(lambda: [0, []])
@@ -709,27 +723,28 @@ def radius(kind: str) -> float:
     return 0.2 + 0.92 * math.sqrt(nk.get(kind, 0) / nmax)
 
 
-mg = ["\\begin{tikzpicture}[x=1cm, y=1cm, lab/.style={font=\\fontsize{8}{9}\\selectfont, text=gmInk2, fill=gmSurface,"
-      " inner sep=.7pt}]"]
-# a kind's arrows to itself: a line under its name, not a loop among the other arrows
+# labels sit on a see-through ground: the arrow under a word stays visible, the word readable
+mg = ["\\begin{tikzpicture}[x=1cm, y=1cm, see through/.style={fill=gmSurface, fill opacity=.78, text opacity=1},"
+      " lab/.style={font=\\fontsize{8}{9}\\selectfont, text=gmInk2, see through, inner sep=.8pt}]"]
 loops = {s_: (n, WORDS.get((s_, t_), rels[0])) for (s_, t_), (n, rels) in pairs.items() if s_ == t_ and n >= 1000}
 for kind, (x, y) in POS.items():
     mg.append(f"\\node[circle, fill={KCOL[kind]}, minimum size={2 * radius(kind):.2f}cm, inner sep=0pt] (k-{kind}) at ({x},{y}) {{}};")
     loop = (f"\\\\{{\\color{{gmInk2}}$\\circlearrowleft$ {loops[kind][1]} {short(loops[kind][0])}}}"
             if kind in loops else "")
-    mg.append(f"\\node[font=\\fontsize{{8.5}}{{9.5}}\\selectfont, text=gmInk, align=center, below=.5mm of k-{kind}, fill=gmSurface, inner sep=.6pt] "
-              f"{{\\textbf{{{NAME[kind]}}} {fmt(nk.get(kind, 0))}{loop}}};")
+    mg.append(f"\\node[font=\\fontsize{{8.5}}{{9.5}}\\selectfont, text=gmInk, align=center, see through, inner sep=.6pt,"
+              f" {NAME_AT.get(kind, 'below')}=.5mm of k-{kind}] {{\\textbf{{{NAME[kind]}}} {fmt(nk.get(kind, 0))}{loop}}};")
 mg.append("\\begin{pgfonlayer}{background}")
 for (s_, t_), (n, rels) in sorted(pairs.items(), key=lambda kv: -kv[1][0]):
-    w = 0.35 + 0.6 * max(0.0, math.log10(n / 50))
-    words = WORDS.get((s_, t_), rels[0])
     if s_ == t_:
         continue
+    w = 0.35 + 0.6 * max(0.0, math.log10(n / 50))
+    words = WORDS.get((s_, t_), rels[0])
     bend = BEND.get((s_, t_), "")
     path = f"to[{bend}]" if bend else "--"
-    lab = (f" node[lab, sloped, above, pos={LABEL_AT.get((s_, t_), .5)}] {{{words} {short(n)}}}"
-           if n >= 25000 else "")
-    mg.append(f"\\draw[gmBase, line width={w:.2f}pt, -{{Stealth[length={1.6 + w * .5:.1f}mm]}}] "
+    at, side, sloped = LABEL.get((s_, t_), (.5, "above", True))
+    lab = f" node[lab, {side}, {'sloped, ' if sloped else ''}pos={at}] {{{words} {short(n)}}}"
+    lane = f", transform canvas={{yshift={LANE[(s_, t_)]}cm}}" if (s_, t_) in LANE else ""
+    mg.append(f"\\draw[gmBase, line width={w:.2f}pt, -{{Stealth[length={1.6 + w * .5:.1f}mm]}}{lane}] "
               f"(k-{s_}) {path}{lab} (k-{t_});")
 mg += ["\\end{pgfonlayer}", "\\end{tikzpicture}"]
 write("fig-graph-meta.tex", "\n".join(mg) + "\n")

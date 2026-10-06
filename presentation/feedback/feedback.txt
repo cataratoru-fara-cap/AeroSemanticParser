@@ -29,9 +29,11 @@ fitting properly, and the graph could be 20-25% bigger, there is a lot of empty 
 2.
 
 
-Chapter 8 (Give it meaning)
+Chapter 7  (Give it meaning)
 1.What does it mean that every term is declared?
 2. The arrows in between slides can use a bit more spacing between them and the slides
+3. This is a very interesting part of the project, it should be a bit broader in information
+4. What persentage of the tags in the folksonomy are linked as wikidataentities?
 
 Chapter 9 (Weave the Graph)
 1. This bubble could be a bit bigger, say 1-3%, there is a very tiny amount of overflowing text on slide 4 when we view this Chapter

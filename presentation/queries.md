@@ -133,6 +133,45 @@ RETURN count(f) AS frames, sum(size(f.also_at)) AS old_addresses,
 The decisions themselves are in Mongo (`urls.duplicate_of`), on the dashboard's
 Scrape page, and in the `kym_scrape` run summary.
 
+## The vocabulary at work (chapter 7, "Give it meaning")
+
+Where memes are born, by kind of platform. The ontology gives the words: IMKG's
+class `kym:Meme` and our `mk:hasOrigin`, declared in `memeatlas.ttl`. The origin
+taxonomy (`origin_taxonomy.yaml`) does the grouping: Twitter, Tumblr and
+Instagram are each a `social-network`, through `rdfs:subClassOf`; without it the
+question needs a hand-written list of sites. Run on 7.0.0: social networks 5,567
+memes, video platforms 3,699, imageboards 818, meme sites 282 (12 kinds). About
+14 s in Fuseki.
+
+```sparql
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX mk:   <https://meme4.science/atlas/>
+PREFIX kym:  <https://knowyourmeme.com/memes/>
+SELECT ?kind (COUNT(DISTINCT ?meme) AS ?memes)
+       (GROUP_CONCAT(DISTINCT ?siteName; separator=", ") AS ?platforms)
+WHERE {
+  ?site rdfs:subClassOf ?kind .          # the taxonomy: a platform under its kind
+  ?kind a skos:Concept .
+  ?meme mk:hasOrigin ?site ;             # our term
+        a kym:Meme .                     # IMKG's class
+  ?site skos:prefLabel ?siteName .
+}
+GROUP BY ?kind
+ORDER BY DESC(?memes)
+```
+
+The same in Neo4j Browser, where the taxonomy is the `subTypeOf` edge (0.1 s):
+
+```cypher
+MATCH (cur:KGPointer {name: 'current'})
+MATCH (site:OriginConcept {build_id: cur.build_id})-[:subTypeOf]->(kind:OriginConcept)
+MATCH (meme:Frame {category: 'meme'})-[:hasOrigin]->(site)
+RETURN kind.label AS kind, count(DISTINCT meme) AS memes,
+       collect(DISTINCT site.label) AS platforms
+ORDER BY memes DESC
+```
+
 ## SPARQL, as IMKG would ask (chapter 9, "Try it")
 
 At `http://<host>:8080/sparql/` (the default graph is the live build). RDF has

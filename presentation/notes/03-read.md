@@ -5,10 +5,10 @@ CorpusPolicy), store `parse_store.py` (entries, parse_failures).
 
 ## The story
 A person reading Doge's page sees a picture with the title and the series it
-belongs to beside it; below, a column of facts on the left (status, type, year,
-origin, region, then the tags and the additional references) and the story in
-the middle (About, Origin, Spread and 22 more sections, its numbered references
-at the end). Around it is the site: menus, ads, the interview and video strip,
+belongs to beside it; below, the story on the left (About, Origin, Spread and 22
+more sections, its numbered references at the end) and a column of facts beside
+it (status, type, year, origin, region, then the tags and the additional
+references). Around it is the site: menus, ads, the interview and video strip,
 the sidebar of top entries and editors, related-entries strips. The parser
 reads the entry and ignores the site, and writes a tidy record — the same fields
 for every page. Every later step works from that record; nobody reads HTML again.

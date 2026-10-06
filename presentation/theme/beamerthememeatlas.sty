@@ -230,18 +230,30 @@
   \ifdim #2pt>0pt
     \begin{scope}[opacity=#2]
       \node[inner sep=0pt, outer sep=0pt, scale=1/\gm@se, transform shape] at (gm-#1.center)
-        {\xusebox{gm@int@#1}};
+        {\gm@faded{#2}{\xusebox{gm@int@#1}}};
     \end{scope}
   \fi}
-% a slide: its page of thumbs.pdf
+% a slide: its page of thumbs.pdf (in vector: poppler, under Okular and pdfpc, draws a
+% picture at a cost that grows with its area on screen; the slide itself costs less)
 \newcommand{\gmFS}[2]{\expandafter\expandafter\expandafter\gm@sat\csname gm@sat@#1\endcsname{#1}{#2}}
 \newcommand{\gm@sat}[7]{% id chapter x0 y0 w | index alpha
   \begin{scope}[opacity=#7]
-    \node[inner sep=0pt, outer sep=0pt, anchor=south west] at (#3,#4) {\gm@thumb{#6}};
+    \node[inner sep=0pt, outer sep=0pt, anchor=south west] at (#3,#4) {\gm@faded{#7}{\gm@thumb{#6}}};
   \end{scope}
   \ifcsname gm@num@#2\endcsname\else
     \draw[gmBase, line width=.8*\gm@u] (#3,#4) rectangle ++(#5,#5*9/16);
   \fi}
+% what fades fades as one picture (a transparency group), but one the size of its
+% contents: TikZ's `transparency group' is the size of the whole picture, here the page,
+% and a viewer paints a full-screen layer for each one
+\newsavebox{\gm@groupbox}
+\newcommand{\gm@faded}[2]{%
+  \ifdim #1pt<1pt
+    \sbox{\gm@groupbox}{#2}%
+    \pgfsys@transparency@group@isolatedtrue\pgfsys@transparency@group@knockoutfalse
+    \pgfsys@transparencygroupfrombox{\gm@groupbox}%
+    \usebox{\gm@groupbox}%
+  \else#2\fi}
 \newcommand{\gm@thumb}[1]{%
   \ifcsname gm@th@#1\endcsname\pdfrefximage\csname gm@th@#1\endcsname\else\xusebox{gm@ph@#1}\fi}
 % Doge, waiting at the door of the chapter we are in
@@ -270,7 +282,8 @@
 % its icon and title, then its slides on their track, each with its caption
 \newcommand{\gm@buildinterior}[1]{%
   \xsbox{gm@int@#1}{\begin{tikzpicture}[x=1cm, y=1cm]
-    \useasboundingbox (-4.3,-4.3) rectangle (4.3,4.3);
+    \pgfmathsetmacro\gm@ru{\gm@se*\gm@R}% the node's radius, as on the page once entered
+    \useasboundingbox (-\gm@ru,-\gm@ru) rectangle (\gm@ru,\gm@ru);
     \node[circle, fill=gm@col@#1, text=gm@on@#1, minimum size=1.15cm, inner sep=0pt,
           font=\fontsize{17}{17}\selectfont] at (0,3.15) {\gm@get{icon}{#1}};
     \node[font=\fontsize{19}{22}\selectfont\bfseries, text=gmInk, text width=6.4cm, align=center]
@@ -307,17 +320,17 @@
       \ifnum\pgfmathresult=1
         \pgfmathparse{\gm@x>\gm@px ? 1 : 0}%
         \ifnum\pgfmathresult=1
-          \draw[gm@col@#1!60!gmSurface, line width=1.3pt, -{Stealth[length=2.6mm]}] (s\gm@pi.east) -- (s\gm@i.west);
+          \draw[gm@col@#1!60!gmSurface, line width=1pt, -{Stealth[length=2.2mm]}, shorten <=.7mm, shorten >=.7mm] (s\gm@pi.east) -- (s\gm@i.west);
         \else
-          \draw[gm@col@#1!60!gmSurface, line width=1.3pt, -{Stealth[length=2.6mm]}] (s\gm@pi.west) -- (s\gm@i.east);
+          \draw[gm@col@#1!60!gmSurface, line width=1pt, -{Stealth[length=2.2mm]}, shorten <=.7mm, shorten >=.7mm] (s\gm@pi.west) -- (s\gm@i.east);
         \fi
       \else
         \pgfmathparse{\gm@px>0 ? 1 : 0}%
         \ifnum\pgfmathresult=1
-          \draw[gm@col@#1!60!gmSurface, line width=1.3pt, -{Stealth[length=2.6mm]}]
+          \draw[gm@col@#1!60!gmSurface, line width=1pt, -{Stealth[length=2.2mm]}, shorten <=.7mm, shorten >=.7mm]
             (s\gm@pi.east) to[out=0, in=0, looseness=1.25] (s\gm@i.east);
         \else
-          \draw[gm@col@#1!60!gmSurface, line width=1.3pt, -{Stealth[length=2.6mm]}]
+          \draw[gm@col@#1!60!gmSurface, line width=1pt, -{Stealth[length=2.2mm]}, shorten <=.7mm, shorten >=.7mm]
             (s\gm@pi.west) to[out=180, in=180, looseness=1.25] (s\gm@i.west);
         \fi
       \fi

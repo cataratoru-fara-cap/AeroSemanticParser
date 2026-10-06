@@ -11,5 +11,3 @@
 *.synctex.gz
 *.pdf
 
-# rendered from thumbs.pdf by the Makefile
-figures/thumbs/

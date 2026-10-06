@@ -45,7 +45,7 @@ OUT = HERE / "figures" / "generated" / "world.tex"
 
 PAGE_W, PAGE_H = 16.0, 9.0          # cm, the beamer 16:9 page
 R = 0.62                            # a chapter node's radius on the map (cm)
-ENTRY_DIAMETER = 8.6                # the node's diameter on the page when the camera enters it
+ENTRY_DIAMETER = 8.8                # the node's diameter on the page when the camera enters it
 S_ENTRY = ENTRY_DIAMETER / (2 * R)  # map -> entry-view scale
 DOOR_ANGLE = 160                    # where Doge waits on a node's rim (degrees)
 DOOR_DIST = R + 0.12
@@ -178,10 +178,10 @@ if dupes:
 # node; its circle has radius ENTRY_DIAMETER/2 around (0, 0)). The track is a snake: left to
 # right, then right to left, so every move along it is short.
 def layout(n: int) -> list[tuple[float, float, float]]:
-    rows = {1: [[0.0]], 2: [[-1.75, 1.75]], 3: [[-2.55, 0.0, 2.55]], 4: [[-1.5, 1.5], [1.5, -1.5]],
-            5: [[-2.45, 0.0, 2.45], [1.25, -1.25]], 6: [[-2.3, 0.0, 2.3], [2.3, 0.0, -2.3]]}
+    rows = {1: [[0.0]], 2: [[-1.85, 1.85]], 3: [[-2.68, 0.0, 2.68]], 4: [[-1.5, 1.5], [1.5, -1.5]],
+            5: [[-2.65, 0.0, 2.65], [1.35, -1.35]], 6: [[-2.3, 0.0, 2.3], [2.3, 0.0, -2.3]]}
     width = {1: 4.6, 2: 3.1, 3: 2.25, 4: 2.55, 5: 2.15, 6: 1.95}
-    ys = {1: [-0.75], 2: [-0.75], 3: [-0.65], 4: [0.45, -2.0], 5: [0.45, -2.05], 6: [0.4, -2.0]}
+    ys = {1: [-0.75], 2: [-0.75], 3: [-0.5], 4: [0.45, -2.0], 5: [0.45, -2.05], 6: [0.4, -2.0]}
     if n not in rows:
         sys.exit(f"a chapter holds 1 to 6 slides, not {n}")
     return [(x, ys[n][r], width[n]) for r, row in enumerate(rows[n]) for x in row]

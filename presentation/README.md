@@ -25,8 +25,8 @@ two passes:
 1. `scripts/world.py` reads the map (`chapters/registry.tex`) and the tour (the
    chapter files) and writes `figures/generated/world.tex`: where every chapter
    and slide sits, and every page of every camera move.
-2. `thumbs.tex` → `thumbs.pdf`: every slide, one page each. Ghostscript renders it
-   into `figures/thumbs/` at three sizes --- the pictures the camera flies over.
+2. `thumbs.tex` → `thumbs.pdf`: every slide, one page each --- what the camera flies
+   over, each page included in vector.
 3. The decks:
 
 | file | what |
@@ -36,21 +36,34 @@ two passes:
 | `notes.pdf` | one page per stop followed by its notes, to read and refine |
 | `stops.pdf` | one page per stop, no motion --- quick to proof |
 
-Edit a slide, run `make` again: the thumbnails are re-rendered, so the camera
-never flies over an old picture of it. A full build takes about six minutes.
-Overleaf can build `slides.tex` (pdfLaTeX) but not the thumbnails; without them
-the camera flies over grey placeholders.
+Edit a slide, run `make` again: `thumbs.pdf` is rebuilt, so the camera never flies
+over an old version of it. A full build takes about six minutes. Overleaf can
+build `slides.tex` (pdfLaTeX) but not `thumbs.pdf`; without it the camera flies
+over grey placeholders.
 
 ## Present
 
+One key press (or click) per move: the move plays by itself and stops on the
+next slide. A move is a run of pages that advance on their own (each shows for
+0.045 s), so the viewer has to draw each page within that time --- or have drawn
+it beforehand.
+
 - **pdfpc** (recommended): `pdfpc --notes=right presenter.pdf` --- slides on the
-  projector, notes and the next slide on your screen. Moves play by themselves;
-  a move and the stop it lands on share one slide number, so any forward key
-  plays the next move.
-- **Okular / Acrobat** (full screen): `slides.pdf`; moves play by themselves.
-- **Other viewers** may ignore the page durations the moves use (each page
-  0.045 s); then set `\gmanimatefalse` in `deck.tex`: no motion pages, one page
-  per stop.
+  projector, notes and the next slide on your screen. It draws every page ahead
+  of time when it starts, so the moves play smoothly. A move and the stop it lands
+  on share one slide number, so any forward key plays the next move.
+- **Okular**: `slides.pdf`, in presentation mode (View → Presentation,
+  Ctrl+Shift+P). Outside presentation mode Okular ignores the page durations and
+  every page of a move needs its own key press. Okular draws a page only when it
+  is due and drops it if it is not ready in time: a moving page takes about 90 ms
+  to draw at 1080p (Okular's renderer, measured on one 3.9 GHz core), so a move
+  shows about every second page. For smooth moves, set Settings → Configure Okular
+  → Performance → Memory usage to **Greedy** and give it a minute or two after
+  starting the presentation: it then draws every page ahead and plays the moves
+  from memory (about 8 GB at 1080p; Okular allows itself half the machine's).
+- **Acrobat** (full screen): `slides.pdf`; moves play by themselves.
+- **Other viewers** may ignore the page durations; then set `\gmanimatefalse` in
+  `deck.tex`: no motion pages, one page per stop.
 
 ## Edit
 
@@ -110,7 +123,6 @@ notes/NN-*.md           the explanations, chapter by chapter
 data/                   live.json, stages.json — extracted, committed with the deck
 figures/generated/      numbers.tex, every chart and graph drawing, world.tex (the camera)
 figures/img/            Doge's image, his eight templates, IMKG's example meme
-figures/thumbs/         the slides as pictures (made by `make`, not committed)
 scripts/                extract.py, stages.py, figures.py, world.py
 queries.md              the queries behind the figures, for Neo4j Browser
 ```

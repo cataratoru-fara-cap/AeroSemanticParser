@@ -21,21 +21,21 @@ it becomes, then all the records and how the parser is built.}
         % the header: the image, the title, the series
         \node[rd, minimum width=1.6cm, minimum height=1.35cm, anchor=north west, font=\small] (img) at (.2,5.5) {image};
         \node[rd, anchor=north west, font=\large\bfseries, minimum width=2.6cm] (ttl) at (1.95,5.5) {Doge};
-        \node[rd, anchor=north west, font=\small, minimum width=2.6cm, align=left] (ser) at (1.95,4.88) {Part of a series on \dots};
+        \node[rd, anchor=north west, font=\footnotesize, minimum width=2.6cm, align=left] (ser) at (1.95,4.88) {Part of a series on \dots};
         \node[ig, minimum width=1.45cm, minimum height=5.15cm, anchor=north west, align=center] at (4.95,5.5)
           {top\\entries,\\ads,\\editors};
         \node[ig, minimum width=4.55cm, minimum height=.42cm, anchor=north west] at (.2,4.0) {interview, video};
-        % the left column: the infobox, the tags, the references; the story beside it
-        \node[rd, minimum width=1.5cm, minimum height=1.55cm, anchor=north west, align=left, font=\small] (box) at (.2,3.4)
+        % the story on the left; beside it the facts, the tags, the references
+        \node[rd, minimum width=2.9cm, minimum height=.55cm, anchor=north west, font=\small] (about) at (.2,3.4) {About};
+        \node[rd, minimum width=2.9cm, minimum height=.55cm, anchor=north west, font=\small] (orig) at (.2,2.73) {Origin};
+        \node[rd, minimum width=2.9cm, minimum height=.55cm, anchor=north west, font=\small] (spr) at (.2,2.06) {Spread, \dots};
+        \node[rd, minimum width=2.9cm, minimum height=.55cm, anchor=north west, font=\small] (fn) at (.2,1.39) {references};
+        \node[rd, minimum width=1.5cm, minimum height=1.55cm, anchor=north west, align=left, font=\small] (box) at (3.25,3.4)
           {status\\type\\year\\origin};
-        \node[rd, minimum width=1.5cm, minimum height=.55cm, anchor=north west, font=\small] (tags) at (.2,1.72) {tags};
-        \node[rd, minimum width=1.5cm, minimum height=.55cm, anchor=north west, font=\small] (refs) at (.2,1.05) {links};
-        \node[rd, minimum width=2.9cm, minimum height=.55cm, anchor=north west, font=\small] (about) at (1.85,3.4) {About};
-        \node[rd, minimum width=2.9cm, minimum height=.55cm, anchor=north west, font=\small] (orig) at (1.85,2.73) {Origin};
-        \node[rd, minimum width=2.9cm, minimum height=.55cm, anchor=north west, font=\small] (spr) at (1.85,2.06) {Spread, \dots};
-        \node[rd, minimum width=2.9cm, minimum height=.55cm, anchor=north west, font=\small] (fn) at (1.85,1.39) {references};
+        \node[rd, minimum width=1.5cm, minimum height=.55cm, anchor=north west, font=\small] (tags) at (3.25,1.72) {tags};
+        \node[rd, minimum width=1.5cm, minimum height=.55cm, anchor=north west, font=\small] (refs) at (3.25,1.05) {links};
         \node[ig, minimum width=4.55cm, minimum height=.36cm, anchor=north west] at (.2,.62) {related entries, videos, images};
-        \foreach \n/\at in {1/img.north west, 2/ser.north east, 3/box.north west, 4/tags.west, 5/about.north east, 6/fn.east}
+        \foreach \n/\at in {1/img.north west, 2/ser.north east, 3/box.north east, 4/tags.east, 5/about.north west, 6/fn.west}
           \node[bd] at (\at) {\n};
       \end{tikzpicture}}
     \column{.5\textwidth}
@@ -53,13 +53,13 @@ it becomes, then all the records and how the parser is built.}
   \note{
   \begin{itemize}
     \item Layman version: a person reading this page sees a title and a picture at the top, the
-      series it belongs to, a column of facts on the left, and the story beside it. The parser
+      series it belongs to, the story on the left, and a column of facts beside it. The parser
       reads exactly those, and writes them down as a tidy record --- one per page, the same
       fields every time.
     \item This is Know Your Meme's real layout for Doge: the image with the title and ``Part of a
-      series on'' next to it; then a left column with the facts (status, type, year, origin,
-      region), the tags and the additional references; the story --- About, Origin, Spread and 22
-      more sections --- in the middle, its numbered references at the end. The grey parts are the
+      series on'' next to it; then the story --- About, Origin, Spread and 22 more sections ---
+      on the left, its numbered references at the end; beside it a column with the facts (status,
+      type, year, origin, region), the tags and the additional references. The grey parts are the
       site around the entry: menus, ads, the interview and video, the sidebar of top entries and
       editors, the related-entries strips. The parser ignores them.
     \item Doge: a meme, confirmed by KYM's editors, from 2010, born on Tumblr, in Japan; five
@@ -85,13 +85,13 @@ it becomes, then all the records and how the parser is built.}
       {\normalsize\color{gmInk2}fields an entry may lack (it stays anyway)}\par\vskip1mm
       \input{figures/generated/fig-read-missing}
   \end{columns}
-  \vskip2mm
+  \vskip-2mm
   \begin{tikzpicture}[x=1cm, y=1cm,
-      chip/.style={rounded corners=2mm, fill=gm@col@read!10!gmSurface, inner sep=2.2mm, text width=4.0cm,
-                   align=left, font=\small, anchor=north west}]
+      chip/.style={rounded corners=2mm, fill=gm@col@read!10!gmSurface, inner sep=2.2mm, text width=3.9cm,
+                   minimum height=1.35cm, align=left, font=\small, anchor=north west}]
     \node[chip] at (0,0) {{\color{gm@col@read}\faVial}\enspace\textbf{HTML in, record out}, tested on saved pages};
-    \node[chip] at (4.6,0) {{\color{gm@col@read}\faCodeBranch}\enspace\textbf{A versioned schema}: re-read only what changed};
-    \node[chip] at (9.2,0) {{\color{gm@col@read}\faInbox}\enspace\textbf{Not an entry?} \NParseFailures\ pages set aside};
+    \node[chip, text width=4.55cm] at (4.49,0) {{\color{gm@col@read}\faCodeBranch}\enspace\textbf{A versioned schema}: re-read only what changed};
+    \node[chip] at (9.63,0) {{\color{gm@col@read}\faInbox}\enspace\textbf{Not an entry?} \NParseFailures\ pages set aside};
   \end{tikzpicture}
   \note{
   \begin{itemize}
