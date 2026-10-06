@@ -1,849 +1,497 @@
-"""Tests for kg/build.py — one entries doc -> (nodes, edges).
+"""kg/build.py: one entries doc -> (nodes, edges), the single producer both the
+property graph and the RDF are generated from.
 
-This module is the single producer: both the property-graph and the RDF
-projections are generated from its output, so anything asserted here is
-asserted about both representations at once.
-
-``test_series_parent_is_not_also_a_frame_citation`` pins a real defect. The
-RML exporter re-implemented this loop and started its per-entry ``seen``
-set empty, where this module seeds it with ``series_parent``. The result
-was 14,571 ``mk:relatesToMeme`` triples in the published kg_output.nt that
-the property graph did not contain. The two projections now share this
-code; the test stops the divergence coming back.
-
-``OccurrenceTests`` pins the 4.0.0 rule: a node is something other things
-can share. Page sections, body links and references are not nodes; what
-was particular to one mention lives on the frame-level edge.
-
-``FullRecordTests`` pins the scope against the real doge.html fixture:
-every field the parser extracts lands somewhere in the graph — no
-exceptions, as of 5.1.0. Until then the Origin and Spread sections were a
-standing carve-out (their text, their images and their links' anchor text
-were all withheld for the event-extraction task), which made that sentence
-untrue in three separate ways at once.
-
-Run inside the Airflow container:
-    docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
-        python -m pytest /opt/airflow/dags/tests/test_kg_build.py -v
+Pinned: the series parent is not also a frame citation (the RML exporter once
+re-implemented this loop and emitted 14,571 extra mk:relatesToMeme triples);
+a node is something other things can share, what is particular to one mention
+lives on the frame-level edge (4.0.0); every field the parser extracts lands
+somewhere, Origin and Spread included (5.1.0, against the real doge.html).
 """
-import os
-import unittest
 from collections import Counter
 from datetime import datetime
 
+import pytest
+
+from helpers import FIXTURES
 from modules.kg import build
+from modules.kg import events as kg_events
+from modules.kym_parse import parse_entry
 
 URL = "https://knowyourmeme.com/memes/doge"
+SENS = "https://knowyourmeme.com/sensitive/memes/doge"
 PARENT = "https://knowyourmeme.com/memes/shiba-inu"
 OTHER = "https://knowyourmeme.com/memes/cheems"
 EXTERNAL = "https://en.wikipedia.org/wiki/Doge_(meme)"
 IMG = "https://i.kym-cdn.com/photos/images/original/000/1.jpg"
+TIKTOK = "https://www.tiktok.com/@a/video/1"
+EID = "event:abc123def4-0011223344"
 
 
-def entry(**over) -> dict:
-    base = {"url": URL, "title": "Doge", "category": "meme",
-            "status": "confirmed"}
-    base.update(over)
-    return base
+def entry(**over):
+    return {"url": URL, "title": "Doge", "category": "meme", "status": "confirmed", **over}
 
 
-def section(kind="notable_examples", heading="Notable Examples", level=2,
-            text=(), links=(), images=()):
-    return {"kind": kind, "heading": heading, "level": level,
-            "text": list(text), "links": list(links), "images": list(images)}
+def section(kind="notable_examples", heading="Notable Examples", text=(), links=(), images=()):
+    return {"kind": kind, "heading": heading, "level": 2, "text": list(text),
+            "links": list(links), "images": list(images)}
 
 
-def nodes_by_id(nodes):
-    """Later occurrences win, as the store's merge does."""
-    out: dict[str, dict] = {}
+def links(*urls, text="x"):
+    return [section(links=[{"url": u, "text": text} for u in urls])]
+
+
+def graph(**over):
+    """(nodes by id — later occurrences win, as the store's merge does —, edges)."""
+    kw = {k: over.pop(k) for k in ("origin_resolver", "tag_denylist", "events", "entities",
+                                   "kept_address", "also_at") if k in over}
+    nodes, edges = build.build_nodes_and_edges(entry(**over), **kw)
+    ids: dict[str, dict] = {}
     for n in nodes:
-        out.setdefault(n["id"], {}).update(n)
-    return out
+        ids.setdefault(n["id"], {}).update(n)
+    return ids, edges
 
 
 def edge_set(edges):
     return {(e["src"], e["type"], e["dst"]) for e in edges}
 
 
+def typed(edges, *types):
+    return [e for e in edges if e["type"] in types]
+
+
 def the_edge(edges, etype, dst):
-    matches = [e for e in edges if e["type"] == etype and e["dst"] == dst]
-    assert len(matches) == 1, f"{len(matches)} {etype} edges to {dst}"
-    return matches[0]
+    [e] = [e for e in edges if e["type"] == etype and e["dst"] == dst]
+    return e
 
 
-class VocabularyTests(unittest.TestCase):
-    def test_constants_are_exported(self):
-        self.assertEqual(set(build.NODE_KINDS),
-                         {"frame", "frame_stub", "entry_type_concept",
-                          "tag_concept", "region_concept", "origin_concept",
-                          "badge_concept", "external_ref", "image", "event",
-                          "wikidata_entity", "template"})
-        self.assertEqual(set(build.EDGE_TYPES),
-                         {"hasEntryType", "hasTag", "hasRegion", "hasOrigin",
-                          "hasBadge", "partOfSeries", "citesMediaFrame",
-                          "citesExternal", "hasImage", "hasEvent",
-                          "eventLink", "eventCitation", "eventEmbed",
-                          "eventImage", "eventDateAnchor", "nextInStory",
-                          "fromTitle", "fromTags", "fromAbout",
-                          "hasTemplate", "templateImage", "imgflipPage", "fromImage"})
-        self.assertLessEqual(set(build.OCCURRENCE_EDGE_TYPES), set(build.EDGE_TYPES))
+# -- vocabulary ---------------------------------------------------------------
 
-    def test_version_is_stamped(self):
-        self.assertEqual(build.KG_BUILD_VERSION, "7.1.0")
-
-    def test_emitted_kinds_types_and_occurrence_fields_stay_in_the_vocabulary(self):
-        nodes, edges = build.build_nodes_and_edges(entry(
-            entry_type=["meme"], tags=["shiba"], region=["Japan"],
-            series_parent=PARENT, og_image=IMG,
-            sections=[section(text=["t"], links=[{"url": OTHER, "text": "x"}],
-                              images=[{"src": IMG, "alt": "a", "caption": "c"}])],
-            additional_references=[{"url": EXTERNAL, "name": "Wikipedia"}],
-            external_references=[{"url": EXTERNAL, "index": 1, "text": "w"}]))
-        self.assertLessEqual({n["kind"] for n in nodes}, set(build.NODE_KINDS))
-        self.assertLessEqual({e["type"] for e in edges}, set(build.EDGE_TYPES))
-        for e in edges:
-            if "occurrences" in e:
-                self.assertIn(e["type"], build.OCCURRENCE_EDGE_TYPES)
-                for occ in e["occurrences"]:
-                    self.assertLessEqual(set(occ), set(build.OCCURRENCE_FIELDS))
-                    self.assertTrue(occ)
+def test_the_vocabulary_and_version():
+    assert set(build.NODE_KINDS) == {"frame", "frame_stub", "entry_type_concept", "tag_concept",
+                                     "region_concept", "origin_concept", "badge_concept", "external_ref",
+                                     "image", "event", "wikidata_entity", "template"}
+    assert set(build.EDGE_TYPES) == {
+        "hasEntryType", "hasTag", "hasRegion", "hasOrigin", "hasBadge", "partOfSeries", "citesMediaFrame",
+        "citesExternal", "hasImage", "hasEvent", "eventLink", "eventCitation", "eventEmbed", "eventImage",
+        "eventDateAnchor", "nextInStory", "fromTitle", "fromTags", "fromAbout", "hasTemplate",
+        "templateImage", "imgflipPage", "fromImage"}
+    assert set(build.OCCURRENCE_EDGE_TYPES) <= set(build.EDGE_TYPES)
+    assert build.KG_BUILD_VERSION == "7.1.0"
+    assert build.STORY_SECTIONS == kg_events.SOURCE_SECTIONS
 
 
-class FrameNodeTests(unittest.TestCase):
-    def test_frame_carries_its_attributes(self):
-        nodes, _ = build.build_nodes_and_edges(entry(
-            year=2013, origin="Tumblr", badges=["Sensitive"],
-            aliases=["Shibe"], kym_added=1_300_000_000,
-            kym_last_updated=1_700_000_000, corpus_status="ready",
-            corpus_missing=[], parser_version="1.2.3",
-            parsed_at=datetime(2026, 9, 1, 12, 0, 0),
-            meta={"description": "Doge is a meme."}))
-        frame = nodes_by_id(nodes)[URL]
-        self.assertEqual(frame["kind"], "frame")
-        self.assertEqual(frame["label"], "Doge")
-        self.assertEqual((frame["category"], frame["status"]), ("meme", "confirmed"))
-        self.assertEqual(frame["year"], 2013)
-        self.assertEqual(frame["from"], "Tumblr")          # the infobox origin FIELD
-        self.assertNotIn("badges", frame)     # 5.0.0: an edge now, not a literal
-        self.assertEqual(frame["aliases"], ["Shibe"])
-        self.assertEqual(frame["added"], "2011-03-13T07:06:40Z")
-        self.assertEqual(frame["last_updated"], "2023-11-14T22:13:20Z")
-        self.assertEqual(frame["parsed_at"], "2026-09-01T12:00:00Z")
-        self.assertEqual(frame["description"], "Doge is a meme.")
-        self.assertEqual(frame["corpus_status"], "ready")
-        self.assertEqual(frame["parser_version"], "1.2.3")
-
-    def test_absent_values_are_not_stored(self):
-        # morph-kgc emits nothing for an empty cell; neither may any store.
-        nodes, _ = build.build_nodes_and_edges(entry(badges=[], year=None))
-        frame = nodes_by_id(nodes)[URL]
-        for absent in ("badges", "year", "corpus_missing", "section_texts"):
-            self.assertNotIn(absent, frame)
-
-    def test_entry_without_url_yields_nothing(self):
-        self.assertEqual(build.build_nodes_and_edges({"title": "x"}), ([], []))
+def assert_in_vocabulary(ids, edges):
+    assert {n["kind"] for n in ids.values()} <= set(build.NODE_KINDS)
+    assert {e["type"] for e in edges} <= set(build.EDGE_TYPES)
+    for e in edges:
+        for occ in e.get("occurrences") or ():
+            assert e["type"] in build.OCCURRENCE_EDGE_TYPES
+            assert occ and set(occ) <= set(build.OCCURRENCE_FIELDS)
 
 
-class SectionTextTests(unittest.TestCase):
-    def test_sections_are_frame_properties_not_nodes(self):
-        nodes, edges = build.build_nodes_and_edges(entry(sections=[
-            section(kind="about", heading="About", text=["one", "two"]),
-            section(kind="other", heading="History", text=["p1", "", "p2"]),
-            section(kind="origin", heading="Origin", text=["deferred"]),
-            section(kind="various_examples", heading="Various Examples", text=[],
-                    images=[{"src": IMG}]),
-            section(kind="other", heading="Reception", text=["p3"]),
-            section(kind="other", heading="", text=["headless"])]))
-        frame = nodes_by_id(nodes)[URL]
-        self.assertEqual(frame["about"], "one\n\ntwo")
-        self.assertEqual(frame["section_texts"],
-                         ["History\n\np1\n\np2", "Reception\n\np3", "headless"])
-        self.assertEqual({n["kind"] for n in nodes}, {"frame", "image"})
-
-    def test_about_is_not_repeated_in_section_texts(self):
-        nodes, _ = build.build_nodes_and_edges(entry(sections=[
-            section(kind="about", heading="About", text=["only here"])]))
-        self.assertNotIn("section_texts", nodes_by_id(nodes)[URL])
+def test_what_is_emitted_stays_in_the_vocabulary():
+    assert_in_vocabulary(*graph(
+        entry_type=["meme"], tags=["shiba"], region=["Japan"], series_parent=PARENT, og_image=IMG,
+        sections=[section(text=["t"], links=[{"url": OTHER, "text": "x"}],
+                          images=[{"src": IMG, "alt": "a", "caption": "c"}])],
+        additional_references=[{"url": EXTERNAL, "name": "Wikipedia"}],
+        external_references=[{"url": EXTERNAL, "index": 1, "text": "w"}]))
+    assert_in_vocabulary(*graph(entities=[SHIBA, DOGE]))
 
 
-class IsoUtcTests(unittest.TestCase):
-    def test_every_input_shape_gives_one_lexical_form(self):
-        expected = "2026-09-01T12:00:00Z"
-        self.assertEqual(build.iso_utc(1788264000), expected)
-        self.assertEqual(build.iso_utc(datetime(2026, 9, 1, 12)), expected)
-        self.assertEqual(build.iso_utc("2026-09-01T12:00:00+00:00"), expected)
-        self.assertEqual(build.iso_utc("2026-09-01T14:00:00+02:00"), expected)
+# -- the frame ----------------------------------------------------------------
 
-    def test_garbage_is_none(self):
-        for bad in (None, "", "yesterday", True, object()):
-            self.assertIsNone(build.iso_utc(bad))
-
-
-class ConceptTests(unittest.TestCase):
-    def test_entry_types_become_prefixed_concepts(self):
-        nodes, edges = build.build_nodes_and_edges(
-            entry(entry_type=["exploitable", "image-macro"]))
-        ids = nodes_by_id(nodes)
-        self.assertEqual(ids["type:exploitable"]["kind"], "entry_type_concept")
-        self.assertIn((URL, "hasEntryType", "type:exploitable"), edge_set(edges))
-
-    def test_tags_are_lowercased_and_stripped(self):
-        nodes, edges = build.build_nodes_and_edges(entry(tags=["  Shiba  "]))
-        self.assertIn("tag:shiba", nodes_by_id(nodes))
-        self.assertIn((URL, "hasTag", "tag:shiba"), edge_set(edges))
-
-    def test_blank_tags_are_skipped(self):
-        nodes, edges = build.build_nodes_and_edges(entry(tags=["   ", ""]))
-        self.assertEqual([n for n in nodes if n["kind"] == "tag_concept"], [])
-        self.assertEqual(edges, [])
-
-    def test_regions_become_concepts(self):
-        nodes, edges = build.build_nodes_and_edges(entry(region=[" Japan ", ""]))
-        self.assertEqual(nodes_by_id(nodes)["region:Japan"]["kind"], "region_concept")
-        self.assertEqual([e for e in edges if e["type"] == "hasRegion"],
-                         [{"src": URL, "type": "hasRegion", "dst": "region:Japan"}])
-
-    def test_badges_become_concepts(self):
-        nodes, edges = build.build_nodes_and_edges(
-            entry(badges=[" Sensitive ", ""]))
-        self.assertEqual(nodes_by_id(nodes)["badge:sensitive"]["kind"], "badge_concept")
-        self.assertEqual(nodes_by_id(nodes)["badge:sensitive"]["label"], "Sensitive")
-        self.assertEqual([e for e in edges if e["type"] == "hasBadge"],
-                         [{"src": URL, "type": "hasBadge", "dst": "badge:sensitive"}])
-
-    def test_no_origin_edge_without_a_resolver(self):
-        """The default (no origin_resolver given): back-compat with every
-        existing caller that doesn't know about origin_concept."""
-        nodes, edges = build.build_nodes_and_edges(entry(origin="Twitter"))
-        self.assertEqual([n for n in nodes if n["kind"] == "origin_concept"], [])
-        self.assertEqual([e for e in edges if e["type"] == "hasOrigin"], [])
-        self.assertEqual(nodes_by_id(nodes)[URL]["from"], "Twitter")
-
-    def test_origin_becomes_a_concept_via_the_resolver(self):
-        nodes, edges = build.build_nodes_and_edges(
-            entry(origin="Twitter"), origin_resolver=lambda raw: raw.lower())
-        self.assertEqual(nodes_by_id(nodes)["origin:twitter"]["kind"], "origin_concept")
-        self.assertEqual([e for e in edges if e["type"] == "hasOrigin"],
-                         [{"src": URL, "type": "hasOrigin", "dst": "origin:twitter"}])
-        # "from" (the raw literal) is untouched -- origin_concept is an
-        # ADDED layer, not a replacement.
-        self.assertEqual(nodes_by_id(nodes)[URL]["from"], "Twitter")
-
-    def test_no_origin_edge_for_an_empty_origin(self):
-        nodes, edges = build.build_nodes_and_edges(
-            entry(origin=""), origin_resolver=lambda raw: raw.lower())
-        self.assertEqual([e for e in edges if e["type"] == "hasOrigin"], [])
-
-    def test_tags_are_plural_folded(self):
-        nodes, edges = build.build_nodes_and_edges(
-            entry(tags=["Catchphrases"]))
-        self.assertIn("tag:catchphrase", nodes_by_id(nodes))
-        self.assertIn((URL, "hasTag", "tag:catchphrase"), edge_set(edges))
-
-    def test_tag_denylist_exempts_a_tag_from_folding(self):
-        nodes, edges = build.build_nodes_and_edges(
-            entry(tags=["News"]), tag_denylist=frozenset({"news"}))
-        self.assertIn("tag:news", nodes_by_id(nodes))
+def test_the_frame_carries_its_attributes():
+    ids, _ = graph(year=2013, origin="Tumblr", badges=["Sensitive"], aliases=["Shibe"],
+                   kym_added=1_300_000_000, kym_last_updated=1_700_000_000, corpus_status="ready",
+                   corpus_missing=[], parser_version="1.2.3", parsed_at=datetime(2026, 9, 1, 12),
+                   meta={"description": "Doge is a meme."})
+    frame = ids[URL]
+    assert {k: frame[k] for k in ("kind", "label", "category", "status", "year", "from", "aliases", "added",
+                                  "last_updated", "parsed_at", "description", "corpus_status",
+                                  "parser_version")} == {
+        "kind": "frame", "label": "Doge", "category": "meme", "status": "confirmed", "year": 2013,
+        "from": "Tumblr", "aliases": ["Shibe"], "added": "2011-03-13T07:06:40Z",
+        "last_updated": "2023-11-14T22:13:20Z", "parsed_at": "2026-09-01T12:00:00Z",
+        "description": "Doge is a meme.", "corpus_status": "ready", "parser_version": "1.2.3"}
+    assert "badges" not in frame          # 5.0.0: an edge, not a literal
 
 
-class LinkClassificationTests(unittest.TestCase):
-    """Classification is by what the link points at — a KYM entry, or any
-    other page — never by the field it came from."""
-
-    def test_series_parent_becomes_a_stub_and_a_series_edge(self):
-        nodes, edges = build.build_nodes_and_edges(entry(series_parent=PARENT))
-        self.assertEqual(nodes_by_id(nodes)[PARENT]["kind"], "frame_stub")
-        self.assertIn((URL, "partOfSeries", PARENT), edge_set(edges))
-
-    def test_series_parent_is_not_also_a_frame_citation(self):
-        # THE REGRESSION. The parent is linked in the body too, as it always
-        # is on a real page; it must produce partOfSeries and nothing else.
-        _, edges = build.build_nodes_and_edges(entry(
-            series_parent=PARENT,
-            sections=[section(links=[{"url": PARENT, "text": "Shiba"}])]))
-        self.assertEqual({e["type"] for e in edges if e["dst"] == PARENT}, {"partOfSeries"})
-
-    def test_kym_link_in_external_references_is_still_citesMediaFrame(self):
-        _, edges = build.build_nodes_and_edges(entry(external_references=[{"url": OTHER}]))
-        self.assertIn((URL, "citesMediaFrame", OTHER), edge_set(edges))
-
-    def test_outside_link_in_a_body_section_is_still_citesExternal(self):
-        nodes, edges = build.build_nodes_and_edges(entry(
-            sections=[section(links=[{"url": EXTERNAL, "text": "wiki"}])]))
-        self.assertIn((URL, "citesExternal", EXTERNAL), edge_set(edges))
-        self.assertEqual(nodes_by_id(nodes)[EXTERNAL]["kind"], "external_ref")
-
-    def test_self_link_is_not_an_edge(self):
-        _, edges = build.build_nodes_and_edges(entry(
-            sections=[section(links=[{"url": URL, "text": "Doge"}])]))
-        self.assertEqual(edges, [])
-
-    def test_all_link_bearing_fields_are_read(self):
-        _, edges = build.build_nodes_and_edges(entry(
-            sections=[section(links=[{"url": "https://a.example/1", "text": ""}])],
-            additional_references=[{"url": "https://b.example/2", "name": "B"}],
-            external_references=[{"url": "https://c.example/3"}]))
-        self.assertEqual(len([e for e in edges if e["type"] == "citesExternal"]), 3)
-
-    def test_links_in_narrative_sections_carry_their_anchor_text(self):
-        # Until 5.1.0 an origin/spread link yielded the edge but no
-        # occurrence: its anchor text was withheld with the section.
-        _, edges = build.build_nodes_and_edges(entry(
-            sections=[section(kind="origin", heading="Origin",
-                              links=[{"url": OTHER, "text": "x"}])]))
-        e = the_edge(edges, "citesMediaFrame", OTHER)
-        self.assertEqual(e["occurrences"],
-                         [{"anchor_text": "x", "in_section": "Origin"}])
-
-    def test_www_host_counts_as_internal(self):
-        www = "https://www.knowyourmeme.com/memes/pepe"
-        _, edges = build.build_nodes_and_edges(entry(
-            sections=[section(links=[{"url": www, "text": "pepe"}])]))
-        self.assertIn((URL, "citesMediaFrame", www), edge_set(edges))
-
-    def test_every_entry_path_is_a_media_frame(self):
-        # KYM's older paths are still linked from pages, and are entries.
-        targets = ["https://knowyourmeme.com/memes/subcultures/akira",
-                   "https://knowyourmeme.com/sensitive/memes/goatse",
-                   "https://knowyourmeme.com/people/elon-musk",
-                   "https://knowyourmeme.com/sites/Reddit",
-                   "https://knowyourmeme.com/memes/assassins-creed-logo?ref=related-entries"]
-        nodes, edges = build.build_nodes_and_edges(entry(sections=[section(
-            links=[{"url": t, "text": "x"} for t in targets])]))
-        self.assertEqual({e["dst"] for e in edges if e["type"] == "citesMediaFrame"},
-                         set(targets))
-        self.assertEqual({nodes_by_id(nodes)[t]["kind"] for t in targets}, {"frame_stub"})
-
-    def test_a_kym_page_that_is_not_an_entry_is_citesExternal(self):
-        # 7.0.0: 2,841 such links in 6.5.0 were relatesToMeme, each to a
-        # frame_stub. They are pages, not media frames.
-        targets = ["https://knowyourmeme.com/photos/1220637-who-would-win",
-                   "https://knowyourmeme.com/videos/14824-abandon-thread",
-                   "https://knowyourmeme.com/news/some-story",
-                   "https://knowyourmeme.com/editorials/guides/whats-the-41-meme",
-                   "https://knowyourmeme.com/types/remix?status=all",
-                   "https://knowyourmeme.com/users/olivia-gulin",
-                   "https://knowyourmeme.com/forums/general/topics/3937-faq",
-                   "https://knowyourmeme.com/login",
-                   "https://knowyourmeme.com/search?q=japan",
-                   "https://knowyourmeme.com/memes",
-                   "https://knowyourmeme.com/memes/subcultures/"]
-        nodes, edges = build.build_nodes_and_edges(entry(sections=[section(
-            links=[{"url": t, "text": "x"} for t in targets])]))
-        self.assertEqual({e["type"] for e in edges}, {"citesExternal"})
-        self.assertEqual({e["dst"] for e in edges}, set(targets))
-        self.assertEqual({nodes_by_id(nodes)[t]["kind"] for t in targets}, {"external_ref"})
+def test_absent_values_are_not_stored_and_no_url_is_nothing():
+    # morph-kgc emits nothing for an empty cell; neither may any store
+    frame = graph(badges=[], year=None)[0][URL]
+    assert not {"badges", "year", "corpus_missing", "section_texts", "also_at"} & set(frame)
+    assert build.build_nodes_and_edges({"title": "x"}) == ([], [])
 
 
-class OccurrenceTests(unittest.TestCase):
-    def test_repeated_mentions_are_one_edge_with_every_occurrence(self):
-        _, edges = build.build_nodes_and_edges(entry(
-            sections=[section(heading="About", links=[{"url": OTHER, "text": " Cheems "}]),
-                      section(heading="Spread", kind="other",
-                              links=[{"url": OTHER, "text": "the dog"}])],
-            additional_references=[{"url": OTHER, "name": "KYM"}],
-            external_references=[{"url": OTHER, "index": 4, "text": "Cheems – KYM"}]))
-        e = the_edge(edges, "citesMediaFrame", OTHER)
-        self.assertEqual(e["occurrences"], [
-            {"anchor_text": "Cheems", "in_section": "About"},
-            {"anchor_text": "the dog", "in_section": "Spread"},
-            {"site_name": "KYM"},
-            {"citation_text": "Cheems – KYM", "citation_index": 4},
-        ])
-
-    def test_an_empty_mention_adds_no_occurrence(self):
-        _, edges = build.build_nodes_and_edges(entry(
-            sections=[section(heading="", links=[{"url": EXTERNAL, "text": "  "}])]))
-        self.assertNotIn("occurrences", the_edge(edges, "citesExternal", EXTERNAL))
-
-    def test_no_link_or_reference_nodes(self):
-        nodes, edges = build.build_nodes_and_edges(entry(
-            sections=[section(links=[{"url": EXTERNAL, "text": "w"}])],
-            external_references=[{"url": EXTERNAL, "index": 1}]))
-        self.assertEqual(Counter(n["kind"] for n in nodes), {"frame": 1, "external_ref": 1})
-        self.assertEqual([e["type"] for e in edges], ["citesExternal"])
-
-    def test_image_shown_as_page_image_and_in_a_section_is_one_edge(self):
-        nodes, edges = build.build_nodes_and_edges(entry(
-            og_image=IMG,
-            meta={"og:image:width": "600", "og:image:height": "nope"},
-            sections=[section(heading="Notable Examples",
-                              images=[{"src": IMG, "alt": "doge", "caption": "wow"}]),
-                      section(kind="origin", heading="Origin",
-                              images=[{"src": IMG, "caption": "in origin"}])]))
-        img = nodes_by_id(nodes)[f"image:{IMG}"]
-        self.assertEqual(img, {"id": f"image:{IMG}", "kind": "image", "width": 600})
-        e = the_edge(edges, "hasImage", f"image:{IMG}")
-        # The origin section's image is an occurrence like any other as of
-        # 5.1.0; before that the whole section was skipped here.
-        self.assertEqual(e["occurrences"], [
-            {"role": "page"},
-            {"role": "section", "in_section": "Notable Examples",
-             "alt_text": "doge", "caption": "wow"},
-            {"role": "section", "in_section": "Origin", "caption": "in origin"}])
-
-    def test_caption_lives_on_the_edge_not_the_shared_image(self):
-        # Two pages showing one file with different captions keep both.
-        _, a = build.build_nodes_and_edges(entry(sections=[section(
-            images=[{"src": IMG, "caption": "first"}])]))
-        n, b = build.build_nodes_and_edges(entry(url=OTHER, sections=[section(
-            images=[{"src": IMG, "caption": "second"}])]))
-        self.assertNotIn("caption", nodes_by_id(n)[f"image:{IMG}"])
-        self.assertEqual(a[0]["occurrences"][0]["caption"], "first")
-        self.assertEqual(b[0]["occurrences"][0]["caption"], "second")
-
-    def test_image_ids_cannot_collide_with_a_link_target(self):
-        nodes, _ = build.build_nodes_and_edges(entry(sections=[
-            section(links=[{"url": IMG, "text": "img"}], images=[{"src": IMG}])]))
-        kinds = {n["id"]: n["kind"] for n in nodes}
-        self.assertEqual(kinds[IMG], "external_ref")
-        self.assertEqual(kinds[f"image:{IMG}"], "image")
+def test_sections_are_frame_properties_not_nodes():
+    ids, _ = graph(sections=[
+        section("about", "About", ["one", "two"]), section("other", "History", ["p1", "", "p2"]),
+        section("origin", "Origin", ["deferred"]),
+        section("various_examples", "Various Examples", images=[{"src": IMG}]),
+        section("other", "Reception", ["p3"]), section("other", "", ["headless"])])
+    assert ids[URL]["about"] == "one\n\ntwo"
+    assert ids[URL]["section_texts"] == ["History\n\np1\n\np2", "Reception\n\np3", "headless"]
+    assert {n["kind"] for n in ids.values()} == {"frame", "image"}
+    assert "section_texts" not in graph(sections=[section("about", "About", ["only here"])])[0][URL]
 
 
-class FullRecordTests(unittest.TestCase):
-    """The real doge.html page, through the real parser.
+@pytest.mark.parametrize("value, want", [
+    (1788264000, "2026-09-01T12:00:00Z"), (datetime(2026, 9, 1, 12), "2026-09-01T12:00:00Z"),
+    ("2026-09-01T12:00:00+00:00", "2026-09-01T12:00:00Z"), ("2026-09-01T14:00:00+02:00", "2026-09-01T12:00:00Z"),
+    (None, None), ("", None), ("yesterday", None), (True, None), (object(), None),
+])
+def test_iso_utc_gives_one_lexical_form(value, want):
+    assert build.iso_utc(value) == want
 
-    Every section is in scope as of 5.1.0. ``cls.live`` used to exclude
-    the Origin and Spread sections, and these assertions were written
-    around that hole; the fixture has both, with images and links, so the
-    numbers below moved when the deferral was lifted.
-    """
 
-    @classmethod
-    def setUpClass(cls):
-        from modules.kym_parse import parse_entry
-        path = os.path.join(os.path.dirname(__file__), "fixtures", "doge.html")
-        with open(path, encoding="utf-8") as fh:
-            parsed = parse_entry(fh.read())
-        cls.doc = parsed.model_dump(mode="json", exclude_none=True)
-        cls.nodes, cls.edges = build.build_nodes_and_edges(cls.doc)
-        cls.ids = nodes_by_id(cls.nodes)
-        cls.live = cls.doc["sections"]
+# -- concepts -----------------------------------------------------------------
 
-    def occurrences(self, etype, **match):
-        return [o for e in self.edges if e["type"] == etype
-                for o in e.get("occurrences", [])
+def test_entry_types_tags_regions_and_badges_become_concepts():
+    ids, edges = graph(entry_type=["exploitable", "image-macro"], tags=["  Shiba  ", "   ", "", "Catchphrases"],
+                       region=[" Japan ", ""], badges=[" Sensitive ", ""])
+    assert ids["type:exploitable"]["kind"] == "entry_type_concept"
+    assert {(URL, "hasEntryType", "type:exploitable"), (URL, "hasTag", "tag:shiba"),
+            (URL, "hasTag", "tag:catchphrase")} <= edge_set(edges)            # lowercased, stripped, folded
+    assert [n["id"] for n in ids.values() if n["kind"] == "tag_concept"] == ["tag:shiba", "tag:catchphrase"]
+    assert ids["region:Japan"]["kind"] == "region_concept"
+    assert typed(edges, "hasRegion") == [{"src": URL, "type": "hasRegion", "dst": "region:Japan"}]
+    assert (ids["badge:sensitive"]["kind"], ids["badge:sensitive"]["label"]) == ("badge_concept", "Sensitive")
+    assert typed(edges, "hasBadge") == [{"src": URL, "type": "hasBadge", "dst": "badge:sensitive"}]
+    assert graph(tags=["   ", ""])[1] == []
+
+
+def test_the_tag_denylist_exempts_a_tag_from_folding():
+    assert "tag:news" in graph(tags=["News"], tag_denylist=frozenset({"news"}))[0]
+
+
+def test_origin_is_a_concept_only_through_the_resolver():
+    lower = lambda raw: raw.lower()                                # noqa: E731
+    ids, edges = graph(origin="Twitter")                           # no resolver: back-compat
+    assert not [n for n in ids.values() if n["kind"] == "origin_concept"] and not typed(edges, "hasOrigin")
+    assert ids[URL]["from"] == "Twitter"
+    ids, edges = graph(origin="Twitter", origin_resolver=lower)
+    assert ids["origin:twitter"]["kind"] == "origin_concept"
+    assert typed(edges, "hasOrigin") == [{"src": URL, "type": "hasOrigin", "dst": "origin:twitter"}]
+    assert ids[URL]["from"] == "Twitter"                           # an added layer, not a replacement
+    assert not typed(graph(origin="", origin_resolver=lower)[1], "hasOrigin")
+
+
+# -- links: by what they point at, never by the field ---------------------------
+
+def test_the_series_parent_is_a_stub_and_a_series_edge_and_nothing_else():
+    ids, edges = graph(series_parent=PARENT)
+    assert ids[PARENT]["kind"] == "frame_stub" and ids[PARENT] == build.guess_stub_node(PARENT)
+    assert (URL, "partOfSeries", PARENT) in edge_set(edges)
+    # THE REGRESSION: the parent is linked in the body too, as on every real page
+    _, edges = graph(series_parent=PARENT, sections=[section(links=[{"url": PARENT, "text": "Shiba"}])])
+    assert {e["type"] for e in edges if e["dst"] == PARENT} == {"partOfSeries"}
+
+
+def test_links_are_classified_by_their_target():
+    ids, edges = graph(external_references=[{"url": OTHER}], sections=links(EXTERNAL, text="wiki"))
+    assert {(URL, "citesMediaFrame", OTHER), (URL, "citesExternal", EXTERNAL)} <= edge_set(edges)
+    assert ids[EXTERNAL]["kind"] == "external_ref"
+    assert graph(sections=links(URL))[1] == []                     # a self-link is no edge
+    _, edges = graph(sections=links("https://a.example/1", text=""),
+                     additional_references=[{"url": "https://b.example/2", "name": "B"}],
+                     external_references=[{"url": "https://c.example/3"}])
+    assert len(typed(edges, "citesExternal")) == 3                 # every link-bearing field is read
+    www = "https://www.knowyourmeme.com/memes/pepe"
+    assert (URL, "citesMediaFrame", www) in edge_set(graph(sections=links(www, text="pepe"))[1])
+
+
+def test_every_entry_path_is_a_media_frame():
+    # KYM's older paths are still linked from pages, and are entries
+    targets = ["https://knowyourmeme.com/memes/subcultures/akira", "https://knowyourmeme.com/sensitive/memes/goatse",
+               "https://knowyourmeme.com/people/elon-musk", "https://knowyourmeme.com/sites/Reddit",
+               "https://knowyourmeme.com/memes/assassins-creed-logo?ref=related-entries"]
+    ids, edges = graph(sections=links(*targets))
+    assert {e["dst"] for e in typed(edges, "citesMediaFrame")} == set(targets)
+    assert {ids[t]["kind"] for t in targets} == {"frame_stub"}
+
+
+def test_a_kym_page_that_is_not_an_entry_is_cites_external():
+    # 7.0.0: 2,841 such links in 6.5.0 pointed at frame stubs
+    targets = ["https://knowyourmeme.com/photos/1220637-who-would-win",
+               "https://knowyourmeme.com/videos/14824-abandon-thread", "https://knowyourmeme.com/news/some-story",
+               "https://knowyourmeme.com/editorials/guides/whats-the-41-meme",
+               "https://knowyourmeme.com/types/remix?status=all", "https://knowyourmeme.com/users/olivia-gulin",
+               "https://knowyourmeme.com/forums/general/topics/3937-faq", "https://knowyourmeme.com/login",
+               "https://knowyourmeme.com/search?q=japan", "https://knowyourmeme.com/memes",
+               "https://knowyourmeme.com/memes/subcultures/"]
+    ids, edges = graph(sections=links(*targets))
+    assert {e["type"] for e in edges} == {"citesExternal"} and {e["dst"] for e in edges} == set(targets)
+    assert {ids[t]["kind"] for t in targets} == {"external_ref"}
+
+
+@pytest.mark.parametrize("url, category", [
+    ("https://knowyourmeme.com/memes/people/x", "person"), ("https://knowyourmeme.com/memes/events/x", "event"),
+    ("https://knowyourmeme.com/memes/x", "meme"), ("https://knowyourmeme.com/memes/subcultures/x", "subculture"),
+    ("https://knowyourmeme.com/photos/1", None),        # unknown: guess nothing rather than wrong
+])
+def test_a_stub_guesses_its_category_from_the_path(url, category):
+    assert build.guess_stub_node(url)["category"] == category
+
+
+# -- occurrences ----------------------------------------------------------------
+
+def test_repeated_mentions_are_one_edge_with_every_occurrence():
+    _, edges = graph(sections=[section(heading="About", links=[{"url": OTHER, "text": " Cheems "}]),
+                               section("other", "Spread", links=[{"url": OTHER, "text": "the dog"}])],
+                     additional_references=[{"url": OTHER, "name": "KYM"}],
+                     external_references=[{"url": OTHER, "index": 4, "text": "Cheems – KYM"}])
+    assert the_edge(edges, "citesMediaFrame", OTHER)["occurrences"] == [
+        {"anchor_text": "Cheems", "in_section": "About"}, {"anchor_text": "the dog", "in_section": "Spread"},
+        {"site_name": "KYM"}, {"citation_text": "Cheems – KYM", "citation_index": 4}]
+
+
+def test_occurrences_from_origin_and_empty_mentions():
+    # until 5.1.0 an origin/spread link yielded the edge but no occurrence
+    _, edges = graph(sections=[section("origin", "Origin", links=[{"url": OTHER, "text": "x"}])])
+    assert the_edge(edges, "citesMediaFrame", OTHER)["occurrences"] == [{"anchor_text": "x", "in_section": "Origin"}]
+    _, edges = graph(sections=[section(heading="", links=[{"url": EXTERNAL, "text": "  "}])])
+    assert "occurrences" not in the_edge(edges, "citesExternal", EXTERNAL)
+
+
+def test_links_and_references_are_no_nodes():
+    ids, edges = graph(sections=links(EXTERNAL, text="w"), external_references=[{"url": EXTERNAL, "index": 1}])
+    assert Counter(n["kind"] for n in ids.values()) == {"frame": 1, "external_ref": 1}
+    assert [e["type"] for e in edges] == ["citesExternal"]
+
+
+def test_an_image_on_the_page_and_in_sections_is_one_edge():
+    ids, edges = graph(og_image=IMG, meta={"og:image:width": "600", "og:image:height": "nope"},
+                       sections=[section(images=[{"src": IMG, "alt": "doge", "caption": "wow"}]),
+                                 section("origin", "Origin", images=[{"src": IMG, "caption": "in origin"}])])
+    assert ids[f"image:{IMG}"] == {"id": f"image:{IMG}", "kind": "image", "width": 600}
+    assert the_edge(edges, "hasImage", f"image:{IMG}")["occurrences"] == [
+        {"role": "page"}, {"role": "section", "in_section": "Notable Examples", "alt_text": "doge", "caption": "wow"},
+        {"role": "section", "in_section": "Origin", "caption": "in origin"}]
+
+
+def test_a_caption_lives_on_the_edge_and_image_ids_cannot_collide_with_links():
+    _, a = graph(sections=[section(images=[{"src": IMG, "caption": "first"}])])
+    ids, b = graph(url=OTHER, sections=[section(images=[{"src": IMG, "caption": "second"}])])
+    assert "caption" not in ids[f"image:{IMG}"]
+    assert (a[0]["occurrences"][0]["caption"], b[0]["occurrences"][0]["caption"]) == ("first", "second")
+    ids, _ = graph(sections=[section(links=[{"url": IMG, "text": "img"}], images=[{"src": IMG}])])
+    assert (ids[IMG]["kind"], ids[f"image:{IMG}"]["kind"]) == ("external_ref", "image")
+
+
+# -- the real page, through the real parser (every section in scope, 5.1.0) ----
+
+@pytest.fixture(scope="module")
+def doge():
+    doc = parse_entry((FIXTURES / "doge.html").read_text(encoding="utf-8")).model_dump(
+        mode="json", exclude_none=True)
+    nodes, edges = build.build_nodes_and_edges(doc)
+    ids = {}
+    for n in nodes:
+        ids.setdefault(n["id"], {}).update(n)
+
+    def occ(*types, **match):
+        return [o for e in edges if e["type"] in types for o in e.get("occurrences", [])
                 if all(o.get(k) == v for k, v in match.items())]
-
-    def test_the_fixture_actually_has_the_sections_this_class_covers(self):
-        # Without this, lifting the deferral could be "proved" by a fixture
-        # that never had an Origin or Spread section in the first place.
-        kinds = {s["kind"] for s in self.doc["sections"]}
-        self.assertIn("origin", kinds)
-        self.assertIn("spread", kinds)
-
-    def test_every_narrative_section_is_its_own_frame_property(self):
-        frame = self.ids[self.doc["url"]]
-        for kind, prop in build.NARRATIVE_SECTION_PROPERTIES.items():
-            self.assertIn(prop, frame, kind)
-            self.assertTrue(frame[prop].strip(), kind)
-
-    def test_narrative_sections_are_not_repeated_in_section_texts(self):
-        frame = self.ids[self.doc["url"]]
-        for prop in build.NARRATIVE_SECTION_PROPERTIES.values():
-            for text in frame["section_texts"]:
-                self.assertNotIn(frame[prop], text, prop)
-
-    def test_every_non_narrative_section_with_text_is_kept(self):
-        expected = [s for s in self.live
-                    if s["kind"] not in build.NARRATIVE_SECTION_PROPERTIES
-                    and any(s.get("text"))]
-        self.assertTrue(expected)
-        self.assertEqual(len(self.ids[self.doc["url"]]["section_texts"]), len(expected))
-
-    def test_every_section_image_is_an_occurrence(self):
-        self.assertEqual(len(self.occurrences("hasImage", role="section")),
-                         sum(len(s.get("images", [])) for s in self.live))
-
-    def test_every_embedded_post_is_an_occurrence(self):
-        # Parser 1.6.0 captures embeds; the page has Instagram reels.
-        embeds = [e for s in self.live for e in s.get("embeds", [])]
-        self.assertTrue(embeds)
-        got = {(o["in_section"], o["site_name"])
-               for o in (self.occurrences("citesExternal")
-                         + self.occurrences("citesMediaFrame"))
-               if "site_name" in o and "in_section" in o}
-        for s in self.live:
-            for e in s.get("embeds", []):
-                self.assertIn((s["heading"], e["platform"]), got)
-
-    def test_every_section_link_carries_its_anchor_text(self):
-        # The count that the deferral suppressed: links inside Origin and
-        # Spread yielded their edge but no occurrence.
-        in_sections = [o for o in (self.occurrences("citesMediaFrame")
-                                   + self.occurrences("citesExternal"))
-                       if "in_section" in o]
-        headings = {o["in_section"] for o in in_sections}
-        for kind in ("origin", "spread"):
-            heading = next(s["heading"] for s in self.doc["sections"]
-                           if s["kind"] == kind)
-            self.assertIn(heading, headings, kind)
-
-    def test_every_reference_is_an_occurrence(self):
-        refs = (self.occurrences("citesMediaFrame") + self.occurrences("citesExternal"))
-        cited = [o for o in refs if "citation_text" in o or "citation_index" in o]
-        # An additional reference is a site name with NO section: since
-        # parser 1.6.0 an embedded post also carries a site name (its
-        # platform), but always inside a section.
-        named = [o for o in refs if "site_name" in o and "in_section" not in o]
-        self.assertEqual(len(cited), len(self.doc.get("external_references", [])))
-        self.assertEqual(len(named), len(self.doc.get("additional_references", [])))
-
-    def test_frame_fields(self):
-        frame = self.ids[self.doc["url"]]
-        for field in ("label", "category", "status", "year", "from", "about",
-                      "origin_text", "spread_text", "added", "last_updated"):
-            self.assertIn(field, frame, field)
-
-    def test_every_badge_becomes_an_edge(self):
-        self.assertEqual(len([e for e in self.edges if e["type"] == "hasBadge"]),
-                         len(self.doc.get("badges") or []))
-
-    def test_origin_becomes_an_edge_when_a_resolver_is_supplied(self):
-        # cls.edges (no resolver) already covers "from" staying a literal
-        # (test_frame_fields) and no hasOrigin edge without one
-        # (ConceptTests.test_no_origin_edge_without_a_resolver); this
-        # covers the real fixture's actual origin value end to end.
-        _, edges = build.build_nodes_and_edges(
-            self.doc, origin_resolver=lambda raw: raw.lower())
-        has_origin = [e for e in edges if e["type"] == "hasOrigin"]
-        self.assertEqual(len(has_origin), 1)
-        self.assertEqual(has_origin[0]["dst"], f"origin:{self.doc['origin'].lower()}")
+    return doc, ids[doc["url"]], edges, occ
 
 
-class DateRangeTests(unittest.TestCase):
-    """An interval, not a point — see date_range's docstring.
-
-    The lexical forms are asserted literally because morph-kgc must
-    reproduce them byte for byte from the CSV or the diff gate reports a
-    content divergence. This is the single most likely thing to break in
-    the event layer.
-    """
-
-    def test_each_precision_spans_its_own_unit(self):
-        self.assertEqual(build.date_range("2013-05-04", "day"),
-                         ("2013-05-04T00:00:00Z", "2013-05-04T23:59:59Z"))
-        self.assertEqual(build.date_range("2013-05", "month"),
-                         ("2013-05-01T00:00:00Z", "2013-05-31T23:59:59Z"))
-        self.assertEqual(build.date_range("2013", "year"),
-                         ("2013-01-01T00:00:00Z", "2013-12-31T23:59:59Z"))
-
-    def test_december_and_february_roll_over_correctly(self):
-        self.assertEqual(build.date_range("2013-12", "month")[1],
-                         "2013-12-31T23:59:59Z")
-        self.assertEqual(build.date_range("2024-02", "month")[1],
-                         "2024-02-29T23:59:59Z")       # a real leap year
-        self.assertEqual(build.date_range("2023-02", "month")[1],
-                         "2023-02-28T23:59:59Z")
-
-    def test_an_absent_or_inconsistent_date_emits_nothing(self):
-        for date, precision in ((None, "none"), ("", "day"), ("2013", "none"),
-                                ("2013", "day"), ("not a date", "year"),
-                                ("2013-05-04", None)):
-            with self.subTest(date=date, precision=precision):
-                self.assertEqual(build.date_range(date, precision), (None, None))
+def test_the_real_page_keeps_every_section(doge):
+    doc, frame, _, _ = doge
+    assert {"origin", "spread"} <= {s["kind"] for s in doc["sections"]}   # the fixture has what is covered
+    for kind, prop in build.NARRATIVE_SECTION_PROPERTIES.items():
+        assert frame[prop].strip(), kind
+        assert not [t for t in frame["section_texts"] if frame[prop] in t]
+    kept = [s for s in doc["sections"] if s["kind"] not in build.NARRATIVE_SECTION_PROPERTIES and any(s.get("text"))]
+    assert kept and len(frame["section_texts"]) == len(kept)
+    assert {"label", "category", "status", "year", "from", "about", "origin_text", "spread_text", "added",
+            "last_updated"} <= set(frame)
 
 
-class EventTests(unittest.TestCase):
-    EV = {
-        "event_id": "abc123def4-0011223344",
-        "sentences": [1],
-        "source_text": "The photo was posted to Tumblr on February 23rd, 2010.",
-        "source_section": "origin", "date": "2010-02-23",
-        "date_precision": "day", "date_text": "February 23rd, 2010",
-        "locations": ["Tumblr"], "location_type": "platform",
-        "certainty": "confirmed", "actors": ["Atsuko Sato"],
-        "model": "ministral-3:14b", "extraction_version": "1.0.0",
-    }
+def test_the_real_page_keeps_every_image_embed_link_and_reference(doge):
+    doc, _, edges, occ = doge
+    assert len(occ("hasImage", role="section")) == sum(len(s.get("images", [])) for s in doc["sections"])
+    embeds = [(s["heading"], e["platform"]) for s in doc["sections"] for e in s.get("embeds", [])]
+    got = {(o["in_section"], o["site_name"]) for o in occ("citesExternal", "citesMediaFrame")
+           if "site_name" in o and "in_section" in o}
+    assert embeds and set(embeds) <= got                   # parser 1.6.0: Instagram reels
+    headings = {o["in_section"] for o in occ("citesMediaFrame", "citesExternal") if "in_section" in o}
+    for kind in ("origin", "spread"):
+        assert next(s["heading"] for s in doc["sections"] if s["kind"] == kind) in headings
+    refs = occ("citesMediaFrame", "citesExternal")
+    # an embed also carries a site name, but always inside a section
+    assert len([o for o in refs if "citation_text" in o or "citation_index" in o]) == len(doc.get("external_references", []))
+    assert len([o for o in refs if "site_name" in o and "in_section" not in o]) == len(doc.get("additional_references", []))
+    assert len(typed(edges, "hasBadge")) == len(doc.get("badges") or [])
+    _, with_origin = build.build_nodes_and_edges(doc, origin_resolver=lambda raw: raw.lower())
+    assert [e["dst"] for e in typed(with_origin, "hasOrigin")] == [f"origin:{doc['origin'].lower()}"]
 
-    def build(self, events):
-        return build.build_nodes_and_edges(entry(), events=events)
 
-    def test_no_events_means_no_event_node_or_edge(self):
-        # Every existing caller passes nothing and must be unaffected.
-        nodes, edges = build.build_nodes_and_edges(entry())
-        self.assertEqual([n for n in nodes if n["kind"] == "event"], [])
-        self.assertEqual([e for e in edges if e["type"] == "hasEvent"], [])
+# -- event dates: intervals, asserted literally (morph-kgc must reproduce them) --
 
-    def test_one_event_becomes_one_node_and_one_edge(self):
-        nodes, edges = self.build([self.EV])
-        node = nodes_by_id(nodes)["event:abc123def4-0011223344"]
-        self.assertEqual(node["kind"], "event")
-        self.assertEqual(node["source_text"], self.EV["source_text"])
-        self.assertNotIn("summary", node)      # extraction 2.0.0: none
-        self.assertEqual(node["source_section"], "origin")
-        self.assertEqual(node["actors"], ["Atsuko Sato"])
-        self.assertEqual(node["extraction_model"], "ministral-3:14b")
-        self.assertEqual((node["date_start"], node["date_end"]),
-                         ("2010-02-23T00:00:00Z", "2010-02-23T23:59:59Z"))
-        e = the_edge(edges, "hasEvent", "event:abc123def4-0011223344")
-        self.assertEqual(e["src"], URL)
-        self.assertNotIn("occurrences", e)   # hasEvent is not an occurrence edge
+@pytest.mark.parametrize("date, precision, want", [
+    ("2013-05-04", "day", ("2013-05-04T00:00:00Z", "2013-05-04T23:59:59Z")),
+    ("2013-05", "month", ("2013-05-01T00:00:00Z", "2013-05-31T23:59:59Z")),
+    ("2013", "year", ("2013-01-01T00:00:00Z", "2013-12-31T23:59:59Z")),
+    ("2013-12", "month", ("2013-12-01T00:00:00Z", "2013-12-31T23:59:59Z")),
+    ("2024-02", "month", ("2024-02-01T00:00:00Z", "2024-02-29T23:59:59Z")),   # a leap year
+    ("2023-02", "month", ("2023-02-01T00:00:00Z", "2023-02-28T23:59:59Z")),
+    (None, "none", (None, None)), ("", "day", (None, None)), ("2013", "none", (None, None)),
+    ("2013", "day", (None, None)), ("not a date", "year", (None, None)), ("2013-05-04", None, (None, None)),
+])
+def test_a_date_is_the_interval_of_its_precision(date, precision, want):
+    assert build.date_range(date, precision) == want
 
-    def test_every_emitted_event_property_is_in_the_vocabulary(self):
-        nodes, _ = self.build([self.EV])
-        node = nodes_by_id(nodes)["event:abc123def4-0011223344"]
-        self.assertLessEqual(set(node) - {"id", "kind"},
-                             set(build.EVENT_PROPERTIES))
 
-    def test_attached_links_citations_embeds_and_photos_are_event_edges(self):
-        ev = dict(self.EV,
-                  links=[{"url": OTHER, "text": "Cheems", "kind": "link"},
+# -- events ---------------------------------------------------------------------
+
+EV = {"event_id": "abc123def4-0011223344", "sentences": [1],
+      "source_text": "The photo was posted to Tumblr on February 23rd, 2010.", "source_section": "origin",
+      "date": "2010-02-23", "date_precision": "day", "date_text": "February 23rd, 2010", "locations": ["Tumblr"],
+      "location_type": "platform", "certainty": "confirmed", "actors": ["Atsuko Sato"],
+      "model": "ministral-3:14b", "extraction_version": "1.0.0"}
+
+
+def from_event(edges, eid=EID):
+    return {(e["type"], e["dst"]) for e in edges if e["src"] == eid}
+
+
+def test_one_event_is_one_node_and_one_plain_edge():
+    ids, edges = graph(events=[EV])
+    node = ids[EID]
+    assert {k: node[k] for k in ("kind", "source_text", "source_section", "actors", "extraction_model",
+                                 "date_start", "date_end")} == {
+        "kind": "event", "source_text": EV["source_text"], "source_section": "origin", "actors": ["Atsuko Sato"],
+        "extraction_model": "ministral-3:14b", "date_start": "2010-02-23T00:00:00Z", "date_end": "2010-02-23T23:59:59Z"}
+    assert "summary" not in node and set(node) - {"id", "kind"} <= set(build.EVENT_PROPERTIES)
+    e = the_edge(edges, "hasEvent", EID)
+    assert e["src"] == URL and "occurrences" not in e
+    assert from_event(edges) == set()                      # no media: only its hasEvent edge
+
+
+def test_no_events_duplicate_or_id_less_events():
+    for events, n in (([], 0), ([EV, dict(EV)], 1), ([dict(EV, event_id=None)], 0)):
+        ids, edges = graph(events=events)
+        assert len([x for x in ids.values() if x["kind"] == "event"]) == n
+        assert len(typed(edges, "hasEvent")) == n
+
+
+def test_attached_media_are_event_edges_and_a_relative_date_points_at_its_anchor():
+    ev = dict(EV, links=[{"url": OTHER, "text": "Cheems", "kind": "link"},
                          {"url": EXTERNAL, "text": "[3]", "kind": "citation"}],
-                  embeds=[{"url": "https://www.tiktok.com/@a/video/1",
-                           "platform": "tiktok"}],
-                  images=[{"src": IMG, "caption": "the photo"}])
-        _, edges = self.build([ev])
-        eid = "event:abc123def4-0011223344"
-        got = {(e["type"], e["dst"]) for e in edges if e["src"] == eid}
-        self.assertEqual(got, {("eventLink", OTHER),
-                               ("eventCitation", EXTERNAL),
-                               ("eventEmbed", "https://www.tiktok.com/@a/video/1"),
-                               ("eventImage", f"image:{IMG}")})
-
-    def test_a_relative_date_points_at_the_event_it_was_counted_from(self):
-        anchor = dict(self.EV, event_id="anchor01-0000000000")
-        derived = dict(self.EV, event_id="derived1-1111111111",
-                       date_basis="relative", date_anchor="anchor01-0000000000")
-        nodes, edges = self.build([anchor, derived])
-        node = nodes_by_id(nodes)["event:derived1-1111111111"]
-        self.assertEqual(node["date_basis"], "relative")
-        self.assertIn(("eventDateAnchor", "event:anchor01-0000000000"),
-                      {(e["type"], e["dst"]) for e in edges
-                       if e["src"] == "event:derived1-1111111111"})
-
-    def story(self, events):
-        _, edges = self.build(events)
-        chain = {e["src"]: e["dst"] for e in edges if e["type"] == "nextInStory"}
-        heads = set(chain) - set(chain.values())
-        out = list(heads)
-        while out and out[-1] in chain:
-            out.append(chain[out[-1]])
-        return [n.split("-")[0].split(":")[1] for n in out], len(chain)
-
-    def ev(self, eid, section, sentences, date_text=None, text="x"):
-        return dict(self.EV, event_id=f"{eid}-0000000000", source_section=section,
-                    sentences=sentences, date_text=date_text, source_text=text)
-
-    def test_the_story_is_one_chain_origin_then_spread_in_page_order(self):
-        """Arrival order must not matter: spread's events before origin's,
-        and a later sentence before an earlier one."""
-        order, links = self.story([
-            self.ev("s2", "spread", [3]), self.ev("o1", "origin", [1]),
-            self.ev("s1", "spread", [1, 2]), self.ev("o2", "origin", [2, 3])])
-        self.assertEqual(order, ["o1", "o2", "s1", "s2"])
-        self.assertEqual(links, 3)
-
-    def test_two_events_of_one_sentence_follow_their_date_words(self):
-        text = "In April 2024, he posted memes, with one example on April 8th, 2024."
-        order, _ = self.story([
-            self.ev("b", "spread", [1], "April 8th, 2024", text),
-            self.ev("a", "spread", [1], "In April 2024", text)])
-        self.assertEqual(order, ["a", "b"])
-
-    def test_the_story_is_page_order_even_when_time_steps_back(self):
-        """spengbab: "But a month earlier, user russxl had posted ..." is
-        told after the December post and stays after it in the chain."""
-        order, _ = self.story([
-            dict(self.ev("dec", "origin", [2]), date="2006-12", date_precision="month"),
-            dict(self.ev("nov", "origin", [3]), date="2006-11", date_precision="month")])
-        self.assertEqual(order, ["dec", "nov"])
-
-    def test_one_event_or_a_repeated_id_makes_no_link(self):
-        self.assertEqual(self.story([self.EV])[1], 0)
-        self.assertEqual(self.story([self.EV, dict(self.EV)])[1], 0)
-
-    def test_story_sections_are_the_extractors(self):
-        from modules.kg import events
-        self.assertEqual(build.STORY_SECTIONS, events.SOURCE_SECTIONS)
-
-    def test_an_event_without_media_has_only_its_hasevent_edge(self):
-        _, edges = self.build([self.EV])
-        self.assertEqual([e["type"] for e in edges
-                          if e["src"].startswith("event:")], [])
-
-    def test_an_undated_event_emits_no_start_or_end(self):
-        # morph-kgc emits nothing for an empty cell; neither may this.
-        undated = dict(self.EV, date=None, date_precision="none")
-        nodes, _ = self.build([undated])
-        node = nodes_by_id(nodes)["event:abc123def4-0011223344"]
-        self.assertNotIn("date_start", node)
-        self.assertNotIn("date_end", node)
-        self.assertEqual(node["date_precision"], "none")
-
-    def test_a_duplicate_event_id_yields_one_edge(self):
-        _, edges = self.build([self.EV, dict(self.EV)])
-        self.assertEqual(
-            len([e for e in edges if e["type"] == "hasEvent"]), 1)
-
-    def test_an_event_without_an_id_is_skipped(self):
-        nodes, edges = self.build([dict(self.EV, event_id=None)])
-        self.assertEqual([n for n in nodes if n["kind"] == "event"], [])
-        self.assertEqual([e for e in edges if e["type"] == "hasEvent"], [])
-
-    def test_events_do_not_disturb_the_rest_of_the_graph(self):
-        plain, plain_edges = build.build_nodes_and_edges(entry(tags=["shiba"]))
-        withev, withev_edges = build.build_nodes_and_edges(
-            entry(tags=["shiba"]), events=[self.EV])
-        self.assertEqual([n for n in withev if n["kind"] != "event"], plain)
-        self.assertEqual([e for e in withev_edges if e["type"] != "hasEvent"],
-                         plain_edges)
+              embeds=[{"url": TIKTOK, "platform": "tiktok"}], images=[{"src": IMG, "caption": "the photo"}])
+    assert from_event(graph(events=[ev])[1]) == {("eventLink", OTHER), ("eventCitation", EXTERNAL),
+                                                 ("eventEmbed", TIKTOK), ("eventImage", f"image:{IMG}")}
+    anchor = dict(EV, event_id="anchor01-0000000000")
+    derived = dict(EV, event_id="derived1-1111111111", date_basis="relative", date_anchor="anchor01-0000000000")
+    ids, edges = graph(events=[anchor, derived])
+    assert ids["event:derived1-1111111111"]["date_basis"] == "relative"
+    assert ("eventDateAnchor", "event:anchor01-0000000000") in from_event(edges, "event:derived1-1111111111")
 
 
-class EntityTests(unittest.TestCase):
-    """6.1.0: Wikidata links from the title, tags and About, passed in as
-    data (modules/entity_store.links_for) exactly as events are."""
-
-    SHIBA = {"field": "about", "text": "Shiba Inus", "qid": "Q39315",
-             "label": "Shiba Inu", "description": "dog breed", "score": 0.83,
-             "method": "ner", "ner_label": "ORG"}
-    DOGE = {"field": "title", "text": "Doge", "qid": "Q15894956",
-            "label": "Doge", "description": "Internet meme", "score": 1.0,
-            "method": "kym_id"}
-
-    def build(self, entities):
-        return build.build_nodes_and_edges(entry(), entities=entities)
-
-    def test_no_entities_means_no_entity_node_or_edge(self):
-        nodes, edges = build.build_nodes_and_edges(entry())
-        self.assertEqual([n for n in nodes if n["kind"] == "wikidata_entity"], [])
-        self.assertEqual({e["type"] for e in edges}
-                         & set(build.ENTITY_FIELD_EDGES.values()), set())
-
-    def test_a_link_becomes_a_shared_node_and_a_field_named_edge(self):
-        nodes, edges = self.build([self.SHIBA])
-        node = nodes_by_id(nodes)["wd:Q39315"]
-        self.assertEqual(node, {"id": "wd:Q39315", "kind": "wikidata_entity",
-                                "qid": "Q39315", "label": "Shiba Inu",
-                                "description": "dog breed"})
-        e = the_edge(edges, "fromAbout", "wd:Q39315")
-        self.assertEqual(e["src"], URL)
-        self.assertEqual(e["occurrences"], [{
-            "mention_text": "Shiba Inus", "link_score": 0.83,
-            "link_method": "ner", "ner_label": "ORG"}])
-
-    def test_a_kept_link_says_why_it_was_kept(self):
-        # 6.5.0: kg_store hands in only curated links, each with its basis
-        _, edges = self.build([dict(self.SHIBA, relevance_basis="judge")])
-        e = the_edge(edges, "fromAbout", "wd:Q39315")
-        self.assertEqual(e["occurrences"][0]["relevance_basis"], "judge")
-
-    def test_each_field_has_its_own_edge_type(self):
-        tag = dict(self.SHIBA, field="tag", text="shiba inu", method="tag",
-                   ner_label=None)
-        _, edges = self.build([self.DOGE, tag, self.SHIBA])
-        got = {(e["type"], e["dst"]) for e in edges
-               if e["type"] in build.ENTITY_FIELD_EDGES.values()}
-        self.assertEqual(got, {("fromTitle", "wd:Q15894956"),
-                               ("fromTags", "wd:Q39315"),
-                               ("fromAbout", "wd:Q39315")})
-
-    def test_repeated_mentions_are_one_edge_with_every_occurrence(self):
-        again = dict(self.SHIBA, text="Shiba Inu", score=0.9)
-        _, edges = self.build([self.SHIBA, again])
-        e = the_edge(edges, "fromAbout", "wd:Q39315")
-        self.assertEqual([o["mention_text"] for o in e["occurrences"]],
-                         ["Shiba Inus", "Shiba Inu"])
-
-    def test_an_absent_ner_label_is_not_stored(self):
-        _, edges = self.build([self.DOGE])
-        (occ,) = the_edge(edges, "fromTitle", "wd:Q15894956")["occurrences"]
-        self.assertNotIn("ner_label", occ)
-        self.assertEqual(occ["link_method"], "kym_id")
-
-    def test_a_link_without_a_qid_or_a_known_field_is_skipped(self):
-        nodes, edges = self.build([dict(self.SHIBA, qid=None),
-                                   dict(self.SHIBA, field="spread")])
-        self.assertEqual([n for n in nodes if n["kind"] == "wikidata_entity"], [])
-
-    def test_entities_do_not_disturb_the_rest_of_the_graph(self):
-        plain, plain_edges = build.build_nodes_and_edges(entry(tags=["shiba"]))
-        withent, withent_edges = build.build_nodes_and_edges(
-            entry(tags=["shiba"]), entities=[self.SHIBA, self.DOGE])
-        self.assertEqual([n for n in withent if n["kind"] != "wikidata_entity"],
-                         plain)
-        self.assertEqual([e for e in withent_edges if e["type"]
-                          not in build.ENTITY_FIELD_EDGES.values()], plain_edges)
-
-    def test_emitted_occurrence_fields_stay_in_the_vocabulary(self):
-        _, edges = self.build([self.SHIBA, self.DOGE])
-        for e in edges:
-            for occ in e.get("occurrences") or ():
-                self.assertIn(e["type"], build.OCCURRENCE_EDGE_TYPES)
-                self.assertLessEqual(set(occ), set(build.OCCURRENCE_FIELDS))
+def test_an_undated_event_emits_no_interval():
+    node = graph(events=[dict(EV, date=None, date_precision="none")])[0][EID]
+    assert "date_start" not in node and "date_end" not in node and node["date_precision"] == "none"
 
 
-class KeptAddressTests(unittest.TestCase):
-    """Gap 14: links to an address that holds another address's entry go
-    to the kept address — pages still link /memes/doge after KYM moved Doge
-    to /sensitive/memes/doge."""
-    SENS = "https://knowyourmeme.com/sensitive/memes/doge"
-    OLD_PARENT = "https://knowyourmeme.com/memes/old-parent"
-
-    def build(self, **over):
-        return build.build_nodes_and_edges(
-            entry(**over), kept_address={URL: self.SENS, self.OLD_PARENT: PARENT})
-
-    def test_series_parent_and_page_links_reach_the_kept_address(self):
-        child = "https://knowyourmeme.com/memes/swole-doge"
-        _, edges = build.build_nodes_and_edges(
-            entry(url=child, series_parent=URL,
-                  sections=[section(links=[{"url": URL, "text": "Doge"},
-                                           {"url": self.OLD_PARENT, "text": "p"}])]),
-            kept_address={URL: self.SENS, self.OLD_PARENT: PARENT})
-        got = edge_set(edges)
-        self.assertIn((child, "partOfSeries", self.SENS), got)
-        self.assertIn((child, "citesMediaFrame", PARENT), got)
-        self.assertFalse([e for e in edges if e["dst"] in (URL, self.OLD_PARENT)])
-        # The kept address is the series parent, so it is not also a citation.
-        self.assertNotIn((child, "citesMediaFrame", self.SENS), got)
-
-    def test_a_link_to_its_own_other_address_is_a_self_link(self):
-        _, edges = build.build_nodes_and_edges(
-            entry(url=self.SENS, series_parent=URL,
-                  sections=[section(links=[{"url": URL, "text": "Doge"}])]),
-            kept_address={URL: self.SENS})
-        self.assertFalse([e for e in edges if e["type"] in ("partOfSeries", "citesMediaFrame")])
-
-    def test_event_links_reach_the_kept_address(self):
-        ev = dict(EventTests.EV, links=[{"url": URL, "text": "Doge", "kind": "link"}])
-        _, edges = build.build_nodes_and_edges(
-            entry(url=OTHER), events=[ev], kept_address={URL: self.SENS})
-        self.assertIn(("event:abc123def4-0011223344", "eventLink", self.SENS), edge_set(edges))
-
-    def test_the_kept_frame_lists_the_addresses_it_absorbed(self):
-        nodes, _ = build.build_nodes_and_edges(entry(url=self.SENS), also_at=[URL])
-        self.assertEqual(nodes_by_id(nodes)[self.SENS]["also_at"], [URL])
-        nodes, _ = build.build_nodes_and_edges(entry())
-        self.assertNotIn("also_at", nodes_by_id(nodes)[URL])
+def story(events):
+    chain = {e["src"]: e["dst"] for e in typed(graph(events=events)[1], "nextInStory")}
+    out = list(set(chain) - set(chain.values()))
+    while out and out[-1] in chain:
+        out.append(chain[out[-1]])
+    return [n.split("-")[0].split(":")[1] for n in out], len(chain)
 
 
-class StubNodeTests(unittest.TestCase):
-    def test_category_guessed_from_the_path(self):
-        self.assertEqual(
-            build.guess_stub_node("https://knowyourmeme.com/memes/people/x")["category"],
-            "person")
-        self.assertEqual(
-            build.guess_stub_node("https://knowyourmeme.com/memes/events/x")["category"],
-            "event")
-        self.assertEqual(
-            build.guess_stub_node("https://knowyourmeme.com/memes/x")["category"],
-            "meme")
-
-    def test_more_specific_prefix_wins(self):
-        self.assertEqual(
-            build.guess_stub_node(
-                "https://knowyourmeme.com/memes/subcultures/x")["category"],
-            "subculture")
-
-    def test_unknown_path_guesses_nothing_rather_than_guessing_wrong(self):
-        self.assertIsNone(
-            build.guess_stub_node("https://knowyourmeme.com/photos/1")["category"])
-
-    def test_shape_matches_what_build_emits_inline(self):
-        nodes, _ = build.build_nodes_and_edges(entry(series_parent=PARENT))
-        self.assertEqual(nodes_by_id(nodes)[PARENT], build.guess_stub_node(PARENT))
+def told(eid, section, sentences, date_text=None, text="x", **over):
+    return dict(EV, event_id=f"{eid}-0000000000", source_section=section, sentences=sentences,
+                date_text=date_text, source_text=text, **over)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+@pytest.mark.parametrize("events, order, n_links", [
+    # arrival order does not matter: spread before origin, a later sentence first
+    ([told("s2", "spread", [3]), told("o1", "origin", [1]), told("s1", "spread", [1, 2]),
+      told("o2", "origin", [2, 3])], ["o1", "o2", "s1", "s2"], 3),
+    ([told("b", "spread", [1], "April 8th, 2024", "In April 2024, he posted memes, with one example on April 8th, 2024."),
+      told("a", "spread", [1], "In April 2024", "In April 2024, he posted memes, with one example on April 8th, 2024.")],
+     ["a", "b"], 1),                                    # two events of one sentence: their date words
+    # spengbab: "a month earlier" is told after the December post and stays after it
+    ([told("dec", "origin", [2], date="2006-12", date_precision="month"),
+      told("nov", "origin", [3], date="2006-11", date_precision="month")], ["dec", "nov"], 1),
+    ([EV], [], 0), ([EV, dict(EV)], [], 0),            # one event, or a repeated id: no link
+])
+def test_the_story_is_one_chain_in_page_order(events, order, n_links):
+    got, links_ = story(events)
+    assert links_ == n_links and (not order or got == order)
+
+
+def test_events_and_entities_do_not_disturb_the_rest_of_the_graph():
+    plain_nodes, plain_edges = build.build_nodes_and_edges(entry(tags=["shiba"]))
+    nodes, edges = build.build_nodes_and_edges(entry(tags=["shiba"]), events=[EV])
+    assert [n for n in nodes if n["kind"] != "event"] == plain_nodes
+    assert [e for e in edges if e["type"] != "hasEvent"] == plain_edges
+    nodes, edges = build.build_nodes_and_edges(entry(tags=["shiba"]), entities=[SHIBA, DOGE])
+    assert [n for n in nodes if n["kind"] != "wikidata_entity"] == plain_nodes
+    assert [e for e in edges if e["type"] not in build.ENTITY_FIELD_EDGES.values()] == plain_edges
+
+
+# -- Wikidata entities (6.1.0), data like events ----------------------------------
+
+SHIBA = {"field": "about", "text": "Shiba Inus", "qid": "Q39315", "label": "Shiba Inu",
+         "description": "dog breed", "score": 0.83, "method": "ner", "ner_label": "ORG"}
+DOGE = {"field": "title", "text": "Doge", "qid": "Q15894956", "label": "Doge",
+        "description": "Internet meme", "score": 1.0, "method": "kym_id"}
+
+
+def test_no_entities_means_no_entity_node_or_edge():
+    ids, edges = graph()
+    assert not [n for n in ids.values() if n["kind"] == "wikidata_entity"]
+    assert not {e["type"] for e in edges} & set(build.ENTITY_FIELD_EDGES.values())
+
+
+def test_a_link_is_a_shared_node_and_a_field_named_edge_with_its_occurrences():
+    ids, edges = graph(entities=[dict(SHIBA, relevance_basis="judge"), dict(SHIBA, text="Shiba Inu", score=0.9)])
+    assert ids["wd:Q39315"] == {"id": "wd:Q39315", "kind": "wikidata_entity", "qid": "Q39315",
+                                "label": "Shiba Inu", "description": "dog breed"}
+    e = the_edge(edges, "fromAbout", "wd:Q39315")
+    assert e["src"] == URL
+    assert e["occurrences"] == [   # 6.5.0: a kept link says why it was kept
+        {"mention_text": "Shiba Inus", "link_score": 0.83, "link_method": "ner", "ner_label": "ORG",
+         "relevance_basis": "judge"},
+        {"mention_text": "Shiba Inu", "link_score": 0.9, "link_method": "ner", "ner_label": "ORG"}]
+
+
+def test_each_field_has_its_own_edge_type_and_an_absent_label_is_not_stored():
+    tag = dict(SHIBA, field="tag", text="shiba inu", method="tag", ner_label=None)
+    _, edges = graph(entities=[DOGE, tag, SHIBA])
+    assert {(e["type"], e["dst"]) for e in typed(edges, *build.ENTITY_FIELD_EDGES.values())} == {
+        ("fromTitle", "wd:Q15894956"), ("fromTags", "wd:Q39315"), ("fromAbout", "wd:Q39315")}
+    [occ] = the_edge(edges, "fromTitle", "wd:Q15894956")["occurrences"]
+    assert "ner_label" not in occ and occ["link_method"] == "kym_id"
+
+
+def test_a_link_without_a_qid_or_a_known_field_is_skipped():
+    ids, _ = graph(entities=[dict(SHIBA, qid=None), dict(SHIBA, field="spread")])
+    assert not [n for n in ids.values() if n["kind"] == "wikidata_entity"]
+
+
+# -- one entry, one address (gap 14) -------------------------------------------------
+
+def test_links_to_a_dropped_address_reach_the_kept_one():
+    child, old_parent = "https://knowyourmeme.com/memes/swole-doge", "https://knowyourmeme.com/memes/old-parent"
+    _, edges = graph(url=child, series_parent=URL, sections=[section(links=[
+        {"url": URL, "text": "Doge"}, {"url": old_parent, "text": "p"}])],
+        kept_address={URL: SENS, old_parent: PARENT})
+    got = edge_set(edges)
+    assert {(child, "partOfSeries", SENS), (child, "citesMediaFrame", PARENT)} <= got
+    assert not [e for e in edges if e["dst"] in (URL, old_parent)]
+    assert (child, "citesMediaFrame", SENS) not in got     # the parent is not also a citation
+    # a link to its own other address is a self-link
+    _, edges = graph(url=SENS, series_parent=URL, sections=links(URL, text="Doge"), kept_address={URL: SENS})
+    assert not typed(edges, "partOfSeries", "citesMediaFrame")
+    _, edges = graph(url=OTHER, events=[dict(EV, links=[{"url": URL, "text": "Doge", "kind": "link"}])],
+                     kept_address={URL: SENS})
+    assert (EID, "eventLink", SENS) in edge_set(edges)
+
+
+def test_the_kept_frame_lists_the_addresses_it_absorbed():
+    assert graph(url=SENS, also_at=[URL])[0][SENS]["also_at"] == [URL]

@@ -648,11 +648,11 @@ reads like the paper's Kypher; in RDF it is `wdt:P31`.
 | The mapping and `rdf.py` emit exactly the same predicates, classes and source CSVs, compared as full IRIs | `tests/test_kg_vocabulary.py` |
 | Every `mk:` term that can be emitted is declared in `memeatlas.ttl`, and nothing is declared that is not emitted | `tests/test_kg_vocabulary.py` |
 | The IMKG terms are used, and no `mk:` term shadows one | `tests/test_kg_vocabulary.py` |
-| Every field the parser extracts from a real page reaches the graph | `tests/test_kg_build.py::FullRecordTests` |
+| Every field the parser extracts from a real page reaches the graph | `tests/test_kg_build.py` (`test_the_real_page_*`) |
 | The two derivations produce the same triples on real data | `kym_kg_validate` |
 | `sem:` is aligned to in the ontology and never emitted | `tests/test_kg_vocabulary.py` |
 | An event's `source_text` is really in the section the model saw; its date matches its precision | `tests/test_kg_events.py` |
-| Every sentence of Origin and Spread is in an event (extraction 4.0.0) | `tests/test_kg_events.py` (`CoverageTests`), and `audit()` refuses any record with a gap |
+| Every sentence of Origin and Spread is in an event (extraction 4.0.0) | `tests/test_kg_events.py` (`test_what_joins_an_event`), and `audit()` refuses any record with a gap |
 | A re-extraction replaces a section's events, never merges them; a failing section is not retried until something changes | `tests/test_event_store.py` |
 | The lexicon keeps exactly what the filter says (no disambiguation pages; KYM-slug items kept without sitelinks; `mul` labels count) and frames join on P13484 | `tests/test_kg_wikidata.py` |
 | Every entity mention is the page's own words at its offsets; the KYM-slug item wins; context separates senses; an NER label never vetoes | `tests/test_kg_entities.py` |

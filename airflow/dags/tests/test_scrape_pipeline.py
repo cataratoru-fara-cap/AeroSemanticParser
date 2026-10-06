@@ -1,37 +1,32 @@
-"""Smoke tests for scrapingant_client + dom_store (no network, no Mongo).
-
-sys.path and the DOM_COMPRESSION default come from tests/conftest.py.
-"""
-import types
-import unittest
+"""scrapingant_client + dom_store: fetching (no network) and the stored pages
+(mongomock), including one entry, one address (gap 14)."""
 from datetime import datetime, timedelta, timezone
-from unittest import mock
 
-import mongomock
+import pytest
+import requests
 
-from modules import scrapingant_client as sac
+from helpers import mock_store, serving
 from modules import dom_store
+from modules import scrapingant_client as sac
 
 BIG_HTML = "<html><body>" + "meme " * 2000 + "</body></html>"
+FAST = sac.ScrapeConfig(api_key="k", max_attempts=3, backoff_base_s=0.001, backoff_max_s=0.002, request_delay_s=0)
+A, B, C = "https://kym/a", "https://kym/b", "https://kym/c"
 
 
 class FakeResponse:
     def __init__(self, status, text="", ctype="text/html; charset=utf-8"):
-        self.status_code = status
-        self.text = text
-        self.headers = {"Content-Type": ctype}
-        self.encoding = "utf-8"
+        self.status_code, self.text, self.headers, self.encoding = status, text, {"Content-Type": ctype}, "utf-8"
 
     def json(self):
         return {"detail": self.text}
 
 
 class FakeSession:
-    """Yields queued responses; records how many calls were made."""
+    """Serves queued responses (or raises queued exceptions) and records the calls."""
+
     def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls = 0
-        self.seen_params = []
+        self.responses, self.calls, self.seen_params = list(responses), 0, []
 
     def get(self, endpoint, params=None, headers=None, timeout=None):
         self.calls += 1
@@ -42,230 +37,148 @@ class FakeSession:
         return r
 
 
-FAST = sac.ScrapeConfig(api_key="k", max_attempts=3,
-                        backoff_base_s=0.001, backoff_max_s=0.002,
-                        request_delay_s=0)
+# -- the client --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("responses, ok, kind, attempts, calls", [
+    ([FakeResponse(200, BIG_HTML)], True, None, 1, 1),
+    ([FakeResponse(404, "gone")], False, "permanent", 1, 1),                    # one attempt
+    ([FakeResponse(409, "busy"), FakeResponse(200, BIG_HTML)], True, None, 2, 2),
+    ([FakeResponse(423, "blocked")] * 3, False, "retryable", 3, 3),              # retries exhausted
+    ([FakeResponse(200, "<html></html>"), FakeResponse(200, BIG_HTML)], True, None, 2, 2),   # a thin body
+    ([requests.ConnectionError("boom"), FakeResponse(200, BIG_HTML)], True, None, 2, 2),     # transport error
+])
+def test_fetching(responses, ok, kind, attempts, calls):
+    s = FakeSession(responses)
+    r = sac.fetch_html(s, "https://kym/x", FAST)
+    assert (r.ok, r.error_kind, r.attempts_used, s.calls) == (ok, kind, attempts, calls)
+    assert s.seen_params[0]["browser"] == "false"
 
 
-class ClientTests(unittest.TestCase):
-    def test_ok_first_try_sends_browser_false(self):
-        s = FakeSession([FakeResponse(200, BIG_HTML)])
-        r = sac.fetch_html(s, "https://kym/x", FAST)
-        self.assertTrue(r.ok)
-        self.assertEqual(r.attempts_used, 1)
-        self.assertEqual(s.seen_params[0]["browser"], "false")
-
-    def test_404_is_permanent_single_attempt(self):
-        s = FakeSession([FakeResponse(404, "gone")])
-        r = sac.fetch_html(s, "https://kym/x", FAST)
-        self.assertFalse(r.ok)
-        self.assertEqual(r.error_kind, "permanent")
-        self.assertEqual(s.calls, 1)
-
-    def test_409_then_200_retries(self):
-        s = FakeSession([FakeResponse(409, "busy"), FakeResponse(200, BIG_HTML)])
-        r = sac.fetch_html(s, "https://kym/x", FAST)
-        self.assertTrue(r.ok)
-        self.assertEqual(r.attempts_used, 2)
-
-    def test_exhausted_retries_marked_retryable(self):
-        s = FakeSession([FakeResponse(423, "blocked")] * 3)
-        r = sac.fetch_html(s, "https://kym/x", FAST)
-        self.assertFalse(r.ok)
-        self.assertEqual(r.error_kind, "retryable")
-        self.assertEqual(s.calls, 3)
-
-    def test_403_raises_auth(self):
-        s = FakeSession([FakeResponse(403, "bad key")])
-        with self.assertRaises(sac.ScrapingAntAuthError):
-            sac.fetch_html(s, "https://kym/x", FAST)
-
-    def test_thin_body_retried_then_ok(self):
-        s = FakeSession([FakeResponse(200, "<html></html>"),
-                         FakeResponse(200, BIG_HTML)])
-        r = sac.fetch_html(s, "https://kym/x", FAST)
-        self.assertTrue(r.ok)
-        self.assertEqual(r.attempts_used, 2)
-
-    def test_transport_error_retried(self):
-        import requests as rq
-        s = FakeSession([rq.ConnectionError("boom"), FakeResponse(200, BIG_HTML)])
-        r = sac.fetch_html(s, "https://kym/x", FAST)
-        self.assertTrue(r.ok)
+def test_403_is_an_auth_error():
+    with pytest.raises(sac.ScrapingAntAuthError):
+        sac.fetch_html(FakeSession([FakeResponse(403, "bad key")]), "https://kym/x", FAST)
 
 
-def fresh_store():
-    client = mongomock.MongoClient()
-    store = dom_store.DomStore.__new__(dom_store.DomStore)
-    store.client = client
-    store.db = client["memes"]
-    store.urls = store.db["urls"]
-    store.doms = store.db["doms"]
-    store.compression = "zlib"
-    return store
+# -- the store -----------------------------------------------------------------------------
+
+@pytest.fixture
+def store():
+    s = mock_store(dom_store.DomStore)
+    s.urls.insert_many([
+        {"url": A, "Confirmed": True, "namespace": "memes", "lastmod": "2026-01-01", "last_scraped": None},
+        {"url": B, "Confirmed": True, "namespace": "memes", "lastmod": None, "last_scraped": None},
+        {"url": C, "Confirmed": False, "namespace": "events", "lastmod": None, "last_scraped": None}])
+    return s
 
 
-class StoreTests(unittest.TestCase):
-    def setUp(self):
-        self.store = fresh_store()
-        self.store.urls.insert_many([
-            {"url": "https://kym/a", "Confirmed": True, "namespace": "memes",
-             "lastmod": "2026-01-01", "last_scraped": None},
-            {"url": "https://kym/b", "Confirmed": True, "namespace": "memes",
-             "lastmod": None, "last_scraped": None},
-            {"url": "https://kym/c", "Confirmed": False, "namespace": "events",
-             "lastmod": None, "last_scraped": None},
-        ])
-
-    def test_roundtrip_compression_and_last_scraped(self):
-        self.store.save_result(url="https://kym/a", ok=True, html=BIG_HTML,
-                               status_code=200)
-        self.assertEqual(self.store.load_html("https://kym/a"), BIG_HTML)
-        doc = self.store.doms.find_one({"url": "https://kym/a"})
-        self.assertEqual(doc["encoding"], "zlib")
-        self.assertLess(len(bytes(doc["html"])), len(BIG_HTML))  # did compress
-        urec = self.store.urls.find_one({"url": "https://kym/a"})
-        self.assertIsNotNone(urec["last_scraped"])
-
-    def test_selection_buckets_and_confirmed_filter(self):
-        pending = self.store.select_pending()
-        self.assertEqual(set(pending), {"https://kym/a", "https://kym/b"})
-        pending_all = self.store.select_pending(confirmed_only=False)
-        self.assertIn("https://kym/c", pending_all)
-
-    def test_failed_retryable_requeued_until_cap(self):
-        for _ in range(2):
-            self.store.save_result(url="https://kym/b", ok=False,
-                                   error="503: hiccup", error_kind="retryable")
-        self.assertIn("https://kym/b", self.store.select_pending(max_failed_attempts=3))
-        self.store.save_result(url="https://kym/b", ok=False,
-                               error="503: hiccup", error_kind="retryable")
-        self.assertNotIn("https://kym/b", self.store.select_pending(max_failed_attempts=3))
-
-    def test_permanent_failure_never_requeued(self):
-        self.store.save_result(url="https://kym/b", ok=False,
-                               error="404: gone", error_kind="permanent")
-        self.assertNotIn("https://kym/b", self.store.select_pending())
-
-    def test_failed_refetch_keeps_good_dom(self):
-        self.store.save_result(url="https://kym/a", ok=True, html=BIG_HTML)
-        outcome = self.store.save_result(url="https://kym/a", ok=False,
-                                         error="503", error_kind="retryable")
-        self.assertEqual(outcome, "kept_ok")
-        doc = self.store.doms.find_one({"url": "https://kym/a"})
-        self.assertEqual(doc["scrape_status"], "ok")
-        self.assertEqual(self.store.load_html("https://kym/a"), BIG_HTML)
-
-    def test_lastmod_staleness_triggers_requeue(self):
-        old = datetime(2025, 12, 1, tzinfo=timezone.utc)
-        self.store.save_result(url="https://kym/a", ok=True, html=BIG_HTML,
-                               fetched_at=old)
-        pending = self.store.select_pending()  # lastmod 2026-01-01 > fetched
-        self.assertIn("https://kym/a", pending)
-        self.store.save_result(url="https://kym/a", ok=True, html=BIG_HTML)
-        self.assertNotIn("https://kym/a", self.store.select_pending())
-
-    def test_refetch_window(self):
-        old = datetime.now(timezone.utc) - timedelta(days=90)
-        self.store.save_result(url="https://kym/b", ok=True, html=BIG_HTML,
-                               fetched_at=old)
-        self.assertNotIn("https://kym/b",
-                         self.store.select_pending(refetch_older_than_days=0))
-        self.assertIn("https://kym/b",
-                      self.store.select_pending(refetch_older_than_days=30))
-
-    def test_iter_html_for_carries_the_fetch_time(self):
-        # Parser 1.7.0: an entry's scraped_at is when its stored page was
-        # fetched. Before, nothing passed it and scraped_at was always empty.
-        when = datetime(2026, 7, 9, 23, 47, 44, tzinfo=timezone.utc)
-        self.store.save_result(url="https://kym/a", ok=True, html=BIG_HTML,
-                               fetched_at=when)
-        with mock.patch.object(dom_store, "get_store", return_value=self.store):
-            (url, html, sha, fetched_at), = list(dom_store.iter_html_for(["https://kym/a"]))
-        self.assertEqual((url, html, fetched_at), ("https://kym/a", BIG_HTML, when))
-        self.assertEqual(sha, self.store.doms.find_one({"url": url})["content_sha256"])
-
-    def test_filter_unscraped(self):
-        self.store.save_result(url="https://kym/a", ok=True, html=BIG_HTML)
-        chunk = ["https://kym/a", "https://kym/b"]
-        self.assertEqual(self.store.filter_unscraped(chunk), ["https://kym/b"])
-
-    def test_glue_path_fetchresult_as_doc(self):
-        """The exact DAG glue: iter_fetch -> as_doc -> save_result."""
-        s = FakeSession([FakeResponse(200, BIG_HTML), FakeResponse(404, "gone")])
-        tallies = {"ok": 0, "failed": 0, "kept_ok": 0}
-        for r in sac.iter_fetch(s, ["https://kym/a", "https://kym/b"], FAST):
-            tallies[self.store.save_result(**r.as_doc())] += 1
-        self.assertEqual(tallies, {"ok": 1, "failed": 1, "kept_ok": 0})
-        self.assertEqual(self.store.stats()["doms_ok"], 1)
-        self.assertEqual(self.store.stats()["failed_permanent"], 1)
+def test_a_page_round_trips_compressed_and_stamps_last_scraped(store):
+    store.save_result(url=A, ok=True, html=BIG_HTML, status_code=200)
+    doc = store.doms.find_one({"url": A})
+    assert store.load_html(A) == BIG_HTML and doc["encoding"] == "zlib" and len(bytes(doc["html"])) < len(BIG_HTML)
+    assert store.urls.find_one({"url": A})["last_scraped"] is not None
 
 
+def test_selection_buckets_and_the_confirmed_filter(store):
+    assert set(store.select_pending()) == {A, B} and C in store.select_pending(confirmed_only=False)
 
-def entry_page(address: str, title: str) -> str:
+
+def test_failures_retryable_until_the_cap_permanent_never(store):
+    for _ in range(2):
+        store.save_result(url=B, ok=False, error="503: hiccup", error_kind="retryable")
+    assert B in store.select_pending(max_failed_attempts=3)
+    store.save_result(url=B, ok=False, error="503: hiccup", error_kind="retryable")
+    assert B not in store.select_pending(max_failed_attempts=3)
+    store.save_result(url=A, ok=False, error="404: gone", error_kind="permanent")
+    assert A not in store.select_pending()
+
+
+def test_a_failed_refetch_keeps_the_good_dom(store):
+    store.save_result(url=A, ok=True, html=BIG_HTML)
+    assert store.save_result(url=A, ok=False, error="503", error_kind="retryable") == "kept_ok"
+    assert store.doms.find_one({"url": A})["scrape_status"] == "ok" and store.load_html(A) == BIG_HTML
+
+
+def test_staleness_by_lastmod_and_by_refetch_window(store):
+    store.save_result(url=A, ok=True, html=BIG_HTML, fetched_at=datetime(2025, 12, 1, tzinfo=timezone.utc))
+    assert A in store.select_pending()                      # lastmod 2026-01-01 > fetched
+    store.save_result(url=A, ok=True, html=BIG_HTML)
+    assert A not in store.select_pending()
+    store.save_result(url=B, ok=True, html=BIG_HTML, fetched_at=datetime.now(timezone.utc) - timedelta(days=90))
+    assert B not in store.select_pending(refetch_older_than_days=0)
+    assert B in store.select_pending(refetch_older_than_days=30)
+
+
+def test_iter_html_for_carries_the_fetch_time(store):
+    # parser 1.7.0: an entry's scraped_at is when its stored page was fetched
+    when = datetime(2026, 7, 9, 23, 47, 44, tzinfo=timezone.utc)
+    store.save_result(url=A, ok=True, html=BIG_HTML, fetched_at=when)
+    with serving(dom_store, store):
+        [(url, html, sha, fetched_at)] = list(dom_store.iter_html_for([A]))
+    assert (url, html, fetched_at, sha) == (A, BIG_HTML, when, store.doms.find_one({"url": A})["content_sha256"])
+
+
+def test_filter_unscraped_and_the_dag_glue(store):
+    store.save_result(url=A, ok=True, html=BIG_HTML)
+    assert store.filter_unscraped([A, B]) == [B]
+    # iter_fetch -> as_doc -> save_result, as the DAG does
+    tallies = {"ok": 0, "failed": 0, "kept_ok": 0}
+    for r in sac.iter_fetch(FakeSession([FakeResponse(200, BIG_HTML), FakeResponse(404, "gone")]), [A, B], FAST):
+        tallies[store.save_result(**r.as_doc())] += 1
+    assert tallies == {"ok": 1, "failed": 1, "kept_ok": 0}
+    assert (store.stats()["doms_ok"], store.stats()["failed_permanent"]) == (1, 1)
+
+
+# -- one entry, one address (gap 14) ----------------------------------------------------------
+
+PUB, SENS = "https://knowyourmeme.com/memes/doge", "https://knowyourmeme.com/sensitive/memes/doge"
+
+
+def entry_page(address, title):
     return (f"<html><head><meta property='og:url' content='{address}' />"
-            f"<meta property='og:title' content='{title} | Know Your Meme' />"
-            "</head><body>" + "meme " * 200 + "</body></html>")
+            f"<meta property='og:title' content='{title} | Know Your Meme' /></head><body>" + "meme " * 200 + "</body></html>")
 
 
-class DuplicateTests(unittest.TestCase):
-    """Gap 14: one entry, one address — the scrape stage's bookkeeping."""
-    PUB = "https://knowyourmeme.com/memes/doge"
-    SENS = "https://knowyourmeme.com/sensitive/memes/doge"
-
-    def setUp(self):
-        self.store = fresh_store()
-        self.store.urls.insert_many([
-            {"_id": dom_store.url_doc_id(u), "url": u, "Confirmed": True,
-             "namespace": ns, "lastmod": None, "last_scraped": None}
-            for u, ns in ((self.PUB, "memes"), (self.SENS, "sensitive/memes"))])
-
-    def test_a_stored_page_records_what_it_says_about_itself(self):
-        self.store.save_result(url=self.PUB, ok=True, html=entry_page(self.SENS, "Doge"))
-        doc = self.store.doms.find_one({"url": self.PUB})
-        self.assertEqual((doc["page_url"], doc["page_title"]), (self.SENS, "Doge"))
-
-    def test_pages_stored_before_are_read_once_and_written_back(self):
-        self.store.save_result(url=self.PUB, ok=True, html=entry_page(self.PUB, "Doge"))
-        self.store.doms.update_one({"url": self.PUB},
-                                   {"$unset": {"page_url": "", "page_title": ""}})
-        got = self.store.page_identities()
-        self.assertEqual((got[self.PUB]["page_url"], got[self.PUB]["page_title"]),
-                         (self.PUB, "Doge"))
-        self.assertEqual(self.store.doms.find_one({"url": self.PUB})["page_title"], "Doge")
-        self.assertEqual(got[self.PUB]["fetched_at"].tzinfo, timezone.utc)
-
-    def test_marks_are_set_kept_and_lifted(self):
-        first = self.store.mark_duplicates({self.PUB: self.SENS})
-        self.assertEqual(first, {"marked": 1, "unchanged": 0, "unmarked": 0, "duplicates": 1})
-        since = self.store.urls.find_one({"url": self.PUB})["duplicate_since"]
-        again = self.store.mark_duplicates({self.PUB: self.SENS})
-        self.assertEqual(again["unchanged"], 1)
-        self.assertEqual(self.store.urls.find_one({"url": self.PUB})["duplicate_since"], since)
-        moved_back = self.store.mark_duplicates({self.SENS: self.PUB})
-        self.assertEqual((moved_back["marked"], moved_back["unmarked"]), (1, 1))
-        self.assertNotIn("duplicate_of", self.store.urls.find_one({"url": self.PUB}))
-        self.assertEqual(self.store.urls.find_one({"url": self.SENS})["duplicate_of"], self.PUB)
-
-    def test_the_whole_step_keeps_the_address_the_newest_page_names(self):
-        old = datetime(2026, 7, 10, tzinfo=timezone.utc)
-        self.store.save_result(url=self.PUB, ok=True, html=entry_page(self.PUB, "Doge"),
-                               fetched_at=old)
-        self.store.save_result(url=self.SENS, ok=True, html=entry_page(self.SENS, "Doge"))
-        with mock.patch.object(dom_store, "get_store", return_value=self.store):
-            out = dom_store.resolve_duplicates()
-        self.assertEqual(self.store.urls.find_one({"url": self.PUB})["duplicate_of"], self.SENS)
-        self.assertEqual((out["entries_with_duplicates"], out["pages_dropped"],
-                          out["kept_sensitive"], out["marks"]["marked"]), (1, 1, 1, 1))
-
-    def test_a_duplicate_is_still_refetched_when_it_goes_stale(self):
-        # Its fresh page is the evidence that KYM moved the entry back.
-        old = datetime(2025, 12, 1, tzinfo=timezone.utc)
-        self.store.save_result(url=self.PUB, ok=True, html=BIG_HTML, fetched_at=old)
-        self.store.urls.update_one({"url": self.PUB}, {"$set": {
-            "lastmod": "2026-01-01", "duplicate_of": self.SENS}})
-        self.assertIn(self.PUB, self.store.select_pending())
+@pytest.fixture
+def twins():
+    s = mock_store(dom_store.DomStore)
+    s.urls.insert_many([{"_id": dom_store.url_doc_id(u), "url": u, "Confirmed": True, "namespace": ns,
+                         "lastmod": None, "last_scraped": None} for u, ns in ((PUB, "memes"), (SENS, "sensitive/memes"))])
+    return s
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+def test_a_stored_page_records_what_it_says_about_itself_and_old_pages_are_read_once(twins):
+    twins.save_result(url=PUB, ok=True, html=entry_page(SENS, "Doge"))
+    doc = twins.doms.find_one({"url": PUB})
+    assert (doc["page_url"], doc["page_title"]) == (SENS, "Doge")
+    twins.doms.update_one({"url": PUB}, {"$unset": {"page_url": "", "page_title": ""}})    # stored before
+    got = twins.page_identities()[PUB]
+    assert (got["page_url"], got["page_title"], got["fetched_at"].tzinfo) == (SENS, "Doge", timezone.utc)
+    assert twins.doms.find_one({"url": PUB})["page_title"] == "Doge"                       # written back
+
+
+def test_marks_are_set_kept_and_lifted(twins):
+    assert twins.mark_duplicates({PUB: SENS}) == {"marked": 1, "unchanged": 0, "unmarked": 0, "duplicates": 1}
+    since = twins.urls.find_one({"url": PUB})["duplicate_since"]
+    assert twins.mark_duplicates({PUB: SENS})["unchanged"] == 1
+    assert twins.urls.find_one({"url": PUB})["duplicate_since"] == since
+    moved_back = twins.mark_duplicates({SENS: PUB})
+    assert (moved_back["marked"], moved_back["unmarked"]) == (1, 1)
+    assert "duplicate_of" not in twins.urls.find_one({"url": PUB})
+    assert twins.urls.find_one({"url": SENS})["duplicate_of"] == PUB
+
+
+def test_the_whole_step_keeps_the_address_the_newest_page_names(twins):
+    twins.save_result(url=PUB, ok=True, html=entry_page(PUB, "Doge"), fetched_at=datetime(2026, 7, 10, tzinfo=timezone.utc))
+    twins.save_result(url=SENS, ok=True, html=entry_page(SENS, "Doge"))
+    with serving(dom_store, twins):
+        out = dom_store.resolve_duplicates()
+    assert twins.urls.find_one({"url": PUB})["duplicate_of"] == SENS
+    assert (out["entries_with_duplicates"], out["pages_dropped"], out["kept_sensitive"], out["marks"]["marked"]) == \
+        (1, 1, 1, 1)
+
+
+def test_a_duplicate_is_still_refetched_when_it_goes_stale(twins):
+    # its fresh page is the evidence that KYM moved the entry back
+    twins.save_result(url=PUB, ok=True, html=BIG_HTML, fetched_at=datetime(2025, 12, 1, tzinfo=timezone.utc))
+    twins.urls.update_one({"url": PUB}, {"$set": {"lastmod": "2026-01-01", "duplicate_of": SENS}})
+    assert PUB in twins.select_pending()

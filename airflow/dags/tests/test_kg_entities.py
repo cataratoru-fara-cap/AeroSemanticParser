@@ -1,410 +1,260 @@
-"""Tests for kg/entities.py — title, tags and About -> Wikidata entities.
+"""kg/entities.py: title, tags and About -> Wikidata entities, with the real
+spaCy model (en_core_web_sm) over a lexicon built from wikidata_fixture's
+synthetic dump; tests needing the model skip, loudly, without it.
 
-Runs the real spaCy model (en_core_web_sm, pinned in requirements.txt)
-against a lexicon built from the synthetic dump in wikidata_fixture.py, so
-recognition, lookup and scoring are the production code end to end. The
-tests needing the model skip, loudly, where it is not installed.
-
-What these pin, beyond "it works":
-
-  * **Grounding.** Every mention's text is the slice of the page its
-    offsets name, and ``audit()`` catches each way a record can lie.
-  * **The certain link wins.** The item whose KYM slug is this page is the
-    title's entity at 1.0, and wins every other span that could name it —
-    over the more-linked Venetian doge.
-  * **Context separates senses; popularity alone does not.** "Mercury"
-    on a planet page and on a chemistry page are two different items.
-  * **Clarity.** A lone exact match is believed even when obscure-ish
-    ("4chan"); a close race between two senses with nothing to break it
-    is not (a "doge" tag on an unrelated page).
-  * **NER labels only ever help.** A label that disagrees with the item's
-    class costs nothing — en_core_web_sm calls Reddit a GPE.
-  * **Offsets index the graph's own literal**: a unit's About is exactly
-    kg/build.py's m4s:about.
-
-Run inside the Airflow container:
-    docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
-        python -m pytest /opt/airflow/dags/tests/test_kg_entities.py -v
+Pinned: every mention is the page's own words and audit() catches each way a
+record can lie; the item whose KYM slug is this page wins (over the
+more-linked Venetian doge); context separates senses ("Mercury" planet vs
+metal); a lone exact match is believed, a close race with nothing to break it
+is not; an NER label only ever helps (en_core_web_sm calls Reddit a GPE); a
+unit's About is exactly kg/build.py's m4s:about.
 """
-import os
-import tempfile
-import unittest
+import pytest
 
-from modules.kg import build, entities as E, wikidata as wd
+from helpers import KG_CONFIG
+from modules.kg import build
+from modules.kg import entities as E
 from modules.mongo_base import url_doc_id
-from wikidata_fixture import write_dump
 
 URL = "https://knowyourmeme.com/memes/doge"
-ABOUT = ("Doge is a slang term for dog that is primarily associated with "
-         "pictures of Shiba Inus, a breed of dog from Japan. It spread on "
-         "Reddit and 4chan, where Zorblax Quentin posted a nimbus of hair.")
+ABOUT = ("Doge is a slang term for dog that is primarily associated with pictures of Shiba Inus, a breed of dog "
+         "from Japan. It spread on Reddit and 4chan, where Zorblax Quentin posted a nimbus of hair.")
+SENSES = str(KG_CONFIG / "entity_senses.yaml")
 
 
-def entry(url=URL, title="Doge", tags=("doge", "shiba inu", "dogs", "eddie_now"),
-          about=(ABOUT,), **over):
-    doc = {"url": url, "title": title, "tags": list(tags), "parser_version": "1.6.1",
-           "sections": [{"kind": "about", "heading": "About", "text": list(about)},
-                        {"kind": "origin", "heading": "Origin", "text": ["Not linked."]}]}
-    doc.update(over)
-    return doc
+def entry(url=URL, title="Doge", tags=("doge", "shiba inu", "dogs", "eddie_now"), about=(ABOUT,), **over):
+    return {"url": url, "title": title, "tags": list(tags), "parser_version": "1.6.1",
+            "sections": [{"kind": "about", "heading": "About", "text": list(about)},
+                         {"kind": "origin", "heading": "Origin", "text": ["Not linked."]}], **over}
 
 
-def _model_available() -> bool:
+def _model_available():
     try:
         E.load_nlp()
         return True
-    except Exception:          # spaCy or the model missing
+    except Exception:                # spaCy or the model missing
         return False
 
 
-MODEL = _model_available()
-
-
-class FrameUnitTests(unittest.TestCase):
-    """No model needed: the unit is plain data."""
-
-    def test_the_unit_id_is_the_entry_id(self):
-        u = E.frame_unit(entry())
-        self.assertEqual(u["unit_id"], url_doc_id(URL))
-        self.assertEqual(E.frame_key(URL), url_doc_id(URL))
-
-    def test_about_is_exactly_the_graphs_m4s_about(self):
-        doc = entry(about=("First paragraph.", "", "Second one."))
-        nodes, _ = build.build_nodes_and_edges(doc)
-        frame = next(n for n in nodes if n["kind"] == "frame")
-        self.assertEqual(E.frame_unit(doc)["about"], frame["about"])
-
-    def test_only_title_tags_and_about_are_read(self):
-        u = E.frame_unit(entry())
-        self.assertNotIn("Not linked", u["about"])
-
-    def test_tags_are_stripped_deduplicated_and_kept_in_order(self):
-        u = E.frame_unit(entry(tags=[" doge ", "shiba", "doge", "", None]))
-        self.assertEqual(u["tags"], ["doge", "shiba"])
-
-    def test_any_source_edit_moves_the_staleness_hash(self):
-        base = E.frame_unit(entry())["source_sha256"]
-        for over in ({"title": "Doge 2"}, {"tags": ["doge"]},
-                     {"sections": [{"kind": "about", "text": ["Other."]}]}):
-            self.assertNotEqual(E.frame_unit(entry(**over))["source_sha256"], base, over)
-        # ...and a section the linker never reads does not.
-        other = entry()
-        other["sections"][1]["text"] = ["Edited origin."]
-        self.assertEqual(E.frame_unit(other)["source_sha256"], base)
-
-    def test_no_url_no_unit(self):
-        self.assertIsNone(E.frame_unit({"title": "x"}))
-
-
-@unittest.skipUnless(MODEL, "spaCy / en_core_web_sm not installed")
-class LinkerTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls._tmp = tempfile.TemporaryDirectory()
-        dump = write_dump(os.path.join(cls._tmp.name, "dump.json.gz"))
-        path = os.path.join(cls._tmp.name, "lexicon.sqlite")
-        wd.build_lexicon(dump, path, workers=0, progress=lambda _l: None)
-        cls.lexicon = wd.Lexicon(path)
-        cls.linker = E.Linker(cls.lexicon, E.load_nlp())
-        cls.unit = E.frame_unit(entry())
-        cls.record = cls.linker.link(cls.unit)
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.lexicon.close()
-        cls._tmp.cleanup()
-
-    def link(self, **over):
-        return self.linker.link(E.frame_unit(entry(**over)))
-
-    def by(self, field, record=None):
-        return [(m["text"], m["qid"]) for m in (record or self.record)["mentions"]
-                if m["field"] == field]
-
-    # -- the certain link ------------------------------------------------------
-
-    def test_the_title_is_the_item_whose_kym_slug_is_this_page(self):
-        (m,) = [m for m in self.record["mentions"] if m["field"] == "title"]
-        self.assertEqual((m["qid"], m["score"], m["method"]), ("Q15894956", 1.0, "kym_id"))
-        self.assertEqual(self.record["self_qid"], "Q15894956")
-
-    def test_the_self_item_wins_over_a_more_linked_namesake(self):
-        # Q219, the Venetian doge, has twice the Wikipedias.
-        self.assertIn(("doge", "Q15894956"), self.by("tag"))
-        self.assertIn(("Doge", "Q15894956"), self.by("about"))
-
-    def test_without_a_self_item_the_title_is_linked_like_any_text(self):
-        r = self.link(url="https://knowyourmeme.com/memes/japan-stuff", title="Japan",
-                      tags=[], about=["Japan."])
-        self.assertIsNone(r["self_qid"])
-        self.assertEqual(self.by("title", r), [("Japan", "Q17")])
-
-    # -- recognition -------------------------------------------------------------
-
-    def test_named_entities_concepts_and_tags_are_all_linked(self):
-        about = dict(self.by("about"))
-        for text, qid in (("Shiba Inus", "Q39315"), ("Japan", "Q17"),
-                          ("Reddit", "Q1136"), ("4chan", "Q531"),
-                          ("dog", "Q144"), ("hair", "Q28472")):
-            self.assertEqual(about.get(text), qid, text)
-        self.assertEqual(dict(self.by("tag")),
-                         {"doge": "Q15894956", "shiba inu": "Q39315", "dogs": "Q144"})
-
-    def test_a_username_tag_links_nothing(self):
-        self.assertNotIn("eddie_now", dict(self.by("tag")))
-
-    def test_a_named_entity_with_no_item_is_recorded_as_nil(self):
-        self.assertIn("Zorblax Quentin", [n["text"] for n in self.record["nil"]])
-
-    def test_a_weak_alias_match_is_rejected_not_linked(self):
-        self.assertNotIn("nimbus", dict(self.by("about")))
-        self.assertGreaterEqual(self.record["rejected_count"], 1)
-
-    def test_a_linked_span_claims_its_characters(self):
-        spans = [(m["start"], m["end"]) for m in self.record["mentions"]
-                 if m["field"] == "about"]
-        for i, (a, b) in enumerate(spans):
-            for c, d in spans[i + 1:]:
-                self.assertTrue(b <= c or d <= a, (a, b, c, d))
-        self.assertNotIn("Shiba", dict(self.by("about")))
-
-    def test_every_mention_is_the_pages_own_words(self):
-        for m in self.record["mentions"]:
-            hay = E.field_text(self.unit, m["field"], m.get("tag_index"))
-            self.assertEqual(hay[m["start"]:m["end"]], m["text"])
-
-    # -- disambiguation ------------------------------------------------------------
-
-    def test_context_separates_two_senses(self):
-        planet = self.link(url="https://knowyourmeme.com/memes/a", title="A", tags=[],
-                           about=["Mercury is the smallest planet in the Solar System."])
-        metal = self.link(url="https://knowyourmeme.com/memes/b", title="B", tags=[],
-                          about=["The thermometer held mercury, a toxic liquid metal."])
-        self.assertEqual(dict(self.by("about", planet))["Mercury"], "Q308")
-        self.assertEqual(dict(self.by("about", metal))["mercury"], "Q925")
-
-    def test_a_close_race_with_nothing_to_break_it_is_not_linked(self):
-        r = self.link(url="https://knowyourmeme.com/memes/c", title="C", tags=["doge"],
-                      about=["An unrelated page."])
-        self.assertEqual(self.by("tag", r), [])
-
-    def test_an_ner_label_that_disagrees_costs_nothing(self):
-        cands = self.lexicon.candidates("reddit")
-        as_gpe = self.linker.score("Reddit", cands, ner_label="GPE", context=set(),
-                                   self_qid=None)
-        unlabelled = self.linker.score("Reddit", cands, ner_label=None, context=set(),
-                                       self_qid=None)
-        self.assertEqual(as_gpe[0][0], unlabelled[0][0])
-
-    def test_an_ner_label_that_agrees_adds(self):
-        cands = self.lexicon.candidates("japan")
-        agree = self.linker.score("Japan", cands, ner_label="GPE", context=set(),
-                                  self_qid=None)
-        self.assertEqual(agree[0][2]["type"], 1.0)       # Q6256 -> Q56061
-        none = self.linker.score("Japan", cands, ner_label=None, context=set(),
-                                 self_qid=None)
-        self.assertGreater(agree[0][0], none[0][0])
-
-    # -- the record ------------------------------------------------------------------
-
-    def test_the_record_carries_the_three_stamps(self):
-        self.assertEqual(self.record["linker_version"], E.LINKER_VERSION)
-        self.assertEqual(self.record["lexicon_version"], self.lexicon.version)
-        self.assertEqual(self.record["nlp_model"], E.model_stamp())
-
-    def test_linking_is_deterministic(self):
-        again = self.linker.link(self.unit)
-        self.assertEqual(again["mentions"], self.record["mentions"])
-        self.assertEqual(again["nil"], self.record["nil"])
-
-    def test_features_are_kept_for_curation(self):
-        for m in self.record["mentions"]:
-            self.assertEqual(set(m["features"]),
-                             {"prior", "context", "exact", "type", "kym", "clarity"})
-            self.assertIn("candidates", m)
-            self.assertIn("margin", m)
-
-    def test_the_record_passes_its_audit(self):
-        self.assertEqual(E.audit(self.record, self.unit), [])
-
-    # -- link_units -----------------------------------------------------------------
-
-    def test_link_units_batches_and_counts(self):
-        units = [self.unit, E.frame_unit(entry(url="https://knowyourmeme.com/memes/e",
-                                               title="E", tags=[], about=[]))]
-        seen = []
-        summary = E.link_units(self.linker, units, on_record=seen.append, batch_size=1)
-        self.assertEqual(len(seen), 2)
-        self.assertEqual(summary["units"], 2)
-        self.assertEqual(summary["frames_with_links"], 1)
-        self.assertEqual(summary["self_links"], 1)
-        self.assertEqual(summary["mentions"], self.record["mention_count"])
-        self.assertEqual(seen[0]["mentions"], self.record["mentions"])
-
-    def test_a_record_that_fails_its_audit_is_raised_not_written(self):
-        seen = []
-        broken = dict(self.record, mention_count=999)
-        original = self.linker.link
-        self.linker.link = lambda unit, **_kw: broken
-        try:
-            with self.assertRaisesRegex(AssertionError, "failed its audit"):
-                E.link_units(self.linker, [self.unit], on_record=seen.append)
-        finally:
-            self.linker.link = original
-        self.assertEqual(seen, [])
-
-
-class AuditTests(unittest.TestCase):
-    """Each way a record can lie about the page. No model needed."""
-
-    UNIT = E.frame_unit(entry())
-
-    def record(self, **mention_over):
-        m = {"field": "about", "text": "Japan", "start": ABOUT.index("Japan"),
-             "end": ABOUT.index("Japan") + 5, "qid": "Q17", "score": 0.66,
-             "method": "ner"}
-        m.update(mention_over)
-        return {"mentions": [m], "mention_count": 1, "entity_count": 1,
-                "source_sha256": self.UNIT["source_sha256"], "linker_version": "1",
-                "lexicon_version": "v", "nlp_model": "m", "senses_version": "none"}
-
-    def test_a_faithful_record_is_clean(self):
-        self.assertEqual(E.audit(self.record(), self.UNIT), [])
-
-    def test_text_that_is_not_the_pages(self):
-        self.assertTrue(E.audit(self.record(text="JAPAN"), self.UNIT))
-
-    def test_offsets_outside_the_field(self):
-        self.assertTrue(E.audit(self.record(start=5000, end=5005), self.UNIT))
-
-    def test_a_tag_mention_needs_its_index(self):
-        self.assertTrue(E.audit(self.record(field="tag", text="doge", start=0, end=4),
-                                self.UNIT))
-        self.assertEqual(E.audit(self.record(field="tag", text="doge", start=0, end=4,
-                                             tag_index=0), self.UNIT), [])
-
-    def test_not_a_qid(self):
-        self.assertTrue(E.audit(self.record(qid="Japan"), self.UNIT))
-
-    def test_a_score_under_the_threshold_or_outside_0_1(self):
-        self.assertTrue(E.audit(self.record(score=0.1), self.UNIT))
-        self.assertTrue(E.audit(self.record(score=1.5), self.UNIT))
-
-    def test_overlapping_mentions(self):
-        r = self.record()
-        r["mentions"].append(dict(r["mentions"][0]))
-        r["mention_count"] = 2
-        self.assertTrue(any("overlaps" in p for p in E.audit(r, self.UNIT)))
-
-    def test_counts_and_stamps(self):
-        self.assertTrue(E.audit(dict(self.record(), mention_count=2), self.UNIT))
-        self.assertTrue(E.audit(dict(self.record(), source_sha256="x"), self.UNIT))
-        self.assertTrue(E.audit(dict(self.record(), nlp_model=None), self.UNIT))
-
-    def test_an_unknown_field_or_method(self):
-        self.assertTrue(E.audit(self.record(field="spread"), self.UNIT))
-        self.assertTrue(E.audit(self.record(method="guess"), self.UNIT))
-
-
-SENSES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                      "kg_config", "entity_senses.yaml")
-
-
-class SenseFileTests(unittest.TestCase):
-    """The shipped kg_config/entity_senses.yaml loads, and says what it means."""
-
-    def test_the_shipped_file(self):
-        senses = E.load_senses(SENSES)
-        self.assertNotEqual(senses.version, "none")
-        self.assertEqual(senses.by_key["series"].instead, 7725310)
-        self.assertIn(170198, senses.by_key["series"].never)
-        self.assertIs(senses.by_key["games"], senses.by_key["game"])      # `also`
-        self.assertFalse(senses.by_key["sound"].link)
-
-    def test_absent_file_is_no_senses(self):
-        self.assertIs(E.load_senses(None), E.NO_SENSES)
-        self.assertIs(E.load_senses("/nonexistent.yaml"), E.NO_SENSES)
-
-    def test_guards(self):
-        s = E.Sense(unless_next=("of",))
-        text = "a series of videos. The series ended."
-        self.assertTrue(E.sense_blocks(s, text, 2, 8))
-        self.assertFalse(E.sense_blocks(s, text, 24, 30))
-        x = E.Sense(only_if_prev=("on", "twitter /"), only_if_next=("(formerly",))
-        for t, (a, b), blocked in [("viral on X today", (9, 10), False),
-                                   ("Twitter / X", (10, 11), False),
-                                   ("X (formerly Twitter)", (0, 1), False),
-                                   ("I Hate X", (7, 8), True),
-                                   ("Thanks for Not Saying X", (22, 23), True)]:
-            self.assertEqual(E.sense_blocks(x, t, a, b), blocked, t)
-
-    def test_a_malformed_qid_is_refused(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
-            fh.write("senses:\n  game:\n    never: [game]\n")
-        try:
-            with self.assertRaises(ValueError):
-                E.load_senses(fh.name)
-        finally:
-            os.unlink(fh.name)
-
-
-@unittest.skipUnless(MODEL, "spaCy / en_core_web_sm not installed")
-class SenseLinkingTests(unittest.TestCase):
-    """Linker 1.2.0 on the fixture lexicon with the shipped sense list."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls._tmp = tempfile.TemporaryDirectory()
-        dump = write_dump(os.path.join(cls._tmp.name, "dump.json.gz"))
-        path = os.path.join(cls._tmp.name, "lexicon.sqlite")
-        wd.build_lexicon(dump, path, workers=0, progress=lambda _l: None)
-        cls.lexicon = wd.Lexicon(path)
-        cls.nlp = E.load_nlp()
-        cls.linker = E.Linker(cls.lexicon, cls.nlp, senses=E.load_senses(SENSES))
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.lexicon.close()
-        cls._tmp.cleanup()
-
-    def link(self, about="", title="", tags=()):
-        unit = E.frame_unit({"url": "https://knowyourmeme.com/memes/zz-sense-test",
-                             "title": title, "tags": list(tags),
-                             "sections": [{"kind": "about", "text": [about]}]})
-        return {(m["field"], m["text"]): m["qid"] for m in self.linker.link(unit)["mentions"]}
-
-    def test_the_senses_stamp(self):
-        self.assertEqual(self.linker.stamps["senses_version"],
-                         E.load_senses(SENSES).version)
-
-    def test_a_series_of_links_nothing_and_the_series_is_the_works(self):
-        got = self.link("It is a series of videos. The series is popular.")
-        self.assertEqual(list(got.values()).count("Q7725310"), 1)
-        self.assertNotIn("Q170198", got.values())
-
-    def test_game_is_a_video_game(self):
-        self.assertEqual(self.link("The game was released in the spring.")[("about", "game")],
-                         "Q7889")
-        self.assertEqual(self.link(tags=["games"])[("tag", "games")], "Q7889")
-
-    def test_a_rejected_literal_key_no_longer_hides_the_lemma(self):
-        got = self.link("Graphics in video games improved.")
-        self.assertEqual(got.get(("about", "video games")), "Q7889")
-        self.assertNotIn(("about", "games"), got)
-
-    def test_x_only_where_it_is_the_platform(self):
-        got = self.link("The post went viral on X, formerly Twitter.", title="I Hate X")
-        self.assertEqual(got.get(("about", "X")), "Q918")
-        self.assertNotIn(("title", "X"), got)
-
-    def test_without_senses_the_old_behaviour(self):
-        plain = E.Linker(self.lexicon, self.nlp)
-        unit = E.frame_unit({"url": "https://knowyourmeme.com/memes/zz-sense-test",
-                             "title": "", "tags": [],
-                             "sections": [{"kind": "about", "text": ["The series is long."]}]})
-        self.assertIn("Q170198", {m["qid"] for m in plain.link(unit)["mentions"]})
-        self.assertEqual(plain.stamps["senses_version"], "none")
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+needs_model = pytest.mark.skipif(not _model_available(), reason="spaCy / en_core_web_sm not installed")
+UNIT = E.frame_unit(entry())
+
+
+# -- the unit (plain data, no model) ----------------------------------------------------
+
+def test_the_unit():
+    assert UNIT["unit_id"] == url_doc_id(URL) == E.frame_key(URL)
+    assert "Not linked" not in UNIT["about"]                         # only title, tags and About
+    doc = entry(about=("First paragraph.", "", "Second one."))
+    frame = next(n for n in build.build_nodes_and_edges(doc)[0] if n["kind"] == "frame")
+    assert E.frame_unit(doc)["about"] == frame["about"]
+    assert E.frame_unit(entry(tags=[" doge ", "shiba", "doge", "", None]))["tags"] == ["doge", "shiba"]
+    assert E.frame_unit({"title": "x"}) is None
+
+
+@pytest.mark.parametrize("over, moves", [
+    ({"title": "Doge 2"}, True), ({"tags": ["doge"]}, True),
+    ({"sections": [{"kind": "about", "text": ["Other."]}]}, True),
+    ({"sections": [{"kind": "about", "heading": "About", "text": [ABOUT]},
+                   {"kind": "origin", "heading": "Origin", "text": ["Edited origin."]}]}, False),  # never read
+])
+def test_any_source_edit_moves_the_staleness_hash(over, moves):
+    assert (E.frame_unit(entry(**over))["source_sha256"] != UNIT["source_sha256"]) is moves
+
+
+# -- the linker ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def lexicon(fixture_lexicon):
+    return fixture_lexicon
+
+
+@pytest.fixture(scope="module")
+def linker(lexicon):
+    return E.Linker(lexicon, E.load_nlp())
+
+
+@pytest.fixture(scope="module")
+def record(linker):
+    return linker.link(UNIT)
+
+
+def by(record, field):
+    return [(m["text"], m["qid"]) for m in record["mentions"] if m["field"] == field]
+
+
+@needs_model
+def test_the_title_is_the_item_whose_kym_slug_is_this_page(record):
+    [m] = [m for m in record["mentions"] if m["field"] == "title"]
+    assert (m["qid"], m["score"], m["method"], record["self_qid"]) == ("Q15894956", 1.0, "kym_id", "Q15894956")
+    # ...and wins over Q219, the Venetian doge, with twice the Wikipedias
+    assert ("doge", "Q15894956") in by(record, "tag") and ("Doge", "Q15894956") in by(record, "about")
+
+
+@needs_model
+def test_without_a_self_item_the_title_is_linked_like_any_text(linker):
+    r = linker.link(E.frame_unit(entry(url="https://knowyourmeme.com/memes/japan-stuff", title="Japan", tags=[],
+                                       about=["Japan."])))
+    assert r["self_qid"] is None and by(r, "title") == [("Japan", "Q17")]
+
+
+@needs_model
+def test_named_entities_concepts_and_tags_are_linked(record):
+    about = dict(by(record, "about"))
+    assert {t: about.get(t) for t in ("Shiba Inus", "Japan", "Reddit", "4chan", "dog", "hair")} == {
+        "Shiba Inus": "Q39315", "Japan": "Q17", "Reddit": "Q1136", "4chan": "Q531", "dog": "Q144", "hair": "Q28472"}
+    assert dict(by(record, "tag")) == {"doge": "Q15894956", "shiba inu": "Q39315", "dogs": "Q144"}   # not eddie_now
+    assert "Zorblax Quentin" in [n["text"] for n in record["nil"]]      # a named entity with no item
+    assert "nimbus" not in about and record["rejected_count"] >= 1      # a weak alias match is rejected
+
+
+@needs_model
+def test_mentions_claim_their_characters_and_are_the_pages_words(record):
+    spans = [(m["start"], m["end"]) for m in record["mentions"] if m["field"] == "about"]
+    for i, (a, b) in enumerate(spans):
+        assert all(b <= c or d <= a for c, d in spans[i + 1:])
+    assert "Shiba" not in dict(by(record, "about"))
+    for m in record["mentions"]:
+        assert E.field_text(UNIT, m["field"], m.get("tag_index"))[m["start"]:m["end"]] == m["text"]
+
+
+@needs_model
+def test_context_separates_two_senses_and_a_close_race_links_nothing(linker):
+    def link(**kw):
+        return linker.link(E.frame_unit(entry(tags=[], **kw)))
+    planet = link(url="https://knowyourmeme.com/memes/a", title="A",
+                  about=["Mercury is the smallest planet in the Solar System."])
+    metal = link(url="https://knowyourmeme.com/memes/b", title="B",
+                 about=["The thermometer held mercury, a toxic liquid metal."])
+    assert (dict(by(planet, "about"))["Mercury"], dict(by(metal, "about"))["mercury"]) == ("Q308", "Q925")
+    race = linker.link(E.frame_unit(entry(url="https://knowyourmeme.com/memes/c", title="C", tags=["doge"],
+                                          about=["An unrelated page."])))
+    assert by(race, "tag") == []
+
+
+@needs_model
+def test_an_ner_label_only_ever_helps(linker, lexicon):
+    def top(text, key, label):
+        return linker.score(text, lexicon.candidates(key), ner_label=label, context=set(), self_qid=None)[0]
+    assert top("Reddit", "reddit", "GPE")[0] == top("Reddit", "reddit", None)[0]     # disagreeing costs nothing
+    agree = top("Japan", "japan", "GPE")
+    assert agree[2]["type"] == 1.0 and agree[0] > top("Japan", "japan", None)[0]     # Q6256 -> Q56061
+
+
+@needs_model
+def test_the_record_is_stamped_deterministic_auditable_and_keeps_features(linker, lexicon, record):
+    assert (record["linker_version"], record["lexicon_version"], record["nlp_model"]) == \
+        (E.LINKER_VERSION, lexicon.version, E.model_stamp())
+    again = linker.link(UNIT)
+    assert (again["mentions"], again["nil"]) == (record["mentions"], record["nil"])
+    for m in record["mentions"]:                                  # kept for curation
+        assert set(m["features"]) == {"prior", "context", "exact", "type", "kym", "clarity"}
+        assert "candidates" in m and "margin" in m
+    assert E.audit(record, UNIT) == []
+
+
+@needs_model
+def test_link_units_batches_counts_and_refuses_a_lying_record(linker, record, monkeypatch):
+    units = [UNIT, E.frame_unit(entry(url="https://knowyourmeme.com/memes/e", title="E", tags=[], about=[]))]
+    seen = []
+    summary = E.link_units(linker, units, on_record=seen.append, batch_size=1)
+    assert (len(seen), summary["units"], summary["frames_with_links"], summary["self_links"]) == (2, 2, 1, 1)
+    assert summary["mentions"] == record["mention_count"] and seen[0]["mentions"] == record["mentions"]
+    monkeypatch.setattr(linker, "link", lambda unit, **_kw: dict(record, mention_count=999))
+    seen = []
+    with pytest.raises(AssertionError, match="failed its audit"):
+        E.link_units(linker, [UNIT], on_record=seen.append)
+    assert seen == []
+
+
+# -- the audit: each way a record can lie (no model) ------------------------------------------
+
+def audit(record_over=None, **mention):
+    m = {"field": "about", "text": "Japan", "start": ABOUT.index("Japan"), "end": ABOUT.index("Japan") + 5,
+         "qid": "Q17", "score": 0.66, "method": "ner", **mention}
+    rec = {"mentions": [m], "mention_count": 1, "entity_count": 1, "source_sha256": UNIT["source_sha256"],
+           "linker_version": "1", "lexicon_version": "v", "nlp_model": "m", "senses_version": "none",
+           **(record_over or {})}
+    return E.audit(rec, UNIT)
+
+
+@pytest.mark.parametrize("record_over, mention", [
+    (None, {"text": "JAPAN"}), (None, {"start": 5000, "end": 5005}),
+    (None, {"field": "tag", "text": "doge", "start": 0, "end": 4}),          # a tag mention needs its index
+    (None, {"qid": "Japan"}), (None, {"score": 0.1}), (None, {"score": 1.5}),
+    ({"mention_count": 2}, {}), ({"source_sha256": "x"}, {}), ({"nlp_model": None}, {}),
+    (None, {"field": "spread"}), (None, {"method": "guess"}),
+])
+def test_a_lying_record_fails_its_audit(record_over, mention):
+    assert audit(record_over, **mention)
+
+
+def test_a_faithful_record_is_clean_and_overlaps_are_caught():
+    assert audit() == []
+    assert audit(field="tag", text="doge", start=0, end=4, tag_index=0) == []
+    m = {"field": "about", "text": "Japan", "start": ABOUT.index("Japan"), "end": ABOUT.index("Japan") + 5,
+         "qid": "Q17", "score": 0.66, "method": "ner"}
+    problems = E.audit({"mentions": [m, dict(m)], "mention_count": 2, "entity_count": 1,
+                        "source_sha256": UNIT["source_sha256"], "linker_version": "1", "lexicon_version": "v",
+                        "nlp_model": "m", "senses_version": "none"}, UNIT)
+    assert any("overlaps" in p for p in problems)
+
+
+# -- the sense list ---------------------------------------------------------------------------
+
+def test_the_shipped_sense_file(tmp_path):
+    senses = E.load_senses(SENSES)
+    assert senses.version != "none"
+    assert senses.by_key["series"].instead == 7725310 and 170198 in senses.by_key["series"].never
+    assert senses.by_key["games"] is senses.by_key["game"]                 # `also`
+    assert not senses.by_key["sound"].link
+    assert E.load_senses(None) is E.NO_SENSES and E.load_senses("/nonexistent.yaml") is E.NO_SENSES
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("senses:\n  game:\n    never: [game]\n")
+    with pytest.raises(ValueError):                                         # a malformed QID
+        E.load_senses(str(bad))
+
+
+@pytest.mark.parametrize("sense, text, span, blocked", [
+    (E.Sense(unless_next=("of",)), "a series of videos. The series ended.", (2, 8), True),
+    (E.Sense(unless_next=("of",)), "a series of videos. The series ended.", (24, 30), False),
+    *[(E.Sense(only_if_prev=("on", "twitter /"), only_if_next=("(formerly",)), t, s, b)
+      for t, s, b in [("viral on X today", (9, 10), False), ("Twitter / X", (10, 11), False),
+                      ("X (formerly Twitter)", (0, 1), False), ("I Hate X", (7, 8), True),
+                      ("Thanks for Not Saying X", (22, 23), True)]],
+])
+def test_sense_guards(sense, text, span, blocked):
+    assert E.sense_blocks(sense, text, *span) is blocked
+
+
+@pytest.fixture(scope="module")
+def sensed(lexicon):
+    linker = E.Linker(lexicon, E.load_nlp(), senses=E.load_senses(SENSES))
+
+    def link(about="", title="", tags=()):
+        unit = E.frame_unit({"url": "https://knowyourmeme.com/memes/zz-sense-test", "title": title,
+                             "tags": list(tags), "sections": [{"kind": "about", "text": [about]}]})
+        return {(m["field"], m["text"]): m["qid"] for m in linker.link(unit)["mentions"]}
+    link.linker = linker
+    return link
+
+
+@needs_model
+def test_linking_with_the_sense_list(sensed):
+    assert sensed.linker.stamps["senses_version"] == E.load_senses(SENSES).version
+    got = sensed("It is a series of videos. The series is popular.")
+    assert list(got.values()).count("Q7725310") == 1 and "Q170198" not in got.values()   # "a series of": nothing
+    assert sensed("The game was released in the spring.")[("about", "game")] == "Q7889"
+    assert sensed(tags=["games"])[("tag", "games")] == "Q7889"
+    got = sensed("Graphics in video games improved.")      # a rejected literal key no longer hides the lemma
+    assert got.get(("about", "video games")) == "Q7889" and ("about", "games") not in got
+    got = sensed("The post went viral on X, formerly Twitter.", title="I Hate X")
+    assert got.get(("about", "X")) == "Q918" and ("title", "X") not in got        # X only as the platform
+
+
+@needs_model
+def test_without_senses_the_old_behaviour(lexicon):
+    plain = E.Linker(lexicon, E.load_nlp())
+    unit = E.frame_unit({"url": "https://knowyourmeme.com/memes/zz-sense-test", "title": "", "tags": [],
+                         "sections": [{"kind": "about", "text": ["The series is long."]}]})
+    assert "Q170198" in {m["qid"] for m in plain.link(unit)["mentions"]} and plain.stamps["senses_version"] == "none"

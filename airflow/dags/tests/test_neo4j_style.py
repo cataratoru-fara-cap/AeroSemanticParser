@@ -11,13 +11,14 @@ follows the Browser's (``A_e`` / ``M_e`` / ``Q9`` in its bundle).
 
 from __future__ import annotations
 
-import os
 import re
-import unittest
 
+import pytest
+
+from helpers import KG_CONFIG
 from modules.kg import build, loaders
 
-GRASS = os.path.join(os.path.dirname(__file__), "..", "kg_config", "neo4j_browser.grass")
+TEXT = (KG_CONFIG / "neo4j_browser.grass").read_text(encoding="utf-8")
 
 # The Browser's node size steps (its radius options, "1x" to "11x"), and how
 # it turns a GraSS diameter into one: floor(diameter / 2 / 0.93).
@@ -68,45 +69,30 @@ def precedence(rules: dict[str, dict[str, str]]) -> list[str]:
     return order
 
 
-class GrassTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        with open(GRASS, encoding="utf-8") as fh:
-            cls.text = fh.read()
-        cls.rules = parse_grass(cls.text)
-
-    def test_every_rule_is_a_node_label(self):
-        # A comment or stray text would join the next selector and the
-        # Browser would drop that rule without a word.
-        for sel in self.rules:
-            self.assertRegex(sel, r"^node\.[A-Za-z]+$")
-        self.assertNotIn("/*", self.text)
-
-    def test_every_kind_the_loader_writes_has_a_style(self):
-        labels = {sel.split(".", 1)[1] for sel in self.rules}
-        kinds = {loaders.label_for_kind(k) for k in build.NODE_KINDS}
-        self.assertEqual(labels - {"KGNode"}, kinds)
-
-    def test_kgnode_has_the_lowest_priority(self):
-        self.assertEqual(precedence(self.rules)[-1], "KGNode")
-        self.assertEqual(precedence(self.rules)[0], "Frame")
-
-    def test_each_rule_sets_colour_size_and_caption(self):
-        for sel, props in self.rules.items():
-            with self.subTest(sel=sel):
-                self.assertRegex(props.get("color", ""), r"^#[0-9a-f]{6}$")
-                self.assertRegex(props.get("caption", ""), r"^\{[a-z_]+\}$")
-                diameter = int(re.match(r"(\d+)px$", props["diameter"]).group(1))
-                self.assertIn(int(diameter / 2 / 0.93), BROWSER_SIZES)
-
-    def test_the_main_kinds_keep_distinct_colours(self):
-        # The three validated hues (all pairs, light and dark) and the darker
-        # step of Frame's blue for a stub — see KG_QUERIES.md.
-        colours = {sel.split(".")[1]: p["color"] for sel, p in self.rules.items()}
-        main = [colours[k] for k in ("Frame", "FrameStub", "WikidataEntity", "Template",
-                                     "Event", "TagConcept", "Image")]
-        self.assertEqual(len(set(main)), len(main))
+RULES = parse_grass(TEXT)
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_every_rule_is_a_node_label():
+    # a comment or stray text would join the next selector and the Browser would drop that rule without a word
+    assert all(re.fullmatch(r"node\.[A-Za-z]+", sel) for sel in RULES) and "/*" not in TEXT
+
+
+def test_every_kind_the_loader_writes_has_a_style_and_kgnode_the_lowest_priority():
+    assert {sel.split(".", 1)[1] for sel in RULES} - {"KGNode"} == {loaders.label_for_kind(k) for k in build.NODE_KINDS}
+    order = precedence(RULES)
+    assert (order[0], order[-1]) == ("Frame", "KGNode")
+
+
+@pytest.mark.parametrize("sel", list(RULES))
+def test_each_rule_sets_colour_size_and_caption(sel):
+    props = RULES[sel]
+    assert re.fullmatch(r"#[0-9a-f]{6}", props.get("color", "")) and re.fullmatch(r"\{[a-z_]+\}", props.get("caption", ""))
+    assert int(int(re.fullmatch(r"(\d+)px", props["diameter"]).group(1)) / 2 / 0.93) in BROWSER_SIZES
+
+
+def test_the_main_kinds_keep_distinct_colours():
+    # the three validated hues (all pairs, light and dark) and the darker step of Frame's blue for a stub
+    # (KG_QUERIES.md)
+    main = [RULES[f"node.{k}"]["color"] for k in ("Frame", "FrameStub", "WikidataEntity", "Template", "Event",
+                                                    "TagConcept", "Image")]
+    assert len(set(main)) == len(main)

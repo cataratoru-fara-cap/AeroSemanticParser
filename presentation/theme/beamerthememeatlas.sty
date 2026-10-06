@@ -166,7 +166,6 @@
 \newcommand{\gm@scene}[4]{%
   \begin{tikzpicture}
     \useasboundingbox (0,0) rectangle (\paperwidth,\paperheight);
-    \fill[gmSurface] (0,0) rectangle (\paperwidth,\paperheight);
     \clip (0,0) rectangle (\paperwidth,\paperheight);
     \def\gm@s{#1}%
     \pgfmathsetlengthmacro\gm@u{1pt/#1}%
@@ -229,33 +228,26 @@
     \node[text=gm@col@#1, font=\Large, text opacity=1-#2] at (gm-#1.center) {\gm@get{icon}{#1}};
   \fi
   \ifdim #2pt>0pt
-    \begin{scope}[transparency group, opacity=#2]
+    \begin{scope}[opacity=#2]
       \node[inner sep=0pt, outer sep=0pt, scale=1/\gm@se, transform shape] at (gm-#1.center)
         {\xusebox{gm@int@#1}};
     \end{scope}
   \fi}
-% a slide: its thumbnail, at the detail its size on screen calls for
-\newcommand{\gmFS}[3]{\expandafter\expandafter\expandafter\gm@sat\csname gm@sat@#1\endcsname{#1}{#2}{#3}}
-\newcommand{\gm@sat}[8]{% id chapter x0 y0 w | index lod alpha
-  \ifdim #8pt<1pt
-    \begin{scope}[transparency group, opacity=#8]
-      \node[inner sep=0pt, outer sep=0pt, anchor=south west] at (#3,#4) {\gm@thumb{#6}{#7}};
-    \end{scope}
-  \else
-    \node[inner sep=0pt, outer sep=0pt, anchor=south west] at (#3,#4) {\gm@thumb{#6}{#7}};
-  \fi
+% a slide: its page of thumbs.pdf
+\newcommand{\gmFS}[2]{\expandafter\expandafter\expandafter\gm@sat\csname gm@sat@#1\endcsname{#1}{#2}}
+\newcommand{\gm@sat}[7]{% id chapter x0 y0 w | index alpha
+  \begin{scope}[opacity=#7]
+    \node[inner sep=0pt, outer sep=0pt, anchor=south west] at (#3,#4) {\gm@thumb{#6}};
+  \end{scope}
   \ifcsname gm@num@#2\endcsname\else
     \draw[gmBase, line width=.8*\gm@u] (#3,#4) rectangle ++(#5,#5*9/16);
   \fi}
-\newcommand{\gm@thumb}[2]{%
-  \ifcsname gm@has@#1@#2\endcsname\xusebox{gm@th@#1@#2}%
-  \else\ifcsname gm@has@#1@m\endcsname\xusebox{gm@th@#1@m}%
-  \else\xusebox{gm@ph@#1}\fi\fi}
+\newcommand{\gm@thumb}[1]{%
+  \ifcsname gm@th@#1\endcsname\pdfrefximage\csname gm@th@#1\endcsname\else\xusebox{gm@ph@#1}\fi}
 % Doge, waiting at the door of the chapter we are in
 \newcommand{\gmFD}[2]{\node[inner sep=0pt, outer sep=0pt] at (#1,#2) {\xusebox{gm@avatar}};}
 
 % -- the boxes the world is drawn with, made once (PDF form objects) ------------
-\newcommand{\gm@thumbfile}[2]{figures/thumbs/t\ifnum#1<100 0\fi\ifnum#1<10 0\fi#1-#2.png}
 \newcommand{\gm@buildboxes}{%
   \pgfmathsetlengthmacro\gm@avh{2.15*\gm@avr cm}%
   \xsbox{gm@avatar}{\tikz\node[circle, minimum size=2*\gm@avr cm, inner sep=0pt, draw=white,
@@ -269,10 +261,9 @@
   \@for\gm@c:=\gm@chapters\do{\expandafter\gm@buildinterior\expandafter{\gm@c}}}
 \newcommand{\gm@buildsat}[5]{% id chapter x0 y0 w   (index in \@tempcnta)
   \edef\gm@k{\the\@tempcnta}%
-  \@for\gm@l:=s,m,l\do{%
-    \IfFileExists{\gm@thumbfile{\gm@k}{\gm@l}}{%
-      \xsbox{gm@th@\gm@k @\gm@l}{\includegraphics[width=#5cm]{\gm@thumbfile{\gm@k}{\gm@l}}}%
-      \expandafter\gdef\csname gm@has@\gm@k @\gm@l\endcsname{}}{}}%
+  \IfFileExists{thumbs.pdf}{%
+    \pdfximage width #5cm page \gm@k {thumbs.pdf}%
+    \expandafter\xdef\csname gm@th@\gm@k\endcsname{\the\pdflastximage}}{}%
   \xsbox{gm@ph@\gm@k}{\tikz\node[fill=gmTint, draw=gmBase, line width=.2pt, inner sep=0pt,
       minimum width=#5cm, minimum height=#5cm*9/16, font=\tiny, text=gmMuted] {};}}
 % a chapter's contents, drawn as the page looks once the camera has entered the node:
@@ -338,18 +329,22 @@
 \newcount\gm@overviews
 \newcommand{\gm@motionframe}[1]{%
   \ifgm@motion\ifgmanimate\ifcsname gm@motion@#1\endcsname
+    \gm@hairlinefalse
     \begin{frame}[plain]
       \expandafter\let\expandafter\gm@n\csname gm@mn@#1\endcsname
       \csname gm@motion@#1\endcsname
       \transduration<1-\gm@n>{\gmframedur}
     \end{frame}
+    \gm@hairlinetrue
     \addtocounter{framenumber}{-1}%
   \fi\fi\fi}
 \newcommand{\gm@viewframe}[1]{%
   \ifgm@views\ifcsname gm@view@#1\endcsname
+    \gm@hairlinefalse
     \begin{frame}[plain]
       \csname gm@view@#1\endcsname
     \end{frame}
+    \gm@hairlinetrue
   \fi\fi}
 \newcommand{\gmoverview}[1]{%
   \global\advance\gm@overviews by 1
@@ -395,13 +390,15 @@
   \begin{minipage}[t]{.16\textwidth}\raggedleft\vskip-1mm\gmminimap\end{minipage}\fi
   \vskip1mm}
 
-% a hairline of the chapter colour at the top: we are inside its node
+% a hairline of the chapter colour at the top: we are inside its node (not on the
+% world's pages, which show the node itself)
+\newif\ifgm@hairline \gm@hairlinetrue
 \setbeamertemplate{background}{%
   \begin{tikzpicture}
     \useasboundingbox (0,0) rectangle (\the\paperwidth,\the\paperheight);
-    \ifx\gm@cur\gm@none@\else
+    \ifgm@hairline\ifx\gm@cur\gm@none@\else
       \fill[gmChapter] (0,\paperheight) rectangle ++(\paperwidth,-1.4mm);
-    \fi
+    \fi\fi
   \end{tikzpicture}}
 
 \setbeamertemplate{footline}{%

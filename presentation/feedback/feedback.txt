@@ -1,0 +1,44 @@
+Overall:
+1. Design is a exactly what I wanted, transitions and layout are very good
+Introduction (Where it started):
+1. For "A knowladge graph, in one picture" put actual icons and pictures in the graph nodes, 
+so it is more suggestive, 
+2. Remove the remote, paid services line, that is not a bug, engineering wise you outsource when you can t do something and that s fine, don t mention it
+3. When I click, transitions are at times a bit laggy, is that because of my pc or is the implementation at fault?
+4. Give me a query that shows how we use the taxonomy and ontology in the graph
+
+Chapter 1 (Where it started)
+1. The text on the boromir edges is overflowing onto the arrows and into the nodes a bit,
+size is good, modify spacing slightly and make text background translucid (this works since the slide background is the same)
+2. The boromir photo in the boromir does not fit in the node, we can only see his nose, forehead and eyes, pick another photo or downsize this one
+
+Chapter 3 (Read)
+1. The model of the page you created is better this time, keep it mostly like this but swap status type
+ year origin tags and links with about origin spread and references, 
+2. On page ten, the bottom middle box seems to be overflowing past botoom of the page by a tiny bit
+it is also bigger then the two boxes on the side, I like this design so keep it but just make it fit better
+3. (Question to be answered, not design modification) Why does spaCy not identify all nouns on the page?
+How does it actually find the names under the hood?
+
+Chapter 4 (Link)
+1. What do 0.85 and 0.15 signyfy in the linking part? 
+
+Chapter 5 (Tell the story), 
+1. The text on the graph on the second slide isn't 
+fitting properly, and the graph could be 20-25% bigger, there is a lot of empty space
+2.
+
+
+Chapter 8 (Give it meaning)
+1.What does it mean that every term is declared?
+2. The arrows in between slides can use a bit more spacing between them and the slides
+
+Chapter 9 (Weave the Graph)
+1. This bubble could be a bit bigger, say 1-3%, there is a very tiny amount of overflowing text on slide 4 when we view this Chapter
+2. The graph of the graph problem persists, The edges are a mess, writing from multiple edges overlaps.
+Rearrange this one in order to make sure all text is legible and links are easy to understand. 
+Same problem as before, background of the text is white and not transparent
+
+The graph in numbers
+1. The peask year for twitter isn t visible
+2. same problem with arrow spacing here too, another ideea would be to make the arrow slimmer

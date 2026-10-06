@@ -1,52 +1,29 @@
-"""Tests for kg/events.py — narrative section -> event rows, on the real
-client over a stubbed HTTP session (no model server is ever contacted).
+"""kg/events.py: narrative section -> event rows, on the real client over a
+stubbed HTTP session (no model server is contacted).
 
-What these pin, beyond "it works" (extraction 2.2.0):
-
-  * **Nothing the model adds reaches the store, and nothing valid is
-    thrown away.** The model answers with sentence NUMBERS; the evidence
-    text is copied from the page by the pipeline. Every textual value it
-    does return is GROUNDED — resolved to the span of the section it names
-    and stored in the section's own words. ``ExtractiveTests`` feeds it the
-    exact wordings seen in review: a year the page omits ("May 7th, 2010"
-    for "On May 7th"), which must survive as the page's words; an aside
-    ("Tumblr (the blogging site)"), which must lose the aside; an invented
-    actor, which must ground to nothing at all; and a date the sentences
-    contradict, which must not be quietly corrected to theirs.
-  * **``audit()`` is an independent second check,** and ``extract()``
-    refuses to write any record that fails it — so a validator bug cannot
-    leak an addition either.
-  * **Links, citations, photos and embeds are attached by position,** not
-    by the model: a link inside the event's sentences, the reference its
-    ``[n]`` marker cites, the media shown after its paragraph.
-  * **Nothing is capped:** no truncation, no ceiling on events.
-  * **The model policy is criteria, not a name:** never a reasoning model,
-    on the requested model or on any fallback.
-  * **Every sentence is in an event** (4.0.0, ``CoverageTests``): what the
-    model leaves out continues the event before it, or is an event of its
-    own when it narrates a happening; ``audit()`` refuses a gap.
-  * the artifact is APPENDED, never rewritten; ``{"events": []}`` is not a
-    failure; frame_key agrees with mongo_base.url_doc_id.
-
-Run inside the Airflow container:
-    docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
-        python -m pytest /opt/airflow/dags/tests/test_kg_events.py -v
+Pinned beyond "it works": nothing the model adds reaches the store and nothing
+valid is thrown away (the model answers with sentence NUMBERS; every value it
+returns is grounded to the section's own words); audit() checks independently
+and extract() writes nothing that fails it; links, citations and media attach
+by position; nothing is capped; the model policy is criteria, never a
+reasoning model; every sentence is in an event (4.0.0); the artifact is
+appended, never rewritten. Case ids name the KYM entry a case came from in
+review, where it did. Every table case is also audited.
 """
 import json
-import os
-import tempfile
-import unittest
 
+import pytest
 from jsonschema import Draft202012Validator
 
+from helpers import KG_CONFIG
 from modules import openwebui_client as owc
 from modules.kg import events as ev
-from test_openwebui_client import CCDD, UI, Resp, StubSession, by_model, client
+from modules.mongo_base import url_doc_id
+from openwebui_stub import CCDD, UI, Resp, StubSession, by_model, client
 
-SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "..", "kg_config",
-                           "event_extraction_schema.json")
+SCHEMA_PATH = str(KG_CONFIG / "event_extraction_schema.json")
 MINISTRAL = "ministral-3:14b"
-REQ = ev.model_request({})              # the policy, with the default model
+REQ = ev.model_request({})
 
 URL = "https://knowyourmeme.com/memes/doge"
 KYM_LINK = "https://knowyourmeme.com/memes/sites/tumblr"
@@ -54,7 +31,9 @@ REF_3 = "https://web.archive.org/web/2010/https://tumblr.com/post/1"
 IMG = "https://i.kym-cdn.com/photos/images/original/000/1.jpg"
 TIKTOK = "https://www.tiktok.com/@buhfingeranator43/video/1"
 
-# Two paragraphs, as the parser stores them (citation marker included).
+# Two paragraphs as the parser stores them, citation marker included. Since
+# 4.0.0 every sentence is in an event: in a reply naming only sentence 1, 2
+# ("allegedly first called ...") continues it and 3, 4, 5 are events of their own.
 P0 = ("The original photo of Kabosu was posted to Tumblr [3] on February "
       "23rd, 2010 by blogger Atsuko Sato. It was allegedly first called "
       "“doge” on 4chan.")
@@ -62,38 +41,30 @@ P1 = ("On May 7th, YouTuber KwandaoRen66 uploaded a video. That same day, "
       "the same YouTuber posted a second one. In 2013 it spread to Reddit.")
 
 
-def silent(_):
-    pass
-
-
 def entry(**over):
-    base = {
-        "url": URL, "title": "Doge", "category": "meme",
-        "parser_version": "1.6.0",
-        "external_references": [
-            {"index": 3, "text": "Tumblr post", "url": REF_3},
-            {"index": 9, "text": "unrelated", "url": "https://example.org/9"}],
-        "sections": [
-            {"kind": "about", "heading": "About", "text": ["Doge is a meme."]},
-            {"kind": "origin", "heading": "Origin", "text": [P0, P1],
-             "links": [{"text": "Tumblr", "url": KYM_LINK, "paragraph": 0,
-                        "offset": P0.index("Tumblr")}],
-             "images": [{"src": IMG, "caption": "Kabosu", "after_paragraph": 0}],
-             "embeds": [{"url": TIKTOK, "platform": "tiktok",
-                         "after_paragraph": 1}]},
-        ],
-    }
-    base.update(over)
-    return base
+    return {"url": URL, "title": "Doge", "category": "meme", "parser_version": "1.6.0",
+            "external_references": [{"index": 3, "text": "Tumblr post", "url": REF_3},
+                                    {"index": 9, "text": "unrelated", "url": "https://example.org/9"}],
+            "sections": [
+                {"kind": "about", "heading": "About", "text": ["Doge is a meme."]},
+                {"kind": "origin", "heading": "Origin", "text": [P0, P1],
+                 "links": [{"text": "Tumblr", "url": KYM_LINK, "paragraph": 0,
+                            "offset": P0.index("Tumblr")}],
+                 "images": [{"src": IMG, "caption": "Kabosu", "after_paragraph": 0}],
+                 "embeds": [{"url": TIKTOK, "platform": "tiktok", "after_paragraph": 1}]}],
+            **over}
 
 
 def unit(**over):
     return ev.section_unit(entry(**over), "origin")
 
 
+def origin(*paragraphs):
+    return unit(sections=[{"kind": "origin", "heading": "Origin", "text": list(paragraphs)}])
+
+
 def schema():
-    item, _sha = ev.load_schema(SCHEMA_PATH)
-    return item
+    return ev.load_schema(SCHEMA_PATH)[0]
 
 
 def validator(u=None):
@@ -101,18 +72,20 @@ def validator(u=None):
 
 
 def event(**over):
-    """A model reply row. Since 2.1.0 it carries the date WORDS only — the
-    pipeline parses them, so there is no date or precision to send. Since
-    3.0.0 places are a LIST (``locations``); ``location=`` is kept as a
-    shorthand for one place, or none."""
-    row = {"sentences": [1], "date_text": "February 23rd, 2010",
-           "locations": ["Tumblr"], "location_type": "platform",
-           "actors": ["Atsuko Sato"], "certainty": "confirmed"}
+    """A model reply row: date WORDS only (2.1.0), places a list (3.0.0);
+    ``location=`` is shorthand for one place or none."""
+    row = {"sentences": [1], "date_text": "February 23rd, 2010", "locations": ["Tumblr"],
+           "location_type": "platform", "actors": ["Atsuko Sato"], "certainty": "confirmed"}
     if "location" in over:
         one = over.pop("location")
         row["locations"] = [one] if one else []
-    row.update(over)
-    return row
+    return {**row, **over}
+
+
+def E(*sentences, words=None, places=(), actors=(), **over):
+    """A row with only what is given: no date words, places or actors."""
+    return event(sentences=list(sentences), date_text=words, locations=list(places),
+                 actors=list(actors), **over)
 
 
 def run(*rows, u=None):
@@ -120,11 +93,6 @@ def run(*rows, u=None):
 
 
 def at(out, first):
-    """The event that starts at sentence ``first``. Since 4.0.0 every
-    sentence of the section is in an event, so a reply naming one event
-    comes back with the fixture's other sentences covered too: sentence 2
-    ("It was allegedly first called ...") continues sentence 1's event, and
-    3, 4 and 5 each narrate a happening of their own."""
     return next(e for e in out if e["sentences"][0] == first)
 
 
@@ -132,1760 +100,924 @@ def spans(out):
     return [e["sentences"] for e in out]
 
 
+def dates(out):
+    return [e["date"] for e in out]
+
+
+def pick(row, names):
+    return row[names[0]] if len(names) == 1 else tuple(row[n] for n in names)
+
+
+def rows(*names):
+    """Every event's fields, in order: comparing with a list pins the count."""
+    return lambda out: [pick(r, names) for r in out]
+
+
+def first(k, *names):
+    """The fields of the event that starts at sentence ``k``."""
+    return lambda out: pick(at(out, k), names)
+
+
+def check(paragraphs, model_rows, view, want):
+    u = origin(*paragraphs) if paragraphs else unit()
+    out = run(*model_rows, u=u)
+    assert view(out) == want
+    assert ev.audit({"events": list(out)}, u) == []
+
+
 def routes(handler):
     route = by_model({MINISTRAL: handler})
     return {("POST", CCDD, owc.CHAT_PATH): route, ("POST", UI, owc.CHAT_PATH): route}
 
 
-def reply(rows):
-    return routes(lambda body: Resp(
-        200, {"message": {"content": json.dumps({"events": rows})}}))
-
-
-def recorder(rows):
-    bodies = []
-
-    def handler(body):
-        bodies.append(body)
-        return Resp(200, {"message": {"content": json.dumps({"events": rows})}})
-
-    return routes(handler), bodies
-
-
-class SchemaTests(unittest.TestCase):
-    def test_the_model_grammar_has_no_derived_and_no_free_text_fields(self):
-        item = ev.request_format(schema())["properties"]["events"]["items"]
-        for derived in ("frame_url", "source_section", "source_text",
-                        "links", "images", "embeds", "date", "date_precision",
-                        "date_basis", "date_anchor"):
-            self.assertNotIn(derived, item["properties"], derived)
-            self.assertNotIn(derived, item["required"], derived)
-        self.assertNotIn("summary", item["properties"])      # removed in 2.0.0
-        self.assertIn("sentences", item["required"])
-        self.assertIn("date_text", item["properties"])   # the words, only
-
-    def test_nothing_is_capped(self):
-        events = ev.request_format(schema())["properties"]["events"]
-        self.assertNotIn("maxItems", events)
-
-    def test_the_grammar_is_itself_a_valid_schema(self):
-        Draft202012Validator.check_schema(ev.request_format(schema()))
-
-    def test_the_tracked_schema_still_describes_the_whole_stored_row(self):
-        props = schema()["properties"]
-        for key in ("source_text", "links", "images", "embeds", "actors"):
-            self.assertIn(key, props)
-        self.assertTrue(props["source_text"]["x-derived"])
-
-
-class SentenceTests(unittest.TestCase):
-    def split(self, text):
-        return [text[a:b] for a, b in ev.split_sentences(text)]
-
-    def test_plain_sentences(self):
-        self.assertEqual(self.split("One. Two! Three?"), ["One.", "Two!", "Three?"])
-
-    def test_abbreviations_and_initials_do_not_end_a_sentence(self):
-        self.assertEqual(self.split("Mr. Smith met J. K. Rowling in the U.S. on "
-                                    "Jan. 3rd. Then he left."),
-                         ["Mr. Smith met J. K. Rowling in the U.S. on Jan. 3rd.",
-                          "Then he left."])
-
-    def test_a_quotation_is_not_cut_into_sentences(self):
-        """chuckster, murica, she-took-the-fucking-kids: the quote's second
-        half was a "sentence" of its own that no event covered."""
-        self.assertEqual(self.split(
-            'On October 15th, 2019, Redditor x wrote, "If I have to see it '
-            'one more time lol. I honestly think this level is the worst." '
-            'Then it spread.'),
-            ['On October 15th, 2019, Redditor x wrote, "If I have to see it one '
-             'more time lol. I honestly think this level is the worst."',
-             'Then it spread.'])
-        self.assertEqual(self.split(
-            'In May 2012, a subreddit titled "\'Murica! Fuck Yeah!" was '
-            'created. It grew.'),
-            ['In May 2012, a subreddit titled "\'Murica! Fuck Yeah!" was created.',
-             'It grew.'])
-        self.assertEqual(self.split("He wrote, “One. Two.” Then left."),
-                         ["He wrote, “One. Two.”", "Then left."])
-
-    def test_an_unclosed_quote_does_not_swallow_the_paragraph(self):
-        """its-a-gay-bar-pamela: '"It's a gay bar, Pamela t-shirts' never
-        closes its quote."""
-        self.assertEqual(self.split('Days later, "It\'s a gay bar t-shirts '
-                                    'appeared. On October 19th, x shared one.'),
-                         ['Days later, "It\'s a gay bar t-shirts appeared.',
-                          'On October 19th, x shared one.'])
-        # three straight quotes: which two pair up is unknowable, so none do
-        self.assertEqual(self.split('Days later, "It\'s a gay bar t-shirts '
-                                    'appeared. Then x shared "the shirt" online.'),
-                         ['Days later, "It\'s a gay bar t-shirts appeared.',
-                          'Then x shared "the shirt" online.'])
-
-    def test_titles_ranks_and_initials_after_a_lowercase_word(self):
-        self.assertEqual(self.split("It is where RAdm. Daniel Hagari walks. "
-                                    "Then singer K. Michelle shouted. Wojak "
-                                    "a.k.a. That Feel Guy frowns. A Super "
-                                    "Smash Bros. Ultimate meme spread."),
-                         ["It is where RAdm. Daniel Hagari walks.",
-                          "Then singer K. Michelle shouted.",
-                          "Wojak a.k.a. That Feel Guy frowns.",
-                          "A Super Smash Bros. Ultimate meme spread."])
-        for text in ("It went viral on X. For example, it did.",
-                     "It moved to the platform X. Then it died.",
-                     "They met in B. Then they left."):
-            with self.subTest(text=text):
-                self.assertEqual(len(self.split(text)), 2)
-
-    def test_a_citation_marker_stays_with_the_sentence_it_follows(self):
-        self.assertEqual(self.split("It went viral. [4] The next day it died."),
-                         ["It went viral. [4]", "The next day it died."])
-
-    def test_spans_are_verbatim_slices_of_the_paragraph(self):
-        for a, b in ev.split_sentences(P0):
-            self.assertIn(P0[a:b], P0)
-
-    def test_the_model_reads_numbered_sentences_without_markers(self):
-        text = ev.numbered_text(unit())
-        self.assertTrue(text.startswith("1: The original photo"))
-        self.assertIn("\n\n3: On May 7th", text)       # paragraph break kept
-        self.assertNotIn("[3]", text)
-
-
-class SectionUnitTests(unittest.TestCase):
-    def test_the_whole_section_is_the_unit_never_truncated(self):
-        long = "A sentence about the meme. " * 400      # ~11k characters
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [long]}])
-        self.assertEqual(u["source_chars"], len(long))
-        self.assertEqual(len(u["sentences"]), 400)
-        self.assertNotIn("truncated", u)
-
-    def test_only_citations_the_section_actually_marks_are_resolved(self):
-        self.assertEqual(unit()["citations"], {"3": REF_3})
-
-    def test_the_stamp_moves_when_the_media_move_not_only_the_text(self):
-        base = unit()["source_sha256"]
-        moved = entry()
-        moved["sections"][1]["images"][0]["after_paragraph"] = 1
-        self.assertNotEqual(ev.section_unit(moved, "origin")["source_sha256"], base)
-
-    def test_the_infobox_origin_field_is_not_the_origin_section(self):
-        u = unit(origin="Tumblr")
-        self.assertIn("Kabosu", u["paragraphs"][0])
-
-    def test_a_missing_or_empty_section_is_no_unit(self):
-        self.assertIsNone(ev.section_unit(entry(), "spread"))
-        self.assertIsNone(ev.section_unit({"title": "no url"}, "origin"))
-
-
-class ExtractiveTests(unittest.TestCase):
-    """Every addition seen in review, fed back in. None may survive."""
-
-    def test_the_evidence_is_copied_from_the_page_not_written_by_the_model(self):
-        row = at(run(event()), 1)
-        # sentence 2, which only says what it was called, continues it
-        self.assertEqual(row["sentences"], [1, 2])
-        self.assertEqual(row["source_text"], P0)               # [3] included
-        self.assertIn("[3]", row["source_text"])
-
-    def test_a_span_across_paragraphs_is_joined_like_the_frame_text(self):
-        row = at(run(event(sentences=[2, 3], date_text=None)), 2)
-        self.assertIn("\n\n", row["source_text"])
-        for part in row["source_text"].split("\n\n"):
-            self.assertIn(part, P0 + "\n\n" + P1)
-
-    def test_an_added_qualifier_grounds_to_the_pages_own_words(self):
-        """2.2.0: a near miss is resolved, not thrown away. The aside is
-        the model's; "Tumblr" is the page's, so "Tumblr" is what is kept."""
-        out = run(event(location="Tumblr (the blogging site)"))
-        self.assertEqual(out[0]["locations"], ["Tumblr"])
-        self.assertEqual(out[0]["location_type"], "platform")
-
-    def test_an_actor_that_names_nobody_is_not_an_actor(self):
-        """"people", "users", "they" are on the page and ground perfectly
-        well; as mk:eventActor literals they are noise nothing can join
-        on. qwen3.8:27b returned exactly these on retroslop."""
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "In May 2013 people posted it. Later, users and Atsuko Sato did too."]}])
-        out = run(event(sentences=[1], date_text="In May 2013", location=None,
-                        actors=["people"]),
-                  event(sentences=[2], date_text=None, location=None,
-                        actors=["users", "Atsuko Sato"]), u=u)
-        self.assertEqual(out[0]["actors"], [])
-        self.assertEqual(out[1]["actors"], ["Atsuko Sato"])
-
-    def test_an_embellished_actor_grounds_and_an_invented_one_does_not(self):
-        out = run(event(actors=["Atsuko Sato", "Atsuko Sato (blogger)",
-                                "Kabosu's vet"]))
-        # The first two are one person as the page names her; the vet is
-        # nobody the page names, and "Kabosu" alone does not stand in for
-        # them — grounding needs the HEAD of what the model wrote.
-        self.assertEqual(out[0]["actors"], ["Atsuko Sato"])
-
-    def test_an_actor_named_elsewhere_in_the_section_is_kept(self):
-        # Coreference: "the same YouTuber" in sentence 4, named in sentence 3.
-        out = run(event(sentences=[4], date_text="That same day", location=None,
-                        actors=["KwandaoRen66"]))
-        self.assertEqual(at(out, 4)["actors"], ["KwandaoRen66"])
-
-    def test_a_year_the_page_omits_no_longer_costs_the_date(self):
-        """The regression this version exists for. KYM states the year once
-        and then omits it ("On May 7th, ..."); the model writes it back in.
-        2.1 required the phrase verbatim and lost 34 of 421 pilot dates —
-        and every "that same day" after one of them was then anchored to
-        the wrong event. The words are now grounded to the page's, and the
-        year comes from earlier in the section, as it always did."""
-        row = at(run(event(sentences=[3], date_text="May 7th, 2010",
-                           location=None, actors=[])), 3)
-        self.assertEqual(row["date_text"], "May 7th")       # the page's words
-        self.assertEqual((row["date"], row["date_basis"]), ("2010-05-07", "stated"))
-
-    def test_date_words_the_sentences_contradict_ground_to_nothing(self):
-        """Grounding resolves a WORDING difference, never a different date:
-        "June 2nd" where the sentence says May 7th is not a near miss —
-        the event is dated by the words the sentence OPENS with instead."""
-        row = at(run(event(sentences=[3], date_text="June 2nd, 2010",
-                           location=None, actors=[])), 3)
-        self.assertEqual((row["date_text"], row["date"]), ("May 7th", "2010-05-07"))
-        row = at(run(event(sentences=[2], date_text="June 2nd, 2010",
-                           location="4chan", actors=[])), 2)  # no opening date: none
-        self.assertIsNone(row["date_text"])
-        self.assertIsNone(row["date"])
-
-    def test_date_words_from_another_sentence_ground_to_nothing(self):
-        out = run(event(date_text="May 7th"))                  # sentence 3's words
-        self.assertIsNone(out[0]["date_text"])
-
-    def test_typography_and_markers_are_not_additions(self):
-        out = run(event(sentences=[2], date_text=None, location="4chan", actors=[],
-                        certainty="unconfirmed"))
-        self.assertEqual(at(out, 2)["locations"], ["4chan"])
-        out = run(event(location='"Tumblr"'))              # quote marks: not the name
-        self.assertEqual(at(out, 1)["locations"], ["Tumblr"])
-
-    def test_an_event_pointing_at_no_sentence_fails_the_reply(self):
-        """Not silently dropped: an event with no evidence is a broken
-        REPLY, so the call is retried and then dead-lettered — a section
-        that is visibly missing, never a row that quietly disappeared."""
-        self.assertRaises(ValueError, validator(),
-                          json.dumps({"events": [event(sentences=[99])]}))
-
-    def test_a_sentence_ending_in_X_is_a_sentence(self):
-        """The splitter read "... on X." as an initial and merged the two
-        sentences; the model, reading the prose, numbered them its own way
-        and pointed past the end of the section — which cost a whole
-        section of the pilot. A name's initial still does not end one."""
-        splits = ev.split_sentences
-        text = "It went viral on X. For example, @foo posted it."
-        self.assertEqual([text[a:b] for a, b in splits(text)],
-                         ["It went viral on X.", "For example, @foo posted it."])
-        for name in ("J. K. Rowling wrote it.", "By George R. R. Martin now."):
-            whole = name + " It sold well."
-            self.assertEqual([whole[a:b] for a, b in splits(whole)],
-                             [name, "It sold well."])
-
-    def test_a_citation_marker_ending_a_paragraph_is_not_a_sentence(self):
-        """KYM ends paragraphs with "[2]" constantly. Splitting it off made
-        an EMPTY numbered line for the model and moved the citation to a
-        sentence nothing narrates — 687 orphaned citations across a
-        2,909-section scan, 19% of sections affected."""
-        for text in ('A character named Mr. Armstrong first appeared. [2]',
-                     'The film premiered in the United States. [1]',
-                     'It spread to Reddit. [3] [4]'):
-            self.assertEqual([text[a:b] for a, b in ev.split_sentences(text)],
-                             [text], text)
-        both = 'He posted it on Twitter. [6] Then it spread. [7]'
-        self.assertEqual([both[a:b] for a, b in ev.split_sentences(both)],
-                         ['He posted it on Twitter. [6]', 'Then it spread. [7]'])
-        # and every sentence still carries words once markers are hidden
-        u = unit(sections=[{"kind": "origin", "heading": "Origin",
-                            "text": ["It spread to Reddit. [3]"]}])
-        self.assertTrue(all(line.split(": ", 1)[1].strip()
-                            for line in ev.numbered_text(u).splitlines() if line))
-
-    def test_valid_sentences_survive_an_invalid_one(self):
-        out = run(event(sentences=[1, 99]))
-        self.assertEqual(at(out, 1)["sentences"], [1, 2])   # 2 continues it
-
-    def test_the_same_sentences_and_date_twice_is_one_event(self):
-        """Merged, not dropped — the same event read twice is one event,
-        and whatever the second reading saw is kept."""
-        out = run(event(location=None, actors=["Atsuko Sato"]),
-                  event(location="Tumblr", actors=["Kabosu"]))
-        self.assertEqual([e["sentences"][0] for e in out].count(1), 1)
-        self.assertEqual(at(out, 1)["locations"], ["Tumblr"])
-        self.assertEqual(at(out, 1)["actors"], ["Atsuko Sato", "Kabosu"])
-
-    def test_an_empty_reply_still_covers_every_sentence(self):
-        """4.0.0: ``{"events": []}`` no longer leaves a section with no
-        events. Each sentence that narrates a happening becomes one, dated
-        from its own words; the rest continue the event before them."""
-        out = run()
-        self.assertEqual(spans(out), [[1, 2], [3], [4], [5]])
-        self.assertEqual(at(out, 1)["date"], "2010-02-23")
-        self.assertEqual(at(out, 5)["date"], "2013")
-
-    def test_a_section_that_narrates_nothing_is_one_undated_event(self):
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "The comic depicts a dog. It is drawn in pencil."]}])
-        [row] = run(u=u)
-        self.assertEqual(row["sentences"], [1, 2])
-        self.assertEqual(row["source_text"], "The comic depicts a dog. It is drawn in pencil.")
-        self.assertIsNone(row["date"])
-        self.assertEqual((row["actors"], row["locations"]), ([], []))
-
-    def test_a_broken_reply_still_fails_the_unit(self):
-        self.assertRaises(ValueError, validator(), "Here are the events:")
-        self.assertRaises(KeyError, validator(), json.dumps({"rows": []}))
-        self.assertRaises(TypeError, validator(), json.dumps({"events": {}}))
-
-    def test_unknown_keys_never_reach_the_row(self):
-        row = at(run(event(summary="A made-up summary", confidence=0.9)), 1)
-        self.assertNotIn("summary", row)
-        self.assertNotIn("confidence", row)
-
-
-class DateParsingTests(unittest.TestCase):
-    """2.1.0: the pipeline parses the date words; the model never dates
-    anything. On the v2 pilot the model read "On June 4th, 2014" as
-    2014-06-03 — a disagreement that cannot exist now."""
-
-    def test_phrases_parse_to_their_own_precision(self):
-        for phrase, expected in (
-                ("February 23rd, 2010", ("2010-02-23", "day")),
-                ("on Feb 23, 2010", ("2010-02-23", "day")),
-                ("the 23rd of February, 2010", ("2010-02-23", "day")),
-                ("May 2013", ("2013-05", "month")),
-                ("early 2013", ("2013", "year")),
-                ("In 2013", ("2013", "year"))):
-            with self.subTest(phrase=phrase):
-                self.assertEqual(ev.parse_date_phrase(phrase), expected)
-
-    def test_a_missing_year_comes_from_the_section_never_from_nowhere(self):
-        self.assertEqual(ev.parse_date_phrase("On May 7th", 2010),
-                         ("2010-05-07", "day"))
-        self.assertEqual(ev.parse_date_phrase("On May 7th"), (None, "none"))
-
-    def test_an_impossible_or_absent_date_is_none(self):
-        for phrase in ("February 31st, 2010", "In their post", "", None,
-                       "shortly afterwards"):
-            with self.subTest(phrase=phrase):
-                self.assertEqual(ev.parse_date_phrase(phrase), (None, "none"))
-
-    def test_relative_phrases_are_recognised_and_others_are_not(self):
-        for phrase, days in (("That same day", 0), ("Later that day", 0),
-                             ("on the same day", 0), ("An hour later", 0),
-                             ("a few minutes later", 0), ("The following day", 1),
-                             ("a day later", 1), ("three days later", 3),
-                             ("2 days later", 2)):
-            with self.subTest(phrase=phrase):
-                self.assertEqual(ev.relative_offset(phrase), days)
-        for phrase in ("shortly after", "the following week", "later that year",
-                       "In 2013", "eventually"):
-            with self.subTest(phrase=phrase):
-                self.assertIsNone(ev.relative_offset(phrase))
-
-
-class RelativeDateTests(unittest.TestCase):
-    """The fix asked for on 2026-09-21: "that same day" is dated by the
-    pipeline from the event before it, not guessed by the model."""
-
-    def test_a_relative_event_is_dated_from_the_one_before_it(self):
-        # Sentence 3 is "On May 7th, ..." (its year, 2010, comes from
-        # sentence 1); sentence 4 is "That same day, ...".
-        out = run(event(sentences=[3], date_text="On May 7th", location=None,
-                        actors=[]),
-                  event(sentences=[4], date_text="That same day", location=None,
-                        actors=[]))
-        first, second = at(out, 3), at(out, 4)
-        self.assertEqual([first["date"], second["date"]], ["2010-05-07", "2010-05-07"])
-        self.assertEqual([first["date_basis"], second["date_basis"]],
-                         ["stated", "relative"])
-        self.assertEqual(second["date_anchor"], first["event_id"])
-
-    def test_the_offset_is_applied(self):
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "On February 23rd, 2010 it was posted. The following day it spread. "
-            "Three days later it peaked."]}])
-        out = run(event(sentences=[1], date_text="On February 23rd, 2010",
-                        location=None, actors=[]),
-                  event(sentences=[2], date_text="The following day",
-                        location=None, actors=[]),
-                  event(sentences=[3], date_text="Three days later",
-                        location=None, actors=[]), u=u)
-        self.assertEqual([e["date"] for e in out],
-                         ["2010-02-23", "2010-02-24", "2010-02-27"])
-
-    def test_a_relative_phrase_with_nothing_before_it_stays_undated(self):
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "The comic depicts a dog. That same day, @x posted it."]}])
-        out = run(event(sentences=[2], date_text="That same day",
-                        location=None, actors=[]), u=u)
-        self.assertEqual(spans(out), [[1, 2]])       # background joins the first
-        self.assertIsNone(out[0]["date"])
-        self.assertEqual(out[0]["date_text"], "That same day")   # words kept
-
-    def test_a_missing_year_comes_from_a_date_not_from_any_number(self):
-        """A year token is not a year context. The pilot took years out of
-        quoted captions ("return to 2010"), festival names ("Stagecoach
-        2025") and asides ("it didn't establish the year 2026") — 10 of 339
-        dated events, every one of them wrong."""
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "On March 13th, 2025, it appeared. "
-            "The caption read, \"Reject modern memes, return to 2010.\" "
-            "On April 24th, it spread."]}])
-        out = run(event(sentences=[1], date_text="March 13th, 2025",
-                        location=None, actors=[]),
-                  event(sentences=[3], date_text="April 24th",
-                        location=None, actors=[]), u=u)
-        self.assertEqual([e["date"] for e in out], ["2025-03-13", "2025-04-24"])
-
-    def test_a_year_quoted_later_in_the_event_cannot_supply_it(self):
-        """The context stops where the event's own date words begin, so a
-        date quoted after them ("We will return to January 1st, 2016") is
-        not the year, while one earlier in the same sentences still is."""
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "On September 23rd, 2025, it started. "
-            "On October 1st, a video said, \"We will return to January 1st, 2016.\""]}])
-        out = run(event(sentences=[1], date_text="September 23rd, 2025",
-                        location=None, actors=[]),
-                  event(sentences=[2], date_text="October 1st",
-                        location=None, actors=[]), u=u)
-        self.assertEqual([e["date"] for e in out], ["2025-09-23", "2025-10-01"])
-
-    def test_a_year_the_section_names_once_dates_what_precedes_it(self):
-        """KYM often states the year AFTER the first event of a section
-        ("On April 13th, ... On May 2nd, 2019, ..."), which left 30 of
-        5,612 sampled events undated on a day the page gives. One year
-        only: two years say nothing about which April is meant."""
-        one = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "On April 13th, SethEverman posted a video. "
-            "On May 2nd, 2019, it was reposted."]}])
-        out = run(event(sentences=[1], date_text="April 13th", location=None,
-                        actors=[]),
-                  event(sentences=[2], date_text="May 2nd, 2019", location=None,
-                        actors=[]), u=one)
-        self.assertEqual([e["date"] for e in out], ["2019-04-13", "2019-05-02"])
-
-        two = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "On May 25th, it was posted. It spread in June 2019. "
-            "By March 2020, it was everywhere."]}])
-        [first, *_] = run(event(sentences=[1], date_text="May 25th",
-                                location=None, actors=[]),
-                          event(sentences=[2], date_text="June 2019",
-                                location=None, actors=[]),
-                          event(sentences=[3], date_text="March 2020",
-                                location=None, actors=[]), u=two)
-        self.assertIsNone(first["date"])          # 2019 or 2020? neither
-
-    def test_a_decade_dates_nothing(self):
-        """"the first half of the 2010s" was dating events to 2010-01-01.
-        date_precision has no "decade", and one year out of ten is a
-        guess. "2016's election" is still the year 2016."""
-        for phrase in ("During the first half of the 2010s", "the mid-2000s",
-                       "the late 1990s", "the 2010s"):
-            self.assertEqual(ev.parse_date_phrase(phrase, None), (None, "none"),
-                             phrase)
-        self.assertEqual(ev.parse_date_phrase("2016's election", None),
-                         ("2016", "year"))
-
-    def test_the_anchor_is_the_event_not_whatever_shares_its_sentence(self):
-        """Two events in one sentence is ordinary KYM ("X posted; that same
-        day Y reposted"), and 74 of 5,612 sampled events start on a
-        sentence another event also starts on. Keying the anchor by
-        sentence number let an undated event in between steal the link."""
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "On May 4th, 2013 it appeared. It was popular. "
-            "That same day it reached Reddit."]}])
-        # A and B both start at sentence 1; B is undated and sits between A
-        # and the event that must anchor to A.
-        out = run(event(sentences=[1], date_text="May 4th, 2013",
-                        location=None, actors=[]),
-                  event(sentences=[1, 2], date_text=None, location=None,
-                        actors=[]),
-                  event(sentences=[3], date_text="That same day",
-                        location="Reddit", location_type="platform",
-                        actors=[]), u=u)
-        by_id = {e["event_id"]: e for e in out}
-        [anchored] = [e for e in out if e["date_basis"] == "relative"]
-        self.assertEqual(anchored["date"], "2013-05-04")
-        self.assertEqual(by_id[anchored["date_anchor"]]["sentences"], [1])
-        self.assertEqual(by_id[anchored["date_anchor"]]["date"], "2013-05-04")
-
-    def test_a_year_the_phrase_states_beats_the_context(self):
-        """"Around June 7th or June 8th, 2026" attaches its year to the
-        SECOND day; the first was taking a year from elsewhere entirely.
-        (Since 3.0.0 an either/or of two days is dated at the month that
-        holds both — which of the two, the page does not say.)"""
-        self.assertEqual(
-            ev.parse_date_phrase("Around June 7th or June 8th, 2026", 2017),
-            ("2026-06", "month"))
-
-    def test_a_relative_phrase_cannot_shift_a_month_precision_date(self):
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "In May 2013 it appeared. The following day it spread."]}])
-        out = run(event(sentences=[1], date_text="In May 2013", location=None,
-                        actors=[]),
-                  event(sentences=[2], date_text="The following day",
-                        location=None, actors=[]), u=u)
-        self.assertEqual(out[0]["date"], "2013-05")
-        self.assertIsNone(out[1]["date"])        # "the next day" of a month?
-
-    def test_same_day_inherits_a_coarse_precision_unchanged(self):
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "In May 2013 it appeared. That same day it spread."]}])
-        out = run(event(sentences=[1], date_text="In May 2013", location=None,
-                        actors=[]),
-                  event(sentences=[2], date_text="That same day", location=None,
-                        actors=[]), u=u)
-        self.assertEqual([(e["date"], e["date_precision"]) for e in out],
-                         [("2013-05", "month"), ("2013-05", "month")])
-
-    def test_a_chain_follows_the_page(self):
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "On May 1st, 2020 it began. The following day it grew. "
-            "That same day it peaked."]}])
-        out = run(event(sentences=[1], date_text="On May 1st, 2020",
-                        location=None, actors=[]),
-                  event(sentences=[2], date_text="The following day",
-                        location=None, actors=[]),
-                  event(sentences=[3], date_text="That same day",
-                        location=None, actors=[]), u=u)
-        self.assertEqual([e["date"] for e in out],
-                         ["2020-05-01", "2020-05-02", "2020-05-02"])
-        self.assertEqual(out[2]["date_anchor"], out[1]["event_id"])
-
-    def test_a_relative_phrase_in_the_sentences_counts_even_if_unquoted(self):
-        # The model returned no date words; sentence 4 begins "That same day".
-        out = run(event(sentences=[3], date_text="On May 7th", location=None,
-                        actors=[]),
-                  event(sentences=[4], date_text=None, location=None, actors=[]))
-        by_sentence = {e["sentences"][0]: e for e in out}
-        self.assertEqual(by_sentence[4]["date"], "2010-05-07")
-        self.assertEqual(by_sentence[4]["date_basis"], "relative")
-
-    def test_an_absolute_date_in_the_sentences_is_NOT_taken_that_way(self):
-        """A sentence often carries a date belonging to what it reports.
-        Taking it would date the event by guesswork, so an event whose
-        words are missing stays undated."""
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "The screenshot shows that on June 3rd, 2014, a user posted it."]}])
-        [row] = run(event(sentences=[1], date_text=None, location=None,
-                          actors=[]), u=u)
-        self.assertIsNone(row["date"])
-
-    def test_resolution_follows_the_PAGE_order_not_the_replys(self):
-        """The model may list events in any order; "that same day" means the
-        day of the sentence before it on the page, not the row before it in
-        the reply."""
-        out = run(event(sentences=[4], date_text="That same day", location=None,
-                        actors=[]),                      # listed FIRST
-                  event(sentences=[3], date_text="On May 7th", location=None,
-                        actors=[]))                      # but comes after it
-        by_sentence = {e["sentences"][0]: e for e in out}
-        self.assertEqual(by_sentence[3]["date"], "2010-05-07")
-        self.assertEqual(by_sentence[4]["date"], "2010-05-07")
-        self.assertEqual(by_sentence[4]["date_basis"], "relative")
-
-    def test_a_later_event_never_dates_an_earlier_one(self):
-        # The anchor must PRECEDE: a date further down the page is not
-        # evidence for something narrated before it.
-        out = run(event(sentences=[2], date_text="That same day", location="4chan",
-                        actors=[]), event())
-        by_sentence = {e["sentences"][0]: e for e in out}
-        self.assertIsNone(by_sentence[2]["date"])
-        self.assertEqual(by_sentence[1]["date"], "2010-02-23")
-
-
-def origin_spread(origin_text, spread_text):
-    """An entry with an Origin and a Spread, and its two units."""
-    e = entry(sections=[
-        {"kind": "origin", "heading": "Origin", "text": origin_text},
-        {"kind": "spread", "heading": "Spread", "text": spread_text}])
-    return e, ev.section_unit(e, "origin"), ev.section_unit(e, "spread")
-
-
-def prior_of(rows):
-    """What extract() hands Spread: Origin's events as they were stored."""
-    return [{"event_id": r["event_id"], "sentences": r["sentences"],
-             "date": r["date"], "date_precision": r["date_precision"]}
-            for r in rows]
-
-
-def bare(sentences, date_text=None, **over):
-    return event(sentences=sentences, date_text=date_text, location=None,
-                 actors=[], **over)
-
-
-class TimelineTests(unittest.TestCase):
-    """3.0.0: the page is one timeline. Every case below is a real section
-    from the 2026-09-24 hand review of 127 sections."""
-
-    def test_spread_takes_its_year_from_origin(self):
-        """ios-question-mark-box: Spread says "On November 5th" ... "November
-        9th", and 2017 is stated only in Origin. 2.x dated none of its 8
-        events; atlorgy lost all 9 the same way."""
-        _e, o, s = origin_spread(
-            ["On October 31st, 2017, Apple released the iOS 11.1 update."],
-            ["On November 5th, Redditor catitobandito asked about it. "
-             "On November 9th, Apple fixed the bug."])
-        origin = run(bare([1], "October 31st, 2017"), u=o)
-        s["prior"] = prior_of(origin)
-        spread = run(bare([1], "November 5th"), bare([2], "November 9th"), u=s)
-        self.assertEqual([e["date"] for e in spread], ["2017-11-05", "2017-11-09"])
-
-    def test_that_day_at_the_top_of_spread_is_origins_last_day(self):
-        """star-wars-rise-of-skywalker: "For example, that day, Facebook user
-        elliott.boydstringer posted ..." — that day is the poster's release,
-        April 12th, 2019, stated at the end of Origin. The anchor is the
-        Origin event itself."""
-        _e, o, s = origin_spread(
-            ["On January 9th, 2018, Tumblr user kylosroboarm posted parodies. "
-             "On April 12th, 2019, the first poster was revealed."],
-            ["For example, that day, Facebook user elliott.boydstringer "
-             "posted a version."])
-        origin = run(bare([1], "January 9th, 2018"), bare([2], "April 12th, 2019"), u=o)
-        s["prior"] = prior_of(origin)
-        [row] = run(bare([1], "that day"), u=s)
-        self.assertEqual((row["date"], row["date_basis"]), ("2019-04-12", "relative"))
-        self.assertEqual(row["date_anchor"], origin[1]["event_id"])
-        self.assertEqual(ev.audit({"events": [row]}, s), [])
-
-    def test_a_referenced_date_does_not_move_the_story(self):
-        """ed-balls: s9 is an April 2013 event that MENTIONS "the tweet from
-        April 2011"; 2.x then dated s10's "On April 15th" to 2011."""
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "On April 13th, 2013, user mosmi defined it as a meme inspired "
-            "by the tweet from April 2011. On April 15th, BuzzFeed featured it."]}])
-        out = run(bare([1], "April 13th, 2013"), bare([2], "April 15th"), u=u)
-        self.assertEqual([e["date"] for e in out], ["2013-04-13", "2013-04-15"])
-        self.assertEqual(ev.audit({"events": out}, u), [])
-
-    def test_dates_inside_an_undated_event_do_not_set_the_year(self):
-        """A sentence an event already narrates speaks only through that
-        event's date. Here that event is a statistic (undated), and its
-        sentence mentions 2011 and 2019 — neither is when the story is."""
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "On April 13th, 2013, user mosmi defined it. "
-            "The entry, citing the tweet from April 2011, had 900 likes as of May 2019. "
-            "On April 15th, BuzzFeed featured it."]}])
-        out = run(bare([1], "April 13th, 2013"), bare([2], "May 2019"),
-                  bare([3], "April 15th"), u=u)
-        self.assertEqual([e["date"] for e in out], ["2013-04-13", None, "2013-04-15"])
-
-    def test_after_a_bare_date_is_not_a_bound(self):
-        """use-the-voice (3.0.0 regression): "most use after November 10th,
-        2021, when user @BonerWizard posted" — the post IS on the 10th."""
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "The template began seeing most use on Twitter after November 10th, "
-            "2021, when user @BonerWizard posted the screenshot."]}])
-        [row] = run(bare([1], "November 10th, 2021"), u=u)
-        self.assertEqual(row["date"], "2021-11-10")
-
-    def test_not_until_is_a_start(self):
-        """sassy-trump (3.0.0 regression): "did not start ... until August
-        2016" started in August 2016."""
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "Serafinowicz did not start regularly putting out videos until "
-            "August 2016, when he posted nine."]}])
-        [row] = run(bare([1], "August 2016"), u=u)
-        self.assertEqual(row["date"], "2016-08")
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "The page was used on Twitter until 2020."]}])
-        [row] = run(bare([1], "2020"), u=u)
-        self.assertIsNone(row["date"])                 # a plain "until" is an end
-
-    def test_the_same_words_in_one_sentence_are_one_time(self):
-        """hallway-swimming: "shared on the Huffington Post the next day,
-        followed by Geekosystem..." — two events, both quoting "the next
-        day"; the second chained off the first and landed a day late."""
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "On April 2nd, 2013, Cole Pugsley uploaded a version. The video was "
-            "shared on the Huffington Post the next day, followed by Smosh."]}])
-        out = run(bare([1], "April 2nd, 2013"),
-                  bare([2], "the next day", locations=["Huffington Post"]),
-                  bare([2], "the next day", locations=["Smosh"]), u=u)
-        # Same sentence, same date: one event (the id recipe), both venues —
-        # and April 3rd, not a second "next day" on the 4th.
-        self.assertEqual([e["date"] for e in out], ["2013-04-02", "2013-04-03"])
-        self.assertEqual(out[1]["locations"], ["Huffington Post", "Smosh"])
-        # ...and when the model quoted NO words for the second one (what it
-        # actually did), the pipeline reads "the next day" from the
-        # sentence — and must still see the twin.
-        out = run(bare([1], "April 2nd, 2013"),
-                  bare([2], "the next day", locations=["Huffington Post"]),
-                  bare([2], None, locations=["Smosh"]), u=u)
-        self.assertEqual([e["date"] for e in out], ["2013-04-02", "2013-04-03"])
-
-    def test_that_date_is_that_day(self):
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "The fan art took off on September 24th, 2018. "
-            "Popular examples from that date include pieces by @angstrom."]}])
-        out = run(bare([1], "September 24th, 2018"), bare([2], "that date"), u=u)
-        self.assertEqual(out[1]["date"], "2018-09-24")
-
-    def test_an_as_of_statistic_is_not_a_date_and_not_an_anchor(self):
-        """honey-bun-baby: "It has nearly 1,700 followers as of December 2nd,
-        2016" was dated Dec 2 — and the next "The following day" landed on
-        Dec 3 instead of the day after the account was created."""
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "On November 26th, 2016, the account officialashtonj was created. "
-            "It has nearly 1,700 followers as of December 2nd, 2016. "
-            "The following day, singer Tyrese posted the photo."]}])
-        out = run(bare([1], "November 26th, 2016"), bare([2], "December 2nd, 2016"),
-                  bare([3], "The following day"), u=u)
-        # 4.0.0: the count continues the account's event rather than
-        # standing as an undated one; either way it anchors nothing
-        self.assertEqual(spans(out), [[1, 2], [3]])
-        self.assertEqual([e["date"] for e in out], ["2016-11-26", "2016-11-27"])
-        self.assertEqual(ev.audit({"events": out}, u), [])
-
-    def test_bounds_are_not_dates(self):
-        cases = [
-            ("Sometime prior to August 2019, rapper Stunna Boy sent a DM.",
-             "prior to August 2019"),
-            ("After Cody Ko's April 30th, 2024, video, TikToker @c clipped it.",
-             "April 30th, 2024"),
-            ("By March 26th, 2025, the sound had 9,200 posts.", "By March 26th, 2025"),
-        ]
-        for text, words in cases:
-            with self.subTest(text=text):
-                u = unit(sections=[{"kind": "origin", "heading": "Origin",
-                                    "text": [text]}])
-                [row] = run(bare([1], words), u=u)
-                self.assertIsNone(row["date"])
-        # ...while "posted by X on <date>" is an ordinary date.
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "An animation was posted by YouTuber Kaliido_scope on January 4th, 2023."]}])
-        [row] = run(bare([1], "January 4th, 2023"), u=u)
-        self.assertEqual(row["date"], "2023-01-04")
-
-    def test_joined_dates_are_dated_at_the_precision_that_holds_them(self):
-        for words, want in (("Between 2009 and 2013", None),
-                            ("Between late 2021 and early 2022", None),
-                            ("April 13th and 14th, 2018", ("2018-04", "month")),
-                            ("Between May 28th and June 6th, 2025", ("2025", "year")),
-                            ("In September and October 2020", ("2020", "year"))):
-            with self.subTest(words=words):
-                got = ev.parse_date_phrase(words)
-                self.assertEqual(got, want or (None, "none"))
-
-    def test_month_of_year_is_a_month(self):
-        self.assertEqual(ev.parse_date_phrase("mid-May of 2018"), ("2018-05", "month"))
-        self.assertEqual(ev.parse_date_phrase("September of 2007"), ("2007-09", "month"))
-
-    def test_relative_months_years_and_meanwhile(self):
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "In December 2006, LusoSkav drew it. A month earlier, russxl posted "
-            "a video. On September 9th, 2005, the first YTMND was posted. "
-            "That month, it appeared on a forum. On November 6th, 2017, Apple "
-            "answered. Meanwhile, @hot_kommodity_ tweeted a GIF."]}])
-        out = run(bare([1], "December 2006"), bare([2], "A month earlier"),
-                  bare([3], "September 9th, 2005"), bare([4], "That month"),
-                  bare([5], "November 6th, 2017"), bare([6], "Meanwhile"), u=u)
-        self.assertEqual([(e["date"], e["date_precision"]) for e in out],
-                         [("2006-12", "month"), ("2006-11", "month"),
-                          ("2005-09-09", "day"), ("2005-09", "month"),
-                          ("2017-11-06", "day"), ("2017-11-06", "day")])
-        self.assertEqual(ev.audit({"events": out}, u), [])
-
-    def test_a_bare_ordinal_takes_the_month_from_the_timeline(self):
-        """muvvafukka: "posted to YouTube ... on the 21st" after an October
-        20th, 2019 event."""
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "It was first posted to Facebook on October 20th, 2019. A capture "
-            "was posted to YouTube by user Frazzle Tazz on the 21st."]}])
-        out = run(bare([1], "October 20th, 2019"), bare([2], "the 21st"), u=u)
-        self.assertEqual([e["date"] for e in out], ["2019-10-20", "2019-10-21"])
-
-    def test_the_audit_refuses_a_relative_date_its_anchor_does_not_give(self):
-        u = unit(sections=[{"kind": "origin", "heading": "Origin", "text": [
-            "On May 4th, 2013 it appeared. The following day it spread."]}])
-        out = run(bare([1], "May 4th, 2013"), bare([2], "The following day"), u=u)
-        out[1]["date"] = "2013-05-09"
-        self.assertTrue(any("relative date" in p for p in ev.audit({"events": out}, u)))
-
-
-class ActorLocationTests(unittest.TestCase):
-    """3.0.0: who and where, as Gabi's review asked for them."""
-
-    SENTENCE = ("For example, that day, Facebook user elliott.boydstringer "
-                "posted a version in the Star Wars Sithposting shitposting group.")
-
-    def u(self, text=None):
-        return unit(sections=[{"kind": "origin", "heading": "Origin",
-                               "text": [text or self.SENTENCE]}])
-
-    def test_the_posters_own_page_is_an_actor_not_a_place(self):
-        """chuckster: "the Facebook page King K Rool posted a video by user
-        @cappnriki" — v6 listed King K Rool as a place and left it out of
-        the actors."""
-        u = self.u("On August 1st, 2019, the Facebook page King K Rool posted "
-                   "a video by user @cappnriki.")
-        [row] = run(event(sentences=[1], date_text=None,
-                          locations=["Facebook", "King K Rool"],
-                          actors=["@cappnriki"]), u=u)
-        self.assertEqual(row["locations"], ["Facebook"])
-        self.assertEqual(sorted(row["actors"]), ["@cappnriki", "King K Rool"])
-
-    def test_an_actor_is_never_also_a_place(self):
-        u = self.u("On October 18th, 2018, Facebook meme page Grodosbova posted a meme.")
-        [row] = run(event(sentences=[1], date_text=None,
-                          locations=["Facebook", "Grodosbova"],
-                          actors=["Grodosbova"]), u=u)
-        self.assertEqual((row["locations"], row["actors"]), (["Facebook"], ["Grodosbova"]))
-
-    def test_a_common_noun_the_page_introduces_with_a_names_nothing(self):
-        """The model drops the article ("anime forum about the show"); the
-        page still says AN anime forum. A proper name keeps its place even
-        after "an": "an Imgur compilation" still names Imgur."""
-        u = self.u("The practice likely began in an anime forum about the show. "
-                   "A post in an Imgur compilation featured it.")
-        [a, b] = run(event(sentences=[1], date_text=None,
-                           locations=["anime forum about the show"], actors=[]),
-                     event(sentences=[2], date_text=None, locations=["Imgur"],
-                           actors=[]), u=u)
-        self.assertEqual((a["locations"], b["locations"]), ([], ["Imgur"]))
-
-    def test_a_cited_source_is_not_an_actor(self):
-        u = self.u("According to Pixiv Encyclopedia, the first occurrence was "
-                   "a game released by Hrathnir.")
-        [row] = run(event(sentences=[1], date_text=None, location=None,
-                          actors=["Pixiv Encyclopedia", "Hrathnir"]), u=u)
-        self.assertEqual(row["actors"], ["Hrathnir"])
-
-    def test_a_place_is_grounded_in_the_events_own_sentence_first(self):
-        """murica: the subreddit "'Murica! Fuck Yeah!" grounded, section-wide,
-        to "Fuck Yeah Murica" — the name of a Tumblr blog two sentences away."""
-        u = self.u("In October 2011, the Tumblr Fuck Yeah Murica launched. "
-                   "In May 2012, a subreddit titled Murica! Fuck Yeah! was created.")
-        # Not verbatim anywhere: both spans carry all three words, and the
-        # section-wide leftmost one is the Tumblr blog in sentence 1.
-        # (The splitter cuts the title at "Murica!", as on the real page.)
-        row = at(run(event(sentences=[2], date_text=None,
-                           locations=["Murica Fuck Yeah"], actors=[]), u=u), 2)
-        self.assertNotIn("Fuck Yeah Murica", row["locations"])
-        row = at(run(event(sentences=[2, 3], date_text=None,
-                           locations=["Murica Fuck Yeah"], actors=[]), u=u), 2)
-        self.assertEqual(row["locations"], ["Murica! Fuck Yeah"])
-
-    def test_a_description_of_someone_is_not_a_name(self):
-        u = self.u("On July 12th, 2018, the person who uploaded the clip, "
-                   "fishpupper, posted it again.")
-        [row] = run(event(sentences=[1], date_text="July 12th, 2018", locations=[],
-                          actors=["person who uploaded the clip", "fishpupper"]), u=u)
-        self.assertEqual(row["actors"], ["fishpupper"])
-        self.assertFalse(ev._names_nobody("Who Is Dog"))      # a name, capitalised
-
-    def test_names_come_without_roles_crowds_quotes_or_channel(self):
-        u = self.u('On July 23rd, 2007, Yahoo Answers user posed a question. '
-                   'Tumblr users and 4chan\'s moderators replied. Facebook page '
-                   '"Uzuki\'s ganbarimasu" and the ApeThrowbacks channel reposted it.')
-        [row] = run(event(sentences=[1, 2, 3], date_text=None, locations=[],
-                          actors=["Yahoo Answers user", "Tumblr users",
-                                  "4chan's moderators", '"Uzuki\'s ganbarimasu"',
-                                  "ApeThrowbacks channel"]), u=u)
-        self.assertEqual(row["actors"], ["Uzuki's ganbarimasu", "ApeThrowbacks"])
-
-    def test_a_name_that_ends_like_a_role_is_a_name(self):
-        u = self.u("On November 28th, artist Chance the Rapper posted a picture. "
-                   "On April 14th, YouTuber Ghost X Channel posted a video.")
-        [row] = run(event(sentences=[1, 2], date_text=None, locations=[],
-                          actors=["Chance the Rapper", "Ghost X Channel"]), u=u)
-        self.assertEqual(row["actors"], ["Chance the Rapper", "Ghost X Channel"])
-
-    def test_a_poster_is_listed_once_by_its_cleaned_name(self):
-        u = self.u("On April 12th, 2019, the official Star Wars Twitter account "
-                   "posted the poster.")
-        [row] = run(event(sentences=[1], date_text=None,
-                          locations=["Twitter", "official Star Wars Twitter account"],
-                          actors=["official Star Wars"]), u=u)
-        self.assertEqual((row["actors"], row["locations"]), (["official Star Wars"], ["Twitter"]))
-
-    def test_whoever_posted_or_published_is_an_actor(self):
-        for text, place in (
-                ("By November, Relentlessly Optimistic posted the image.",
-                 "Relentlessly Optimistic"),
-                ("On August 6th, TMZ published footage of Dawkins.", "TMZ")):
-            with self.subTest(place=place):
-                [row] = run(event(sentences=[1], date_text=None, locations=[place],
-                                  actors=[]), u=self.u(text))
-                self.assertEqual((row["locations"], row["actors"]), ([], [place]))
-        # a work is not a doer, nor is a page that "launched"
-        for text, place in (
-                ("On May 15th, a post in an Imgur compilation of Avengers memes "
-                 "featured one of the first exploitables.", "compilation of Avengers memes"),
-                ("In October 2011, the single topic Tumblr Fuck Yeah Murica "
-                 "launched.", "Fuck Yeah Murica")):
-            with self.subTest(place=place):
-                [row] = run(event(sentences=[1], date_text=None, locations=[place],
-                                  actors=[]), u=self.u(text))
-                self.assertEqual((row["locations"], row["actors"]), ([place], []))
-        # a platform stays a place: "YouTube uploaded" never happens, and
-        # "the clip was posted to YouTube" has YouTube after the verb
-        [row] = run(event(sentences=[1], date_text=None, locations=["YouTube"],
-                          actors=[]), u=self.u("The clip was posted to YouTube."))
-        self.assertEqual(row["locations"], ["YouTube"])
-
-    def test_a_channel_named_before_its_platform_is_the_poster(self):
-        """revenant: "the TomoNews US YouTube channel uploaded a video"."""
-        u = self.u("Meanwhile, the TomoNews US YouTube channel uploaded a video.")
-        [row] = run(event(sentences=[1], date_text=None,
-                          locations=["YouTube", "TomoNews US"], actors=[]), u=u)
-        self.assertEqual((row["locations"], row["actors"]), (["YouTube"], ["TomoNews US"]))
-
-    def test_a_place_in_lowercase_common_words_is_no_place(self):
-        u = self.u("It was posted to the personal blog of user Brian on tumblr.")
-        [row] = run(event(sentences=[1], date_text=None,
-                          locations=["personal blog", "tumblr"], actors=[]), u=u)
-        self.assertEqual(row["locations"], ["tumblr"])
-
-    def test_a_part_of_a_name_beside_the_whole_is_dropped(self):
-        u = self.u("On February 13th, 2024, Cody Ko uploaded a video. Ko said Cody "
-                   "was tired.")
-        [row] = run(event(sentences=[1, 2], date_text=None, locations=[],
-                          actors=["Cody Ko", "Cody", "Ko"]), u=u)
-        self.assertEqual(row["actors"], ["Cody Ko"])
-
-    def test_a_poster_named_twice_is_one_actor(self):
-        u = self.u("On November 13th, 2023, the IDF YouTube channel posted a video.")
-        [row] = run(event(sentences=[1], date_text="November 13th, 2023",
-                          locations=["YouTube"],
-                          actors=["IDF", "IDF YouTube channel"]), u=u)
-        self.assertEqual(row["actors"], ["IDF"])
-        self.assertEqual(row["locations"], ["YouTube"])
-
-    def test_a_stem_must_be_most_of_the_word(self):
-        """muvvafukka: the model wrote "Facebook", the event's sentence said
-        "... Hilzinger's face ...", and "face" was stored as the location.
-        Facebook is named, verbatim, earlier in the section."""
-        u = self.u("It was first posted to Facebook on October 20th, 2019. "
-                   "Butler made a screenshot of Hilzinger's face his cover photo.")
-        row = at(run(event(sentences=[2], date_text=None,
-                           locations=["Facebook"], actors=[]), u=u), 2)
-        self.assertEqual(row["locations"], ["Facebook"])
-        self.assertFalse(ev._same_word("face", "facebook"))
-        self.assertTrue(ev._same_word("tiktok", "tiktoker"))
-
-    def test_a_group_is_a_location_not_an_actor(self):
-        """The row the model actually returned in review: the group as an
-        actor, Facebook as the only place."""
-        [row] = run(event(sentences=[1], date_text=None, location="Facebook",
-                          actors=["elliott.boydstringer",
-                                  "Star Wars Sithposting shitposting group"]), u=self.u())
-        self.assertEqual(row["actors"], ["elliott.boydstringer"])
-        self.assertEqual(row["locations"],
-                         ["Facebook", "Star Wars Sithposting shitposting group"])
-
-    def test_platform_and_venue_are_both_kept(self):
-        [row] = run(event(sentences=[1], date_text=None,
-                          locations=["Facebook", "Star Wars Sithposting shitposting group"],
-                          actors=["elliott.boydstringer"]), u=self.u())
-        self.assertEqual(len(row["locations"]), 2)
-
-    def test_role_words_are_not_part_of_a_name(self):
-        [row] = run(event(sentences=[1], date_text=None, location=None,
-                          actors=["Facebook user elliott.boydstringer"]), u=self.u())
-        self.assertEqual(row["actors"], ["elliott.boydstringer"])
-
-    def test_an_actor_or_place_that_names_nobody_is_dropped(self):
-        u = self.u("On March 30th, 2022, an anonymous Soyjak.party user posted "
-                   "it to a personal blog and to Soyjak.party.")
-        [row] = run(event(sentences=[1], date_text=None,
-                          locations=["a personal blog", "Soyjak.party"],
-                          actors=["an anonymous Soyjak.party user"]), u=u)
-        self.assertEqual(row["actors"], [])
-        self.assertEqual(row["locations"], ["Soyjak.party"])
-
-    def test_two_venues_in_one_string_are_two_places(self):
-        u = self.u("The image was reblogged by Monorail and Funny Junk on "
-                   "September 13th, 2009.")
-        [row] = run(event(sentences=[1], date_text=None,
-                          location="Monorail and Funny Junk", actors=[]), u=u)
-        self.assertEqual(row["locations"], ["Monorail", "Funny Junk"])
-
-    def test_a_place_name_with_a_comma_stays_whole(self):
-        u = self.u("On June 15th, 2016, Trump spoke at the Fox Theater in "
-                   "Atlanta, Georgia.")
-        [row] = run(event(sentences=[1], date_text=None,
-                          location="Fox Theater in Atlanta, Georgia", actors=[],
-                          location_type="geo"), u=u)
-        self.assertEqual(row["locations"], ["Fox Theater in Atlanta, Georgia"])
-
-
-class ReceptionTests(unittest.TestCase):
-    """A sentence that only reports how a post was received is part of
-    that post's event (2026-09-24 review: 127 of 1,370 sentences left out
-    of every event, and a handful made events of their own)."""
-
-    def u(self, *paragraphs):
-        return unit(sections=[{"kind": "origin", "heading": "Origin",
-                               "text": list(paragraphs)}])
-
-    def test_the_reviewers_missed_sentence(self):
-        """star-wars-the-rise-of-skywalker-poster-parodies / Spread, as the
-        reviewer marked it: sentence 3 belongs to sentence 2's post."""
-        u = self.u(
-            "Following the poster's release, parodies using the design of the "
-            "image became much more common. For example, that day, Facebook user "
-            "elliott.boydstringer posted a version criticizing some of the "
-            "character reveals in the first trailer in the Star Wars Sithposting "
-            "shitposting group. The post received more than 2,000 reactions, 410 "
-            "comments and 500 shares in three days (shown below, left).",
-            "Throughout the weekend, others began sharing parodies of the poster "
-            "in the group.")
-        rows = run(event(sentences=[1], date_text=None, locations=[], actors=[]),
-                   event(sentences=[2], date_text="that day",
-                         locations=["Facebook", "Star Wars Sithposting shitposting group"],
-                         actors=["elliott.boydstringer"]),
-                   event(sentences=[4], date_text="Throughout the weekend",
-                         locations=[], actors=[]), u=u)
-        self.assertEqual([r["sentences"] for r in rows], [[1], [2, 3], [4]])
-        self.assertTrue(rows[1]["source_text"].endswith("(shown below, left)."))
-
-    def test_the_description_in_between_joins_too(self):
-        u = self.u("On May 4th, 2013, Tumblr user x posted a comic. The comic "
-                   "depicts a cat on a roof. The post received more than 10,000 "
-                   "notes in a year (shown below).")
-        [row] = run(event(sentences=[1], date_text="May 4th, 2013",
-                          locations=["Tumblr"], actors=["x"]), u=u)
-        self.assertEqual(row["sentences"], [1, 2, 3])
-        self.assertEqual(row["date"], "2013-05-04")
-
-    def test_an_as_of_count_is_reception(self):
-        u = self.u("On May 4th, 2013, Tumblr user x posted a comic. As of "
-                   "April 2014, the post has more than 18,500 notes.")
-        [row] = run(event(sentences=[1], date_text="May 4th, 2013",
-                          locations=["Tumblr"], actors=["x"]), u=u)
-        self.assertEqual(row["sentences"], [1, 2])
-
-    def test_a_stat_only_event_is_folded_into_the_post(self):
-        u = self.u("On May 4th, 2013, Tumblr user x posted a comic. "
-                   "The post received over 5,300 notes.")
-        [row] = run(event(sentences=[1], date_text="May 4th, 2013",
-                          locations=["Tumblr"], actors=["x"]),
-                    event(sentences=[2], date_text=None, locations=[], actors=[]),
-                    u=u)
-        self.assertEqual(row["sentences"], [1, 2])
-
-    def test_a_stat_only_event_with_nothing_before_it_joins_the_first(self):
-        """3.2.0 kept it as an event of its own, since nothing came before
-        it to join; 4.0.0 puts it in the first event, as any background."""
-        u = self.u("The post received over 5,300 notes. On May 4th, 2013, "
-                   "Tumblr user x posted a comic.")
-        rows = run(event(sentences=[1], date_text=None, locations=[], actors=[]),
-                   event(sentences=[2], date_text="May 4th, 2013",
-                         locations=["Tumblr"], actors=["x"]), u=u)
-        self.assertEqual([r["sentences"] for r in rows], [[1, 2]])
-        self.assertEqual(rows[0]["date"], "2013-05-04")
-
-    def test_counted_in_times_and_smiles_is_reception(self):
-        for second in ("This post was liked 124 times and shared 27 times.",
-                       "The post received over 1,300 smiles in one year."):
-            with self.subTest(second=second):
-                u = self.u("On May 4th, 2013, iFunny user x posted a meme. " + second)
-                [row] = run(event(sentences=[1], date_text="May 4th, 2013",
-                                  locations=["iFunny"], actors=["x"]), u=u)
-                self.assertEqual(row["sentences"], [1, 2])
-
-    def test_the_posts_own_words_join_it(self):
-        """periodt: 'They wrote, "..."' came back as an event of its own.
-        What the quote itself says is not narrated by the page."""
-        for words in ('"Churches should pay property tax periodt."',
-                      '"I posted this yesterday, lol."'):
-            with self.subTest(words=words):
-                u = self.u('On May 5th, 2009, Twitter user @x posted it. They '
-                           'wrote, ' + words)
-                [row] = run(event(sentences=[1], date_text="May 5th, 2009",
-                                  locations=["Twitter"], actors=["@x"]),
-                            event(sentences=[2], date_text=None, locations=[],
-                                  actors=[]), u=u)
-                self.assertEqual(row["sentences"], [1, 2])
-
-    def test_an_event_that_only_describes_the_work_is_folded_into_it(self):
-        """actually-quantum-mechanics-forbids-this: "The post features host
-        Matthew O'Dowd ..." came back as an event of its own."""
-        for text in ("The post features host Matthew O'Dowd discussing physics.",
-                     "In the video, the computer malfunctions and the boy screams.",
-                     "The multi-pane comic strip depicted Computer Reaction Guy."):
-            with self.subTest(text=text):
-                u = self.u("On May 23rd, 2018, the channel PBS Space Time published a "
-                           "video. " + text)
-                [row] = run(event(sentences=[1], date_text="May 23rd, 2018",
-                                  locations=["YouTube"], actors=["PBS Space Time"]),
-                            event(sentences=[2], date_text=None, locations=[], actors=[]),
-                            u=u)
-                self.assertEqual(row["sentences"], [1, 2])
-
-    def test_the_works_spread_is_not_a_description(self):
-        for text in ("The picture was very well-received, and variations flowed forth.",
-                     "The comic grew into a popular exploitable shortly after.",
-                     "The video was also the source of dozens of photoshops.",
-                     "The image, which shows a cat, went viral on Tumblr."):
-            with self.subTest(text=text):
-                u = self.u("On March 2, 2008, the picture was posted on icanhascheezburger. "
-                           + text)
-                rows = run(event(sentences=[1], date_text="March 2, 2008",
-                                 locations=[], actors=[]),
-                           event(sentences=[2], date_text=None, locations=[], actors=[]),
-                           u=u)
-                self.assertEqual([r["sentences"] for r in rows], [[1], [2]])
-
-    def test_nothing_that_could_be_a_missed_happening_is_absorbed(self):
-        for second in (
-                "One such post by YouTuber Nathan Zed has gained 22,800 retweets.",
-                "One related video, by animator OneyG, received 4 million views.",
-                "A post by crybabygrande received 2,000 likes.",
-                "The next day, X user @y made a GIF that received 5.1 million views.",
-                "A March 5th reupload of the clip received over 400,000 views.",
-                "It was then reposted to Reddit, where it gained 1,200 upvotes."):
-            with self.subTest(second=second):
-                u = self.u("On May 4th, 2013, Tumblr user x posted a comic. " + second)
-                rows = run(event(sentences=[1], date_text="May 4th, 2013",
-                                 locations=["Tumblr"], actors=["x"]), u=u)
-                self.assertEqual(rows[0]["sentences"], [1])
-                # 4.0.0: and it is an event of its own, never left out
-                self.assertEqual(at(rows, 2)["sentences"], [2])
-
-    def test_the_works_reception_at_a_later_time_continues_it(self):
-        """Its own time words are all that is new in it: "the video" is
-        the one just posted. 3.2.0 left it out rather than guess; 4.0.0
-        must place it, and it is that video's reception."""
-        for second in ("The next day, the video received 5.1 million views.",
-                       "The next day it had 900 upvotes."):
-            with self.subTest(second=second):
-                u = self.u("On May 4th, 2013, Tumblr user x posted a comic. " + second)
-                rows = run(event(sentences=[1], date_text="May 4th, 2013",
-                                 locations=["Tumblr"], actors=["x"]), u=u)
-                self.assertEqual(spans(rows), [[1, 2]])
-                self.assertEqual(rows[0]["date"], "2013-05-04")
-
-    def test_a_passive_by_in_a_description_is_crossed(self):
-        """links-balls: "After Link is struck by the Hinox, he falls ..."
-        describes the clip; it named no new post."""
-        u = self.u("On May 4th, 2023, TikToker x posted a clip. After Link is "
-                   "struck by the Hinox, he falls on all fours. The clip gained "
-                   "over 1.6 million views in five days (shown below).")
-        [row] = run(event(sentences=[1], date_text="May 4th, 2023",
-                          locations=["TikTok"], actors=["x"]), u=u)
-        self.assertEqual(row["sentences"], [1, 2, 3])
-
-    def test_a_gap_that_narrates_something_is_not_crossed(self):
-        u = self.u("On May 4th, 2013, Tumblr user x posted a comic. In 2014, "
-                   "Reddit users posted edits. The post received 900 upvotes.")
-        out = run(event(sentences=[1], date_text="May 4th, 2013",
-                        locations=["Tumblr"], actors=["x"]), u=u)
-        self.assertEqual(at(out, 1)["sentences"], [1])
-        # 4.0.0: the 2014 edits are an event of their own, and the
-        # reception after them is theirs — never x's, across them
-        self.assertEqual(at(out, 2)["sentences"], [2, 3])
-
-
-class BorrowedValueTests(unittest.TestCase):
-    """An actor or place named only AFTER its event (2026-09-24 review)."""
-
-    def u(self, text):
-        return unit(sections=[{"kind": "origin", "heading": "Origin", "text": [text]}])
-
-    def test_the_next_sentence_it_came_from_joins_the_event(self):
-        u = self.u("On November 13th, 2023, the IDF posted a video. The claim was "
-                   "refuted online that day by many. For example, that day, X user "
-                   "@zoo_bear made a post purportedly debunking the claim.")
-        rows = run(event(sentences=[1], date_text="November 13th, 2023",
-                         locations=[], actors=["IDF"]),
-                   event(sentences=[2], date_text="that day", locations=["X"],
-                         actors=["@zoo_bear"]), u=u)
-        self.assertEqual(rows[1]["sentences"], [2, 3])
-        self.assertEqual((rows[1]["actors"], rows[1]["locations"]), (["@zoo_bear"], ["X"]))
-        self.assertIn("@zoo_bear", rows[1]["source_text"])
-
-    def test_a_later_happenings_place_is_dropped(self):
-        u = self.u("On May 16th, 2018, Redditor WhiteCrowWolf posted a question. "
-                   "The following day, on May 17th, 2018, a Redditor posted in the "
-                   "/r/NoStupidQuestions subreddit.")
-        rows = run(event(sentences=[1], date_text="May 16th, 2018",
-                         locations=["/r/NoStupidQuestions"], actors=["WhiteCrowWolf"]),
-                   event(sentences=[2], date_text="May 17th, 2018",
-                         locations=["/r/NoStupidQuestions"], actors=[]), u=u)
-        self.assertEqual(rows[0]["sentences"], [1])
-        self.assertEqual((rows[0]["locations"], rows[0]["location_type"]), ([], "unknown"))
-        self.assertEqual(rows[1]["locations"], ["/r/NoStupidQuestions"])
-
-    def test_a_place_named_earlier_is_referred_back_to(self):
-        u = self.u("On May 4th, 2013, user x posted in the Foo Fans group. Later "
-                   "that day, user y posted there too.")
-        rows = run(event(sentences=[1], date_text="May 4th, 2013",
-                         locations=["Foo Fans group"], actors=["x"]),
-                   event(sentences=[2], date_text="Later that day",
-                         locations=["Foo Fans group"], actors=["y"]), u=u)
-        self.assertEqual(rows[1]["locations"], ["Foo Fans group"])
-
-    def test_a_next_sentence_another_event_narrates_is_not_joined(self):
-        u = self.u("On May 4th, 2013, x posted a video. That day, @y reposted it "
-                   "on Tumblr.")
-        rows = run(event(sentences=[1], date_text="May 4th, 2013",
-                         locations=["Tumblr"], actors=["x"]),
-                   event(sentences=[2], date_text="That day",
-                         locations=["Tumblr"], actors=["@y"]), u=u)
-        self.assertEqual((rows[0]["sentences"], rows[0]["locations"]), ([1], []))
-
-    def test_a_next_sentence_a_day_later_is_not_joined(self):
-        u = self.u("On May 4th, 2013, x posted a video. The next day, @y reposted "
-                   "it on Tumblr.")
-        out = run(event(sentences=[1], date_text="May 4th, 2013",
-                        locations=["Tumblr"], actors=["x", "@y"]), u=u)
-        row = at(out, 1)
-        self.assertEqual((row["sentences"], row["actors"], row["locations"]),
-                         ([1], ["x"], []))
-        # 4.0.0: the repost the model missed is an event of its own, dated
-        # from its own words, with the account it names
-        repost = at(out, 2)
-        self.assertEqual((repost["sentences"], repost["actors"], repost["date"]),
-                         ([2], ["@y"], "2013-05-05"))
-
-    def test_a_platform_named_by_its_users_word_is_named(self):
-        for text, place in (
-                ("On May 4th, 2013, YouTuber Wimpyapple uploaded a clip. "
-                 "On May 9th, 2013, the clip was reposted to YouTube.", "YouTube"),
-                ("That day, journalist Tony Webster tweeted a screenshot. "
-                 "On May 9th, 2013, Twitter user @y did too.", "Twitter")):
-            with self.subTest(place=place):
-                rows = run(event(sentences=[1], date_text=None, locations=[place],
-                                 actors=[]), u=self.u(text))
-                self.assertEqual(rows[0]["locations"], [place])
-
-    def test_a_full_name_named_earlier_beats_a_surname_here(self):
-        u = self.u("On October 20th, 2019, Caiden Butler posted a video. Butler "
-                   "made a screenshot his cover photo.")
-        rows = run(event(sentences=[1], date_text="October 20th, 2019",
-                         locations=[], actors=["Caiden Butler"]),
-                   event(sentences=[2], date_text=None, locations=[],
-                         actors=["Caiden Butler"]), u=u)
-        self.assertEqual(rows[1]["actors"], ["Caiden Butler"])
-
-    def test_a_name_only_later_aligns_to_its_own_words(self):
-        """adam-warski: "Adam Warski" is the meme; the man is Warski."""
-        u = self.u("That evening, Warski posted a tweet. On January 1st, 2018, a "
-                   "thread about the Adam Warski meme was submitted to /pol/.")
-        rows = run(event(sentences=[1], date_text="That evening", locations=[],
-                         actors=["Adam Warski"]), u=u)
-        self.assertEqual(rows[0]["actors"], ["Warski"])
-
-    def test_a_group_named_earlier_is_not_the_group(self):
-        u = self.u("That day, Facebook user elliott.boydstringer posted in the "
-                   "Star Wars Sithposting shitposting group. Throughout the "
-                   "weekend, others began sharing parodies in the group.")
-        rows = run(event(sentences=[2], date_text=None,
-                         locations=["Facebook", "Star Wars Sithposting shitposting group"],
-                         actors=[]), u=u)
-        self.assertEqual(at(rows, 2)["locations"],
-                         ["Facebook", "Star Wars Sithposting shitposting group"])
-
-    def test_a_next_sentence_with_its_own_date_is_not_joined(self):
-        u = self.u("On October 13th, 2009, another video was uploaded by Kailyn "
-                   "Jensen. Between 2009 and 2013, a handful of other videos were "
-                   "uploaded to YouTube.")
-        out = run(event(sentences=[1], date_text="October 13th, 2009",
-                        locations=["YouTube"], actors=["Kailyn Jensen"]), u=u)
-        row = at(out, 1)
-        self.assertEqual((row["sentences"], row["locations"]), ([1], []))
-        self.assertEqual(at(out, 2)["sentences"], [2])
-
-
-class LeadingDateTests(unittest.TestCase):
-    """A sentence that opens with its date dates its event, even when the
-    model returned no date words (2026-09-24 review: four such events)."""
-
-    def u(self, text):
-        return unit(sections=[{"kind": "origin", "heading": "Origin", "text": [text]}])
-
-    def test_an_opening_date_is_read(self):
-        u = self.u("On May 4th, 2019, X user @a posted a clip. On September "
-                   "13th, user elie posted a video showing the clip.")
-        rows = run(event(sentences=[1], date_text="May 4th, 2019",
-                         locations=[], actors=["@a"]),
-                   event(sentences=[2], date_text=None, locations=[],
-                         actors=["elie"]), u=u)
-        self.assertEqual([r["date"] for r in rows], ["2019-05-04", "2019-09-13"])
-        self.assertEqual(rows[1]["date_text"], "September 13th")
-
-    def test_an_opening_relative_date_is_read(self):
-        """get-a-brain-morans: "That month, the Moran appeared ..." came back
-        with no date words after a September 9th, 2005 event."""
-        u = self.u("On September 9th, 2005, the first YTMND was posted. That "
-                   "month, the Moran appeared in a photoshop series.")
-        rows = run(event(sentences=[1], date_text="September 9th, 2005",
-                         locations=[], actors=[]),
-                   event(sentences=[2], date_text=None, locations=[], actors=[]), u=u)
-        self.assertEqual((rows[1]["date"], rows[1]["date_text"]), ("2005-09", "That month"))
-        # ...and when the model copied the sentence before's date instead
-        rows = run(event(sentences=[1], date_text="September 9th, 2005",
-                         locations=[], actors=[]),
-                   event(sentences=[2], date_text="September 9th, 2005",
-                         locations=[], actors=[]), u=u)
-        self.assertEqual((rows[1]["date"], rows[1]["date_text"]), ("2005-09", "That month"))
-
-    def test_a_date_deeper_in_is_not(self):
-        for text in ("Users drew Spider-Woman fan art, starting on June 5th, 2023.",
-                     "Early in the 2021 remake of Dune, Lady Jessica speaks.",
-                     "As of May 5th, 2013, the video has 900 views."):
-            with self.subTest(text=text):
-                [row] = run(event(sentences=[1], date_text=None, locations=[],
-                                  actors=[]), u=self.u(text))
-                self.assertIsNone(row["date"])
-
-    def test_a_year_past_2039_is_a_name_not_a_year(self):
-        self.assertEqual(ev._points("spider-woman 2099 fan art"), [])
-
-    def test_the_verb_may_is_not_a_month(self):
-        self.assertEqual(ev._points("it may have been posted in 2013"),
-                         [(27, 31, 2013, None, None)])
-        self.assertEqual(ev._points("in early may, x posted")[0][3], 5)
-        self.assertEqual(ev._date_spans("It may have been drawn earlier."), [])
-
-
-class HoldoutTests(unittest.TestCase):
-    """What the 2026-09-25 holdout (60 entries never looked at) found."""
-
-    def u(self, *paragraphs):
-        return unit(sections=[{"kind": "origin", "heading": "Origin",
-                               "text": list(paragraphs)}])
-
-    def test_until_a_date_when_it_happened_is_that_date(self):
-        """how-to-break-your-thumb-ligament: left undated, and the next
-        "That day" then counted from an event two years earlier."""
-        u = self.u("On September 13th, 2015, the infographic was posted on 9gag. "
-                   "The graphic remained relatively unknown until January 5th, "
-                   "2017, when Twitter user @RahSenpai posted screenshots. That "
-                   "day, Twitter users @a and @b replied with photographs.")
-        rows = run(event(sentences=[1], date_text="September 13th, 2015",
-                         locations=["9gag"], actors=[]),
-                   event(sentences=[2], date_text="January 5th, 2017",
-                         locations=["Twitter"], actors=["@RahSenpai"]),
-                   event(sentences=[3], date_text="That day", locations=["Twitter"],
-                         actors=["@a", "@b"]), u=u)
-        self.assertEqual([r["date"] for r in rows],
-                         ["2015-09-13", "2017-01-05", "2017-01-05"])
-
-    def test_over_the_following_month_is_a_stretch_not_the_next_month(self):
-        """no-poop-july: dated August for updates posted through July."""
-        u = self.u("On July 1st, 2020, TikToker OkCron uploaded day 1. OkCron "
-                   "continued posting updates over the following month.")
-        rows = run(event(sentences=[1], date_text="July 1st, 2020",
-                         locations=["TikTok"], actors=["OkCron"]),
-                   event(sentences=[2], date_text="the following month",
-                         locations=[], actors=["OkCron"]), u=u)
-        self.assertEqual([r["date"] for r in rows], ["2020-07-01", None])
-        u = self.u("On July 1st, 2020, TikToker OkCron uploaded day 1. The "
-                   "following month, OkCron posted day 32.")
-        rows = run(event(sentences=[1], date_text="July 1st, 2020",
-                         locations=["TikTok"], actors=["OkCron"]),
-                   event(sentences=[2], date_text="The following month",
-                         locations=[], actors=["OkCron"]), u=u)
-        self.assertEqual([r["date"] for r in rows], ["2020-07-01", "2020-08"])
-
-    def test_a_comma_after_the_month_keeps_the_day(self):
-        self.assertEqual(ev.parse_date_phrase("May, 1st, 2019"), ("2019-05-01", "day"))
-        self.assertEqual(ev.parse_date_phrase("May, 2019"), ("2019-05", "month"))
-
-    def test_two_initials_after_a_name_are_not_a_sentence_end(self):
-        text = "The first book by author George R.R. Martin debuted in 1996. It sold."
-        self.assertEqual([text[a:b] for a, b in ev.split_sentences(text)],
-                         ["The first book by author George R.R. Martin debuted in 1996.",
-                          "It sold."])
-
-    def test_vine_counts_and_duration_words_are_reception(self):
-        u = self.u("On February 17th, Viner x posted a clip. In two months, the "
-                   "Vine received over 26,000 loops and 700 revines.")
-        [row] = run(event(sentences=[1], date_text="February 17th, 2016",
-                          locations=["Vine"], actors=["x"]),
-                    event(sentences=[2], date_text="In two months", locations=[],
-                          actors=[]), u=u)
-        self.assertEqual(row["sentences"], [1, 2])
-
-    def test_the_platform_in_a_user_word_is_the_place(self):
-        u = self.u("On June 25th, 2022, iFunnyer Choctaw posted a version.")
-        [row] = run(event(sentences=[1], date_text=None, locations=["iFunnyer"],
-                          actors=["Choctaw"]), u=u)
-        self.assertEqual(row["locations"], ["iFunny"])
-
-    def test_a_handle_is_an_actor_never_a_place(self):
-        u = self.u("Peanut also had a TikTok account under the name "
-                   "@peanut_the_squirrel12, which posted its first video.")
-        [row] = run(event(sentences=[1], date_text=None,
-                          locations=["TikTok", "@peanut_the_squirrel12"], actors=[]), u=u)
-        self.assertEqual((row["locations"], row["actors"]),
-                         (["TikTok"], ["@peanut_the_squirrel12"]))
-
-    def test_a_handle_only_quoted_is_not_made_an_actor(self):
-        u = self.u('The organization tweeted at YouTube, "This content has no '
-                   'place on @YouTube or anywhere else."')
-        [row] = run(event(sentences=[1], date_text=None,
-                          locations=["Twitter", "@YouTube"], actors=[]), u=u)
-        self.assertEqual(row["actors"], [])
-
-    def test_the_actors_own_page_named_around_them_is_no_place(self):
-        u = self.u("It was posted to the personal blog of Something Awful user "
-                   "Brian Somerville on July 20th, 2006.")
-        [row] = run(event(sentences=[1], date_text="July 20th, 2006",
-                          locations=["personal blog of Something Awful user Brian Somerville"],
-                          actors=["Brian Somerville"]), u=u)
-        self.assertEqual((row["locations"], row["actors"]), ([], ["Brian Somerville"]))
-
-    def test_viner_and_a_stray_quote_are_not_the_name(self):
-        u = self.u('On March 1st, Viner Shourouk Abdalla uploaded clips. '
-                   'Instagrammer "fawaz_Alfahad" ripped the video.')
-        [row] = run(event(sentences=[1, 2], date_text=None, locations=[],
-                          actors=["Viner Shourouk Abdalla", 'Instagrammer "fawaz_Alfahad']),
-                    u=u)
-        self.assertEqual(row["actors"], ["Shourouk Abdalla", "fawaz_Alfahad"])
-
-
-class AttachmentTests(unittest.TestCase):
-    """By position, never by the model."""
-
-    def test_a_link_inside_the_events_sentence_is_attached(self):
-        row = at(run(event()), 1)
-        self.assertIn({"url": KYM_LINK, "text": "Tumblr", "kind": "link"}, row["links"])
-
-    def test_the_reference_a_marker_cites_is_attached_as_a_citation(self):
-        row = at(run(event()), 1)
-        self.assertIn({"url": REF_3, "text": "[3]", "kind": "citation"}, row["links"])
-
-    def test_a_link_in_another_sentence_is_not_attached(self):
-        row = at(run(event(sentences=[2], date_text=None, location="4chan", actors=[])), 2)
-        self.assertEqual(row["links"], [])
-
-    def test_media_shown_after_the_paragraph_go_with_its_events(self):
-        p0 = at(run(event()), 1)
-        p1 = at(run(event(sentences=[5], date_text="In 2013", location="Reddit", actors=[])), 5)
-        self.assertEqual([i["src"] for i in p0["images"]], [IMG])
-        self.assertEqual(p0["embeds"], [])
-        self.assertEqual(p1["embeds"], [{"url": TIKTOK, "platform": "tiktok"}])
-        self.assertEqual(p1["images"], [])
-
-    def test_media_before_the_first_paragraph_go_with_the_first(self):
-        e = entry()
-        e["sections"][1]["images"][0]["after_paragraph"] = -1
-        row = at(run(event(), u=ev.section_unit(e, "origin")), 1)
-        self.assertEqual([i["src"] for i in row["images"]], [IMG])
-
-
-class CoverageTests(unittest.TestCase):
-    """4.0.0, asked for 2026-09-29: every sentence of Origin and Spread is
-    in an event. 3.2.0 left 15.3% of the corpus's sentences, in 43.5% of
-    its sections, out of every event."""
-
-    def u(self, *paragraphs):
-        return unit(sections=[{"kind": "origin", "heading": "Origin",
-                               "text": list(paragraphs)}])
-
-    def test_background_before_the_first_happening_joins_it(self):
-        u = self.u("Doge is a Shiba Inu. On May 4th, 2013, x posted a photo of her.")
-        out = run(event(sentences=[2], date_text="May 4th, 2013", locations=[],
-                        actors=["x"]), u=u)
-        self.assertEqual(spans(out), [[1, 2]])
-        self.assertEqual(out[0]["date"], "2013-05-04")      # still its own date
-
-    def test_a_description_or_a_count_continues_the_event_before_it(self):
-        u = self.u("On May 4th, 2013, x posted a comic. The comic depicts a dog. "
-                   "The post received 900 upvotes.")
-        out = run(event(sentences=[1], date_text="May 4th, 2013", locations=[],
-                        actors=["x"]), u=u)
-        self.assertEqual(spans(out), [[1, 2, 3]])
-        self.assertEqual(out[0]["source_text"], u["paragraphs"][0])
-
-    def test_a_joined_sentence_never_dates_the_event(self):
-        """Only the sentences the MODEL put in the event are read for a
-        relative phrase it did not quote: "the next day" in a joined count
-        is the count's time, not the post's."""
-        u = self.u("On May 4th, 2013, x posted a comic. Later, y posted a remix. "
-                   "The next day it had 900 upvotes.")
-        out = run(event(sentences=[1], date_text="May 4th, 2013", locations=[],
-                        actors=["x"]),
-                  event(sentences=[2], date_text=None, locations=[], actors=["y"]), u=u)
-        self.assertEqual(spans(out), [[1], [2, 3]])
-        self.assertIsNone(at(out, 2)["date"])
-
-    def test_a_missed_happening_is_its_own_event_with_its_own_date(self):
-        u = self.u("On May 4th, 2013, x posted a comic. On June 1st, 2013, u/zed "
-                   "reposted it to Reddit.")
-        out = run(event(sentences=[1], date_text="May 4th, 2013", locations=[],
-                        actors=["x"]), u=u)
-        missed = at(out, 2)
-        self.assertEqual((missed["sentences"], missed["date"], missed["actors"],
-                          missed["locations"]), ([2], "2013-06-01", ["u/zed"], []))
-
-    def test_every_record_extract_writes_covers_every_sentence(self):
-        for rows in ([], [event()], [event(sentences=[3], date_text="On May 7th",
-                                           location=None, actors=[])]):
-            out = run(*rows)
-            spanned = {i for e in out for i in range(e["sentences"][0], e["sentences"][-1] + 1)}
-            self.assertEqual(spanned, {1, 2, 3, 4, 5}, rows)
-            self.assertEqual(ev.audit({"events": list(out)}, unit()), [], rows)
-
-    def test_an_event_made_of_commentary_is_folded_into_the_one_before(self):
-        """Prompt 9 made 118 such events of the review sample's sentences."""
-        for second in ("One of the more prevalent names was \"Operation Crawler\".",
-                       "This is the earliest known version of the meme.",
-                       "The original dialogue was:"):
-            with self.subTest(second=second):
-                u = self.u("On May 4th, 2013, Tumblr user x posted a comic. " + second)
-                out = run(event(sentences=[1], date_text="May 4th, 2013",
-                                locations=["Tumblr"], actors=["x"]),
-                          event(sentences=[2], date_text=None, locations=[], actors=[]),
-                          u=u)
-                self.assertEqual(spans(out), [[1, 2]])
-
-    def test_a_count_as_of_a_date_is_folded_too(self):
-        u = self.u("On May 4th, 2013, Tumblr user x posted a comic. On Instagram, "
-                   "there are over 2 million images tagged #murica as of June 2017.")
-        out = run(event(sentences=[1], date_text="May 4th, 2013",
-                        locations=["Tumblr"], actors=["x"]),
-                  event(sentences=[2], date_text="as of June 2017",
-                        locations=["Instagram"], actors=[]), u=u)
-        self.assertEqual(spans(out), [[1, 2]])
-
-    def test_an_event_where_someone_does_something_is_not_folded(self):
-        """...but these 17 of them name a development, and stay events."""
-        for second in ("Snopes ultimately labeled the theory as false.",
-                       "The Rake was eventually added to horror story databases.",
-                       "This site spawned many other sites editing the GIF image.",
-                       "Other social media users took footage of the dance and "
-                       "paired it with other music.",
-                       "The picture was very well-received, and variations flowed forth."):
-            with self.subTest(second=second):
-                u = self.u("On May 4th, 2013, Tumblr user x posted a comic. " + second)
-                out = run(event(sentences=[1], date_text="May 4th, 2013",
-                                locations=["Tumblr"], actors=["x"]),
-                          event(sentences=[2], date_text=None, locations=[], actors=[]),
-                          u=u)
-                self.assertEqual(spans(out), [[1], [2]])
-
-    def test_an_opening_commentary_event_joins_the_first_happening(self):
-        u = self.u("The exact origin of the video is unknown. On May 4th, 2013, "
-                   "Tumblr user x posted it.")
-        out = run(event(sentences=[1], date_text=None, locations=[], actors=[]),
-                  event(sentences=[2], date_text="May 4th, 2013",
-                        locations=["Tumblr"], actors=["x"]), u=u)
-        self.assertEqual(spans(out), [[1, 2]])
-        self.assertEqual((out[0]["date"], out[0]["actors"]), ("2013-05-04", ["x"]))
-
-    def test_the_audit_refuses_a_sentence_in_no_event(self):
-        out = [e for e in run(event()) if e["sentences"][0] != 5]
-        self.assertEqual(ev.audit({"events": out}, unit()),
-                         ["sentences [5] are in no event"])
-
-
-class AuditTests(unittest.TestCase):
-    def record(self, rows):
-        return {"events": list(run(*rows))}
-
-    def test_a_validated_record_is_clean(self):
-        self.assertEqual(ev.audit(self.record([event()]), unit()), [])
-
-    def test_a_relative_date_found_in_the_sentences_passes_the_audit(self):
-        """2.1.1 read the phrase from the sentences while the audit looked
-        only at the date words, so extract() refused perfectly good
-        records — it failed 2 of 3 chunks on the real run."""
-        out = run(event(sentences=[3], date_text="On May 7th", location=None,
-                        actors=[]),
-                  event(sentences=[4], date_text=None, location=None, actors=[]))
-        record = {"events": list(out)}
-        self.assertEqual(at(out, 4)["date_basis"], "relative")
-        # 2.2.0 also gives it the page's own wording for that date.
-        self.assertEqual(at(out, 4)["date_text"], "That same day")
-        self.assertEqual(ev.audit(record, unit()), [])
-
-    def test_the_audit_catches_what_a_broken_validator_would_let_through(self):
-        for tamper, expect in (
-                ({"source_text": "The original photo of a CAT was posted."}, "verbatim"),
-                ({"actors": ["Atsuko Sato (blogger)"]}, "actor"),
-                ({"locations": ["Tumblr (site)"]}, "location"),
-                ({"date": "2010-03-23"}, "resolves to"),
-                ({"date_basis": None}, "no basis"),
-                ({"links": [{"url": "https://evil.example", "kind": "link"}]}, "not on the page")):
-            with self.subTest(tamper=tamper):
-                rec = self.record([event()])
-                rec["events"][0].update(tamper)
-                problems = ev.audit(rec, unit())
-                self.assertTrue(any(expect in p for p in problems), problems)
-
-
-class IdentityTests(unittest.TestCase):
-    def test_frame_key_agrees_with_the_store_id(self):
-        from modules.mongo_base import url_doc_id
-        self.assertEqual(ev.frame_key(URL), url_doc_id(URL))
-
-    def test_event_id_is_the_evidence_and_the_date(self):
-        a = ev.event_id(URL, "origin", [1], "2010-02-23", "day")
-        self.assertEqual(a, ev.event_id(URL, "origin", [1], "2010-02-23", "day"))
-        for other in (ev.event_id(URL, "origin", [2], "2010-02-23", "day"),
-                      ev.event_id(URL, "spread", [1], "2010-02-23", "day"),
-                      ev.event_id(URL, "origin", [1], None, "none")):
-            self.assertNotEqual(a, other)
-        self.assertIn("-", a)
-        self.assertRaises(ValueError, int, a)
-
-
-class PolicyTests(unittest.TestCase):
-    """The policy is criteria, not a name (the 2026-09-18 review)."""
-
-    def test_the_request_always_excludes_reasoning_models(self):
-        self.assertEqual(ev.model_request({}).exclude_capabilities, {"thinking"})
-        self.assertEqual(ev.model_request({"KG_EVENTS_MODEL": "x"}).model, "x")
-
-    def test_the_default_is_chosen_on_the_real_inventory(self):
-        c, _ = client(StubSession())
-        chosen = ev.choose_model(c, ev.model_request({}))
-        self.assertEqual((chosen.name, owc.host_name(chosen.host)),
-                         (MINISTRAL, "ollama-ccdd"))
-
-    def test_naming_a_reasoning_model_is_refused_not_rerouted(self):
-        c, _ = client(StubSession())
-        with self.assertRaises(owc.ModelUnavailableError):
-            ev.choose_model(c, ev.model_request({"KG_EVENTS_MODEL": "qwen3.8:27b"}))
-
-    def test_no_fallback_is_ever_a_reasoning_model(self):
-        c, _ = client(StubSession())
-        cands = owc.resolve_candidates(c.inventory(), ev.model_request({}),
-                                       c.cfg.host_order)
-        self.assertTrue(cands)
-        self.assertFalse([m.name for m in cands if "thinking" in m.capabilities])
-
-
-class Tmp(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.dir = self._tmp.name
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def path(self, name="events.jsonl"):
-        return os.path.join(self.dir, name)
-
-    def lines(self, name="events.jsonl"):
-        with open(self.path(name), encoding="utf-8") as fh:
-            return fh.read().splitlines()
-
-
-class ArtifactTests(Tmp):
-    def test_a_line_is_appended_and_never_rewritten(self):
-        out = self.path()
-        ev.append_jsonl(out, {"frame_url": "a", "source_section": "origin"})
-        first = self.lines()[0]
-        for i in range(5):
-            ev.append_jsonl(out, {"frame_url": f"u{i}", "source_section": "spread"})
-        self.assertEqual(len(self.lines()), 6)
-        self.assertEqual(self.lines()[0], first)
-
-    def test_a_torn_final_line_is_skipped_not_fatal(self):
-        out = self.path()
-        ev.append_jsonl(out, {"frame_url": "a", "source_section": "origin"})
-        with open(out, "a") as fh:
-            fh.write('{"frame_url": "b", "source_sec')
-        self.assertEqual(len(list(ev.iter_jsonl(out))), 1)
-
-
-class ExtractTests(Tmp):
-    def extract(self, session, units_=None, **kw):
+def reply(model_rows):
+    return routes(lambda body: Resp(200, {"message": {"content": json.dumps({"events": model_rows})}}))
+
+
+# -- the grammar --------------------------------------------------------------
+
+def test_the_model_grammar_has_no_derived_no_free_text_and_no_cap():
+    fmt = ev.request_format(schema())
+    item = fmt["properties"]["events"]["items"]
+    derived = {"frame_url", "source_section", "source_text", "links", "images", "embeds", "date",
+               "date_precision", "date_basis", "date_anchor", "summary"}   # summary: gone in 2.0.0
+    assert not derived & (set(item["properties"]) | set(item["required"]))
+    assert "sentences" in item["required"] and "date_text" in item["properties"]
+    assert "maxItems" not in fmt["properties"]["events"]
+    Draft202012Validator.check_schema(fmt)
+
+
+def test_the_tracked_schema_still_describes_the_whole_stored_row():
+    props = schema()["properties"]
+    assert {"source_text", "links", "images", "embeds", "actors"} <= set(props)
+    assert props["source_text"]["x-derived"]
+
+
+# -- sentences ----------------------------------------------------------------
+
+@pytest.mark.parametrize("text, want", [
+    ("One. Two! Three?", ["One.", "Two!", "Three?"]),
+    ("Mr. Smith met J. K. Rowling in the U.S. on Jan. 3rd. Then he left.",
+     ["Mr. Smith met J. K. Rowling in the U.S. on Jan. 3rd.", "Then he left."]),
+    # chuckster, murica, she-took-the-fucking-kids: a quotation is not cut
+    ('On October 15th, 2019, Redditor x wrote, "If I have to see it one more time lol. '
+     'I honestly think this level is the worst." Then it spread.',
+     ['On October 15th, 2019, Redditor x wrote, "If I have to see it one more time lol. '
+      'I honestly think this level is the worst."', 'Then it spread.']),
+    ('In May 2012, a subreddit titled "\'Murica! Fuck Yeah!" was created. It grew.',
+     ['In May 2012, a subreddit titled "\'Murica! Fuck Yeah!" was created.', 'It grew.']),
+    ("He wrote, “One. Two.” Then left.", ["He wrote, “One. Two.”", "Then left."]),
+    # its-a-gay-bar-pamela: an unclosed quote does not swallow the paragraph,
+    ('Days later, "It\'s a gay bar t-shirts appeared. On October 19th, x shared one.',
+     ['Days later, "It\'s a gay bar t-shirts appeared.', 'On October 19th, x shared one.']),
+    # and of three straight quotes, which two pair is unknowable: none do
+    ('Days later, "It\'s a gay bar t-shirts appeared. Then x shared "the shirt" online.',
+     ['Days later, "It\'s a gay bar t-shirts appeared.', 'Then x shared "the shirt" online.']),
+    ("It is where RAdm. Daniel Hagari walks. Then singer K. Michelle shouted. Wojak a.k.a. "
+     "That Feel Guy frowns. A Super Smash Bros. Ultimate meme spread.",
+     ["It is where RAdm. Daniel Hagari walks.", "Then singer K. Michelle shouted.",
+      "Wojak a.k.a. That Feel Guy frowns.", "A Super Smash Bros. Ultimate meme spread."]),
+    # "on X." ends a sentence (read as an initial, it cost a pilot section); initials do not
+    ("It went viral on X. For example, it did.", ["It went viral on X.", "For example, it did."]),
+    ("It moved to the platform X. Then it died.", ["It moved to the platform X.", "Then it died."]),
+    ("They met in B. Then they left.", ["They met in B.", "Then they left."]),
+    ("It went viral on X. For example, @foo posted it.",
+     ["It went viral on X.", "For example, @foo posted it."]),
+    ("J. K. Rowling wrote it. It sold well.", ["J. K. Rowling wrote it.", "It sold well."]),
+    ("By George R. R. Martin now. It sold well.", ["By George R. R. Martin now.", "It sold well."]),
+    ("The first book by author George R.R. Martin debuted in 1996. It sold.",
+     ["The first book by author George R.R. Martin debuted in 1996.", "It sold."]),
+    # a citation marker stays with its sentence; one ending a paragraph is no
+    # sentence (687 orphaned citations across a 2,909-section scan)
+    ("It went viral. [4] The next day it died.", ["It went viral. [4]", "The next day it died."]),
+    ("A character named Mr. Armstrong first appeared. [2]",
+     ["A character named Mr. Armstrong first appeared. [2]"]),
+    ("The film premiered in the United States. [1]", ["The film premiered in the United States. [1]"]),
+    ("It spread to Reddit. [3] [4]", ["It spread to Reddit. [3] [4]"]),
+    ("He posted it on Twitter. [6] Then it spread. [7]",
+     ["He posted it on Twitter. [6]", "Then it spread. [7]"]),
+])
+def test_sentences(text, want):
+    assert [text[a:b] for a, b in ev.split_sentences(text)] == want
+
+
+def test_spans_are_verbatim_and_the_model_reads_numbered_sentences_without_markers():
+    assert all(P0[a:b] in P0 for a, b in ev.split_sentences(P0))
+    text = ev.numbered_text(unit())
+    assert text.startswith("1: The original photo") and "\n\n3: On May 7th" in text
+    assert "[3]" not in text
+    lines = ev.numbered_text(origin("It spread to Reddit. [3]")).splitlines()
+    assert all(line.split(": ", 1)[1].strip() for line in lines if line)
+
+
+# -- the unit -----------------------------------------------------------------
+
+def test_the_whole_section_is_the_unit_never_truncated():
+    long = "A sentence about the meme. " * 400
+    u = origin(long)
+    assert (u["source_chars"], len(u["sentences"])) == (len(long), 400) and "truncated" not in u
+
+
+def test_the_unit_resolves_only_marked_citations_and_its_stamp_follows_the_media():
+    assert unit()["citations"] == {"3": REF_3}
+    moved = entry()
+    moved["sections"][1]["images"][0]["after_paragraph"] = 1
+    assert ev.section_unit(moved, "origin")["source_sha256"] != unit()["source_sha256"]
+
+
+def test_the_infobox_origin_is_not_the_section_and_no_section_is_no_unit():
+    assert "Kabosu" in unit(origin="Tumblr")["paragraphs"][0]
+    assert ev.section_unit(entry(), "spread") is None
+    assert ev.section_unit({"title": "no url"}, "origin") is None
+
+
+# -- grounding: every addition seen in review, fed back in ----------------------
+
+@pytest.mark.parametrize("paragraphs, model_rows, view, want", [
+    pytest.param(None, [event()], first(1, "sentences", "source_text"), ([1, 2], P0),
+                 id="the evidence is the page's, [3] included; 2 continues 1"),
+    pytest.param(None, [event(sentences=[2, 3], date_text=None)],
+                 lambda out: (lambda t: ("\n\n" in t, all(p in P0 + "\n\n" + P1 for p in t.split("\n\n"))))(
+                     at(out, 2)["source_text"]), (True, True),
+                 id="a span across paragraphs is joined like the frame text"),
+    pytest.param(None, [event(location="Tumblr (the blogging site)")],
+                 lambda out: pick(out[0], ("locations", "location_type")), (["Tumblr"], "platform"),
+                 id="an added qualifier grounds to the page's own words"),
+    pytest.param(["In May 2013 people posted it. Later, users and Atsuko Sato did too."],
+                 [E(1, words="In May 2013", actors=["people"]), E(2, actors=["users", "Atsuko Sato"])],
+                 rows("actors"), [[], ["Atsuko Sato"]],
+                 id="people, users, they name nobody (retroslop)"),
+    pytest.param(None, [event(actors=["Atsuko Sato", "Atsuko Sato (blogger)", "Kabosu's vet"])],
+                 lambda out: out[0]["actors"], ["Atsuko Sato"],
+                 id="an embellished actor grounds, an invented one does not"),
+    pytest.param(None, [E(4, words="That same day", actors=["KwandaoRen66"])],
+                 first(4, "actors"), ["KwandaoRen66"],
+                 id="an actor named elsewhere in the section is kept (coreference)"),
+    # 2.1 lost 34 of 421 pilot dates to the year KYM states once and omits after
+    pytest.param(None, [E(3, words="May 7th, 2010")], first(3, "date_text", "date", "date_basis"),
+                 ("May 7th", "2010-05-07", "stated"), id="a year the page omits no longer costs the date"),
+    pytest.param(None, [E(3, words="June 2nd, 2010")], first(3, "date_text", "date"),
+                 ("May 7th", "2010-05-07"), id="contradicted date words: the opening words date it"),
+    pytest.param(None, [E(2, words="June 2nd, 2010", places=["4chan"])], first(2, "date_text", "date"),
+                 (None, None), id="contradicted date words and no opening date: none"),
+    pytest.param(None, [event(date_text="May 7th")], lambda out: out[0]["date_text"], None,
+                 id="date words from another sentence ground to nothing"),
+    pytest.param(None, [E(2, places=["4chan"], certainty="unconfirmed")], first(2, "locations"),
+                 ["4chan"], id="typography and markers are not additions"),
+    pytest.param(None, [event(location='"Tumblr"')], first(1, "locations"), ["Tumblr"],
+                 id="quote marks are not part of a name"),
+    pytest.param(None, [event(sentences=[1, 99])], first(1, "sentences"), [1, 2],
+                 id="valid sentences survive an invalid one"),
+    pytest.param(None, [event(location=None, actors=["Atsuko Sato"]),
+                        event(location="Tumblr", actors=["Kabosu"])],
+                 lambda out: ([e["sentences"][0] for e in out].count(1), at(out, 1)["locations"],
+                              at(out, 1)["actors"]), (1, ["Tumblr"], ["Atsuko Sato", "Kabosu"]),
+                 id="the same event twice is one, with what both readings saw"),
+    pytest.param(None, [], lambda out: (spans(out), at(out, 1)["date"], at(out, 5)["date"]),
+                 ([[1, 2], [3], [4], [5]], "2010-02-23", "2013"),
+                 id="an empty reply still covers every sentence (4.0.0)"),
+    pytest.param(["The comic depicts a dog. It is drawn in pencil."], [],
+                 rows("sentences", "source_text", "date", "actors", "locations"),
+                 [([1, 2], "The comic depicts a dog. It is drawn in pencil.", None, [], [])],
+                 id="a section that narrates nothing is one undated event"),
+    pytest.param(None, [event(summary="A made-up summary", confidence=0.9)],
+                 lambda out: {"summary", "confidence"} & set(at(out, 1)), set(),
+                 id="unknown keys never reach the row"),
+])
+def test_grounding(paragraphs, model_rows, view, want):
+    check(paragraphs, model_rows, view, want)
+
+
+@pytest.mark.parametrize("content, error", [
+    (json.dumps({"events": [event(sentences=[99])]}), ValueError),  # no evidence: retried, then dead-lettered
+    ("Here are the events:", ValueError),
+    (json.dumps({"rows": []}), KeyError),
+    (json.dumps({"events": {}}), TypeError),
+])
+def test_a_broken_reply_fails_the_unit(content, error):
+    with pytest.raises(error):
+        validator()(content)
+
+
+# -- dates: the pipeline parses the words, the model never dates anything (2.1.0)
+
+NONE = (None, "none")
+
+
+@pytest.mark.parametrize("args, want", [
+    (("February 23rd, 2010",), ("2010-02-23", "day")),
+    (("on Feb 23, 2010",), ("2010-02-23", "day")),
+    (("the 23rd of February, 2010",), ("2010-02-23", "day")),
+    (("May 2013",), ("2013-05", "month")),
+    (("early 2013",), ("2013", "year")),
+    (("In 2013",), ("2013", "year")),
+    (("On May 7th", 2010), ("2010-05-07", "day")),   # a missing year from the section,
+    (("On May 7th",), NONE),                          # never from nowhere
+    (("February 31st, 2010",), NONE),
+    (("In their post",), NONE), (("",), NONE), ((None,), NONE), (("shortly afterwards",), NONE),
+    # a decade dates nothing (was 2010-01-01); a year's possessive still dates
+    (("During the first half of the 2010s", None), NONE), (("the mid-2000s", None), NONE),
+    (("the late 1990s", None), NONE), (("the 2010s", None), NONE),
+    (("2016's election", None), ("2016", "year")),
+    # the phrase's own year beats the context; either of two days is their month
+    (("Around June 7th or June 8th, 2026", 2017), ("2026-06", "month")),
+    # joined dates, at the precision that holds them
+    (("Between 2009 and 2013",), NONE), (("Between late 2021 and early 2022",), NONE),
+    (("April 13th and 14th, 2018",), ("2018-04", "month")),
+    (("Between May 28th and June 6th, 2025",), ("2025", "year")),
+    (("In September and October 2020",), ("2020", "year")),
+    (("mid-May of 2018",), ("2018-05", "month")), (("September of 2007",), ("2007-09", "month")),
+    (("May, 1st, 2019",), ("2019-05-01", "day")), (("May, 2019",), ("2019-05", "month")),
+])
+def test_date_phrases(args, want):
+    assert ev.parse_date_phrase(*args) == want
+
+
+@pytest.mark.parametrize("phrase, days", [
+    ("That same day", 0), ("Later that day", 0), ("on the same day", 0), ("An hour later", 0),
+    ("a few minutes later", 0), ("The following day", 1), ("a day later", 1),
+    ("three days later", 3), ("2 days later", 2),
+    ("shortly after", None), ("the following week", None), ("later that year", None),
+    ("In 2013", None), ("eventually", None),
+])
+def test_relative_phrases(phrase, days):
+    assert ev.relative_offset(phrase) == days
+
+
+def test_date_tokens_words_and_names():
+    assert ev._points("spider-woman 2099 fan art") == []            # past 2039: a name
+    assert ev._points("it may have been posted in 2013") == [(27, 31, 2013, None, None)]
+    assert ev._points("in early may, x posted")[0][3] == 5            # the verb may is not May
+    assert ev._date_spans("It may have been drawn earlier.") == []
+    assert not ev._same_word("face", "facebook") and ev._same_word("tiktok", "tiktoker")
+    assert not ev._names_nobody("Who Is Dog")                         # capitalised: a name
+
+
+# -- relative dates and the timeline -------------------------------------------
+
+DAY_CHAIN = ["On February 23rd, 2010 it was posted. The following day it spread. Three days later it peaked."]
+
+
+def anchored(out):
+    [a] = [e for e in out if e["date_basis"] == "relative"]
+    src = {e["event_id"]: e for e in out}[a["date_anchor"]]
+    return a["date"], src["sentences"], src["date"]
+
+
+@pytest.mark.parametrize("paragraphs, model_rows, view, want", [
+    # "that same day" is dated from the event before it, not guessed (2026-09-21)
+    pytest.param(None, [E(3, words="On May 7th"), E(4, words="That same day")],
+                 lambda out: (at(out, 3)["date"], at(out, 4)["date"], at(out, 3)["date_basis"],
+                              at(out, 4)["date_basis"], at(out, 4)["date_anchor"] == at(out, 3)["event_id"]),
+                 ("2010-05-07", "2010-05-07", "stated", "relative", True),
+                 id="a relative event is dated from the one before it"),
+    pytest.param(DAY_CHAIN, [E(1, words="On February 23rd, 2010"), E(2, words="The following day"),
+                             E(3, words="Three days later")], dates,
+                 ["2010-02-23", "2010-02-24", "2010-02-27"], id="the offset is applied"),
+    pytest.param(["The comic depicts a dog. That same day, @x posted it."], [E(2, words="That same day")],
+                 lambda out: (spans(out), out[0]["date"], out[0]["date_text"]),
+                 ([[1, 2]], None, "That same day"), id="nothing before it: undated, words kept"),
+    # 10 of 339 pilot dates took their year from captions, festival names, asides
+    pytest.param(['On March 13th, 2025, it appeared. The caption read, "Reject modern memes, '
+                  'return to 2010." On April 24th, it spread.'],
+                 [E(1, words="March 13th, 2025"), E(3, words="April 24th")], dates,
+                 ["2025-03-13", "2025-04-24"], id="a missing year comes from a date, not any number"),
+    pytest.param(['On September 23rd, 2025, it started. On October 1st, a video said, "We will '
+                  'return to January 1st, 2016."'],
+                 [E(1, words="September 23rd, 2025"), E(2, words="October 1st")], dates,
+                 ["2025-09-23", "2025-10-01"], id="a year quoted later in the event cannot supply it"),
+    # 30 of 5,612 sampled events: the year is stated after the first event
+    pytest.param(["On April 13th, SethEverman posted a video. On May 2nd, 2019, it was reposted."],
+                 [E(1, words="April 13th"), E(2, words="May 2nd, 2019")], dates,
+                 ["2019-04-13", "2019-05-02"], id="a year named once dates what precedes it"),
+    pytest.param(["On May 25th, it was posted. It spread in June 2019. By March 2020, it was everywhere."],
+                 [E(1, words="May 25th"), E(2, words="June 2019"), E(3, words="March 2020")],
+                 lambda out: out[0]["date"], None, id="two years later in the section: neither"),
+    # 74 of 5,612 sampled events start on a sentence another event starts on
+    pytest.param(["On May 4th, 2013 it appeared. It was popular. That same day it reached Reddit."],
+                 [E(1, words="May 4th, 2013"), E(1, 2),
+                  E(3, words="That same day", places=["Reddit"], location_type="platform")],
+                 anchored, ("2013-05-04", [1], "2013-05-04"),
+                 id="the anchor is the event, not whatever shares its sentence"),
+    pytest.param(["In May 2013 it appeared. The following day it spread."],
+                 [E(1, words="In May 2013"), E(2, words="The following day")], dates,
+                 ["2013-05", None], id="a relative phrase cannot shift a month-precision date"),
+    pytest.param(["In May 2013 it appeared. That same day it spread."],
+                 [E(1, words="In May 2013"), E(2, words="That same day")], rows("date", "date_precision"),
+                 [("2013-05", "month"), ("2013-05", "month")], id="same day inherits a coarse precision"),
+    pytest.param(["On May 1st, 2020 it began. The following day it grew. That same day it peaked."],
+                 [E(1, words="On May 1st, 2020"), E(2, words="The following day"),
+                  E(3, words="That same day")],
+                 lambda out: (dates(out), out[2]["date_anchor"] == out[1]["event_id"]),
+                 (["2020-05-01", "2020-05-02", "2020-05-02"], True), id="a chain follows the page"),
+    pytest.param(None, [E(3, words="On May 7th"), E(4)], first(4, "date", "date_basis"),
+                 ("2010-05-07", "relative"), id="a relative phrase in the sentences counts unquoted"),
+    pytest.param(["The screenshot shows that on June 3rd, 2014, a user posted it."], [E(1)], dates, [None],
+                 id="an absolute date in the sentences is NOT taken"),
+    pytest.param(None, [E(4, words="That same day"), E(3, words="On May 7th")],
+                 lambda out: (at(out, 3)["date"], at(out, 4)["date"], at(out, 4)["date_basis"]),
+                 ("2010-05-07", "2010-05-07", "relative"), id="resolution follows the page, not the reply"),
+    pytest.param(None, [E(2, words="That same day", places=["4chan"]), event()],
+                 lambda out: (at(out, 2)["date"], at(out, 1)["date"]), (None, "2010-02-23"),
+                 id="a later event never dates an earlier one"),
+    # 3.0.0: the page is one timeline (the 2026-09-24 review of 127 sections)
+    pytest.param(["On April 13th, 2013, user mosmi defined it as a meme inspired by the tweet from "
+                  "April 2011. On April 15th, BuzzFeed featured it."],
+                 [E(1, words="April 13th, 2013"), E(2, words="April 15th")], dates,
+                 ["2013-04-13", "2013-04-15"], id="ed-balls: a referenced date does not move the story"),
+    pytest.param(["On April 13th, 2013, user mosmi defined it. The entry, citing the tweet from April "
+                  "2011, had 900 likes as of May 2019. On April 15th, BuzzFeed featured it."],
+                 [E(1, words="April 13th, 2013"), E(2, words="May 2019"), E(3, words="April 15th")],
+                 dates, ["2013-04-13", None, "2013-04-15"], id="dates inside an undated event set no year"),
+    pytest.param(["The template began seeing most use on Twitter after November 10th, 2021, when user "
+                  "@BonerWizard posted the screenshot."], [E(1, words="November 10th, 2021")], dates,
+                 ["2021-11-10"], id="use-the-voice: after a bare date is not a bound"),
+    pytest.param(["Serafinowicz did not start regularly putting out videos until August 2016, when he "
+                  "posted nine."], [E(1, words="August 2016")], dates, ["2016-08"],
+                 id="sassy-trump: not until is a start"),
+    pytest.param(["The page was used on Twitter until 2020."], [E(1, words="2020")], dates, [None],
+                 id="a plain until is an end"),
+    # hallway-swimming: two events quoting "the next day" are one time, not a chain
+    pytest.param(["On April 2nd, 2013, Cole Pugsley uploaded a version. The video was shared on the "
+                  "Huffington Post the next day, followed by Smosh."],
+                 [E(1, words="April 2nd, 2013"), E(2, words="the next day", places=["Huffington Post"]),
+                  E(2, words="the next day", places=["Smosh"])],
+                 lambda out: (dates(out), out[1]["locations"]),
+                 (["2013-04-02", "2013-04-03"], ["Huffington Post", "Smosh"]),
+                 id="the same words in one sentence are one time"),
+    pytest.param(["On April 2nd, 2013, Cole Pugsley uploaded a version. The video was shared on the "
+                  "Huffington Post the next day, followed by Smosh."],
+                 [E(1, words="April 2nd, 2013"), E(2, words="the next day", places=["Huffington Post"]),
+                  E(2, places=["Smosh"])], dates, ["2013-04-02", "2013-04-03"],
+                 id="and still one when the twin quotes no words"),
+    pytest.param(["The fan art took off on September 24th, 2018. Popular examples from that date include "
+                  "pieces by @angstrom."], [E(1, words="September 24th, 2018"), E(2, words="that date")],
+                 lambda out: out[1]["date"], "2018-09-24", id="that date is that day"),
+    pytest.param(["On November 26th, 2016, the account officialashtonj was created. It has nearly 1,700 "
+                  "followers as of December 2nd, 2016. The following day, singer Tyrese posted the photo."],
+                 [E(1, words="November 26th, 2016"), E(2, words="December 2nd, 2016"),
+                  E(3, words="The following day")],
+                 lambda out: (spans(out), dates(out)), ([[1, 2], [3]], ["2016-11-26", "2016-11-27"]),
+                 id="honey-bun-baby: an as-of statistic is no date and no anchor"),
+    pytest.param(["Sometime prior to August 2019, rapper Stunna Boy sent a DM."],
+                 [E(1, words="prior to August 2019")], dates, [None], id="prior to is a bound"),
+    pytest.param(["After Cody Ko's April 30th, 2024, video, TikToker @c clipped it."],
+                 [E(1, words="April 30th, 2024")], dates, [None], id="after X's dated video is a bound"),
+    pytest.param(["By March 26th, 2025, the sound had 9,200 posts."], [E(1, words="By March 26th, 2025")],
+                 dates, [None], id="by a date is a bound"),
+    pytest.param(["An animation was posted by YouTuber Kaliido_scope on January 4th, 2023."],
+                 [E(1, words="January 4th, 2023")], dates, ["2023-01-04"],
+                 id="posted by X on a date is a date"),
+    pytest.param(["In December 2006, LusoSkav drew it. A month earlier, russxl posted a video. On "
+                  "September 9th, 2005, the first YTMND was posted. That month, it appeared on a forum. "
+                  "On November 6th, 2017, Apple answered. Meanwhile, @hot_kommodity_ tweeted a GIF."],
+                 [E(1, words="December 2006"), E(2, words="A month earlier"), E(3, words="September 9th, 2005"),
+                  E(4, words="That month"), E(5, words="November 6th, 2017"), E(6, words="Meanwhile")],
+                 rows("date", "date_precision"),
+                 [("2006-12", "month"), ("2006-11", "month"), ("2005-09-09", "day"), ("2005-09", "month"),
+                  ("2017-11-06", "day"), ("2017-11-06", "day")], id="relative months, years and meanwhile"),
+    pytest.param(["It was first posted to Facebook on October 20th, 2019. A capture was posted to YouTube "
+                  "by user Frazzle Tazz on the 21st."],
+                 [E(1, words="October 20th, 2019"), E(2, words="the 21st")], dates,
+                 ["2019-10-20", "2019-10-21"], id="muvvafukka: a bare ordinal takes the timeline's month"),
+    # a sentence that opens with its date dates its event without date words (2026-09-24)
+    pytest.param(["On May 4th, 2019, X user @a posted a clip. On September 13th, user elie posted a video "
+                  "showing the clip."], [E(1, words="May 4th, 2019", actors=["@a"]), E(2, actors=["elie"])],
+                 lambda out: (dates(out), out[1]["date_text"]),
+                 (["2019-05-04", "2019-09-13"], "September 13th"), id="an opening date is read"),
+    pytest.param(["On September 9th, 2005, the first YTMND was posted. That month, the Moran appeared in "
+                  "a photoshop series."], [E(1, words="September 9th, 2005"), E(2)],
+                 lambda out: pick(out[1], ("date", "date_text")), ("2005-09", "That month"),
+                 id="get-a-brain-morans: an opening relative date is read"),
+    pytest.param(["On September 9th, 2005, the first YTMND was posted. That month, the Moran appeared in "
+                  "a photoshop series."], [E(1, words="September 9th, 2005"), E(2, words="September 9th, 2005")],
+                 lambda out: pick(out[1], ("date", "date_text")), ("2005-09", "That month"),
+                 id="even when the model copied the sentence before's date"),
+    pytest.param(["Users drew Spider-Woman fan art, starting on June 5th, 2023."], [E(1)], dates, [None],
+                 id="a date deeper in the sentence is not an opening date"),
+    pytest.param(["Early in the 2021 remake of Dune, Lady Jessica speaks."], [E(1)], dates, [None],
+                 id="a year inside a title is not an opening date"),
+    pytest.param(["As of May 5th, 2013, the video has 900 views."], [E(1)], dates, [None],
+                 id="as of is not an opening date"),
+    # the 2026-09-25 holdout (60 entries never looked at)
+    pytest.param(["On September 13th, 2015, the infographic was posted on 9gag. The graphic remained "
+                  "relatively unknown until January 5th, 2017, when Twitter user @RahSenpai posted "
+                  "screenshots. That day, Twitter users @a and @b replied with photographs."],
+                 [E(1, words="September 13th, 2015", places=["9gag"]),
+                  E(2, words="January 5th, 2017", places=["Twitter"], actors=["@RahSenpai"]),
+                  E(3, words="That day", places=["Twitter"], actors=["@a", "@b"])],
+                 dates, ["2015-09-13", "2017-01-05", "2017-01-05"],
+                 id="how-to-break-your-thumb-ligament: until a date when it happened is that date"),
+    pytest.param(["On July 1st, 2020, TikToker OkCron uploaded day 1. OkCron continued posting updates "
+                  "over the following month."],
+                 [E(1, words="July 1st, 2020", places=["TikTok"], actors=["OkCron"]),
+                  E(2, words="the following month", actors=["OkCron"])], dates, ["2020-07-01", None],
+                 id="no-poop-july: over the following month is a stretch"),
+    pytest.param(["On July 1st, 2020, TikToker OkCron uploaded day 1. The following month, OkCron posted "
+                  "day 32."],
+                 [E(1, words="July 1st, 2020", places=["TikTok"], actors=["OkCron"]),
+                  E(2, words="The following month", actors=["OkCron"])], dates, ["2020-07-01", "2020-08"],
+                 id="the following month is the next month"),
+])
+def test_dating(paragraphs, model_rows, view, want):
+    check(paragraphs, model_rows, view, want)
+
+
+def spread_after(origin_text, origin_rows, spread_text, spread_rows):
+    """3.0.0: Spread reads its timeline from Origin's stored events."""
+    e = entry(sections=[{"kind": "origin", "heading": "Origin", "text": origin_text},
+                        {"kind": "spread", "heading": "Spread", "text": spread_text}])
+    o, s = ev.section_unit(e, "origin"), ev.section_unit(e, "spread")
+    first_rows = run(*origin_rows, u=o)
+    s["prior"] = [{k: r[k] for k in ("event_id", "sentences", "date", "date_precision")}
+                  for r in first_rows]
+    return first_rows, run(*spread_rows, u=s), s
+
+
+def test_spread_takes_its_year_from_origin():
+    # ios-question-mark-box: 2.x dated none of its 8 events; atlorgy lost all 9
+    _, spread, _ = spread_after(["On October 31st, 2017, Apple released the iOS 11.1 update."],
+                                [E(1, words="October 31st, 2017")],
+                                ["On November 5th, Redditor catitobandito asked about it. "
+                                 "On November 9th, Apple fixed the bug."],
+                                [E(1, words="November 5th"), E(2, words="November 9th")])
+    assert dates(spread) == ["2017-11-05", "2017-11-09"]
+
+
+def test_that_day_at_the_top_of_spread_is_origins_last_day():
+    # star-wars-rise-of-skywalker: that day is the poster's release, stated at the end of Origin
+    origin_rows, [row], s = spread_after(
+        ["On January 9th, 2018, Tumblr user kylosroboarm posted parodies. "
+         "On April 12th, 2019, the first poster was revealed."],
+        [E(1, words="January 9th, 2018"), E(2, words="April 12th, 2019")],
+        ["For example, that day, Facebook user elliott.boydstringer posted a version."],
+        [E(1, words="that day")])
+    assert (row["date"], row["date_basis"], row["date_anchor"]) == \
+        ("2019-04-12", "relative", origin_rows[1]["event_id"])
+    assert ev.audit({"events": [row]}, s) == []
+
+
+@pytest.mark.parametrize("tamper, problem", [
+    ({"source_text": "The original photo of a CAT was posted."}, "verbatim"),
+    ({"actors": ["Atsuko Sato (blogger)"]}, "actor"),
+    ({"locations": ["Tumblr (site)"]}, "location"),
+    ({"date": "2010-03-23"}, "resolves to"),
+    ({"date_basis": None}, "no basis"),
+    ({"links": [{"url": "https://evil.example", "kind": "link"}]}, "not on the page"),
+])
+def test_the_audit_catches_what_a_broken_validator_would_let_through(tamper, problem):
+    record = {"events": list(run(event()))}
+    record["events"][0].update(tamper)
+    problems = ev.audit(record, unit())
+    assert any(problem in p for p in problems), problems
+
+
+def test_the_audit_refuses_a_bad_relative_date_and_a_sentence_in_no_event():
+    u = origin("On May 4th, 2013 it appeared. The following day it spread.")
+    out = run(E(1, words="May 4th, 2013"), E(2, words="The following day"), u=u)
+    out[1]["date"] = "2013-05-09"
+    assert any("relative date" in p for p in ev.audit({"events": out}, u))
+    out = [e for e in run(event()) if e["sentences"][0] != 5]
+    assert ev.audit({"events": out}, unit()) == ["sentences [5] are in no event"]
+
+
+# -- who and where (3.0.0, as the review asked for them) -----------------------
+
+SITH = ("For example, that day, Facebook user elliott.boydstringer posted a version in the Star "
+        "Wars Sithposting shitposting group.")
+GROUP = "Star Wars Sithposting shitposting group"
+
+
+@pytest.mark.parametrize("paragraphs, model_rows, view, want", [
+    pytest.param(["On August 1st, 2019, the Facebook page King K Rool posted a video by user @cappnriki."],
+                 [E(1, places=["Facebook", "King K Rool"], actors=["@cappnriki"])],
+                 lambda out: [(r["locations"], sorted(r["actors"])) for r in out],
+                 [(["Facebook"], ["@cappnriki", "King K Rool"])],
+                 id="chuckster: the poster's own page is an actor, not a place"),
+    pytest.param(["On October 18th, 2018, Facebook meme page Grodosbova posted a meme."],
+                 [E(1, places=["Facebook", "Grodosbova"], actors=["Grodosbova"])],
+                 rows("locations", "actors"), [(["Facebook"], ["Grodosbova"])],
+                 id="an actor is never also a place"),
+    pytest.param(["The practice likely began in an anime forum about the show. A post in an Imgur "
+                  "compilation featured it."],
+                 [E(1, places=["anime forum about the show"]), E(2, places=["Imgur"])],
+                 rows("locations"), [[], ["Imgur"]], id="a common noun after a/an names nothing"),
+    pytest.param(["According to Pixiv Encyclopedia, the first occurrence was a game released by Hrathnir."],
+                 [E(1, actors=["Pixiv Encyclopedia", "Hrathnir"])], rows("actors"), [["Hrathnir"]],
+                 id="a cited source is not an actor"),
+    # murica: grounded section-wide to a Tumblr blog's name two sentences away
+    pytest.param(["In October 2011, the Tumblr Fuck Yeah Murica launched. In May 2012, a subreddit "
+                  "titled Murica! Fuck Yeah! was created."], [E(2, places=["Murica Fuck Yeah"])],
+                 lambda out: "Fuck Yeah Murica" in at(out, 2)["locations"], False,
+                 id="murica: a place is grounded in the event's own sentence first"),
+    pytest.param(["In October 2011, the Tumblr Fuck Yeah Murica launched. In May 2012, a subreddit "
+                  "titled Murica! Fuck Yeah! was created."], [E(2, 3, places=["Murica Fuck Yeah"])],
+                 first(2, "locations"), ["Murica! Fuck Yeah"], id="murica: across its two sentences"),
+    pytest.param(["On July 12th, 2018, the person who uploaded the clip, fishpupper, posted it again."],
+                 [E(1, words="July 12th, 2018", actors=["person who uploaded the clip", "fishpupper"])],
+                 rows("actors"), [["fishpupper"]], id="a description of someone is not a name"),
+    pytest.param(['On July 23rd, 2007, Yahoo Answers user posed a question. Tumblr users and 4chan\'s '
+                  'moderators replied. Facebook page "Uzuki\'s ganbarimasu" and the ApeThrowbacks channel '
+                  'reposted it.'],
+                 [E(1, 2, 3, actors=["Yahoo Answers user", "Tumblr users", "4chan's moderators",
+                                     '"Uzuki\'s ganbarimasu"', "ApeThrowbacks channel"])],
+                 rows("actors"), [["Uzuki's ganbarimasu", "ApeThrowbacks"]],
+                 id="names come without roles, crowds, quotes or channel"),
+    pytest.param(["On November 28th, artist Chance the Rapper posted a picture. On April 14th, YouTuber "
+                  "Ghost X Channel posted a video."], [E(1, 2, actors=["Chance the Rapper", "Ghost X Channel"])],
+                 rows("actors"), [["Chance the Rapper", "Ghost X Channel"]],
+                 id="a name that ends like a role is a name"),
+    pytest.param(["On April 12th, 2019, the official Star Wars Twitter account posted the poster."],
+                 [E(1, places=["Twitter", "official Star Wars Twitter account"], actors=["official Star Wars"])],
+                 rows("actors", "locations"), [(["official Star Wars"], ["Twitter"])],
+                 id="a poster is listed once by its cleaned name"),
+    pytest.param(["By November, Relentlessly Optimistic posted the image."],
+                 [E(1, places=["Relentlessly Optimistic"])], rows("locations", "actors"),
+                 [([], ["Relentlessly Optimistic"])], id="whoever posted is an actor"),
+    pytest.param(["On August 6th, TMZ published footage of Dawkins."], [E(1, places=["TMZ"])],
+                 rows("locations", "actors"), [([], ["TMZ"])], id="whoever published is an actor"),
+    pytest.param(["On May 15th, a post in an Imgur compilation of Avengers memes featured one of the first "
+                  "exploitables."], [E(1, places=["compilation of Avengers memes"])], rows("locations", "actors"),
+                 [(["compilation of Avengers memes"], [])], id="a work is not a doer"),
+    pytest.param(["In October 2011, the single topic Tumblr Fuck Yeah Murica launched."],
+                 [E(1, places=["Fuck Yeah Murica"])], rows("locations", "actors"), [(["Fuck Yeah Murica"], [])],
+                 id="a page that launched is not a doer"),
+    pytest.param(["The clip was posted to YouTube."], [E(1, places=["YouTube"])], rows("locations"),
+                 [["YouTube"]], id="a platform after the verb stays a place"),
+    pytest.param(["Meanwhile, the TomoNews US YouTube channel uploaded a video."],
+                 [E(1, places=["YouTube", "TomoNews US"])], rows("locations", "actors"),
+                 [(["YouTube"], ["TomoNews US"])], id="revenant: a channel named before its platform posts"),
+    pytest.param(["It was posted to the personal blog of user Brian on tumblr."],
+                 [E(1, places=["personal blog", "tumblr"])], rows("locations"), [["tumblr"]],
+                 id="lowercase common words are no place"),
+    pytest.param(["On February 13th, 2024, Cody Ko uploaded a video. Ko said Cody was tired."],
+                 [E(1, 2, actors=["Cody Ko", "Cody", "Ko"])], rows("actors"), [["Cody Ko"]],
+                 id="a part of a name beside the whole is dropped"),
+    pytest.param(["On November 13th, 2023, the IDF YouTube channel posted a video."],
+                 [E(1, words="November 13th, 2023", places=["YouTube"], actors=["IDF", "IDF YouTube channel"])],
+                 rows("actors", "locations"), [(["IDF"], ["YouTube"])], id="a poster named twice is one actor"),
+    pytest.param(["It was first posted to Facebook on October 20th, 2019. Butler made a screenshot of "
+                  "Hilzinger's face his cover photo."], [E(2, places=["Facebook"])],
+                 first(2, "locations"), ["Facebook"], id="muvvafukka: a stem must be most of the word"),
+    pytest.param([SITH], [E(1, places=["Facebook"], actors=["elliott.boydstringer", GROUP])],
+                 rows("actors", "locations"), [(["elliott.boydstringer"], ["Facebook", GROUP])],
+                 id="a group is a location, not an actor"),
+    pytest.param([SITH], [E(1, places=["Facebook", GROUP], actors=["elliott.boydstringer"])],
+                 lambda out: [len(r["locations"]) for r in out], [2], id="platform and venue are both kept"),
+    pytest.param([SITH], [E(1, actors=["Facebook user elliott.boydstringer"])], rows("actors"),
+                 [["elliott.boydstringer"]], id="role words are not part of a name"),
+    pytest.param(["On March 30th, 2022, an anonymous Soyjak.party user posted it to a personal blog and to "
+                  "Soyjak.party."],
+                 [E(1, places=["a personal blog", "Soyjak.party"], actors=["an anonymous Soyjak.party user"])],
+                 rows("actors", "locations"), [([], ["Soyjak.party"])], id="what names nobody is dropped"),
+    pytest.param(["The image was reblogged by Monorail and Funny Junk on September 13th, 2009."],
+                 [E(1, places=["Monorail and Funny Junk"])], rows("locations"), [["Monorail", "Funny Junk"]],
+                 id="two venues in one string are two places"),
+    pytest.param(["On June 15th, 2016, Trump spoke at the Fox Theater in Atlanta, Georgia."],
+                 [E(1, places=["Fox Theater in Atlanta, Georgia"], location_type="geo")], rows("locations"),
+                 [["Fox Theater in Atlanta, Georgia"]], id="a place name with a comma stays whole"),
+    pytest.param(["On June 25th, 2022, iFunnyer Choctaw posted a version."],
+                 [E(1, places=["iFunnyer"], actors=["Choctaw"])], rows("locations"), [["iFunny"]],
+                 id="the platform in a user word is the place"),
+    pytest.param(["Peanut also had a TikTok account under the name @peanut_the_squirrel12, which posted its "
+                  "first video."], [E(1, places=["TikTok", "@peanut_the_squirrel12"])],
+                 rows("locations", "actors"), [(["TikTok"], ["@peanut_the_squirrel12"])],
+                 id="a handle is an actor, never a place"),
+    pytest.param(['The organization tweeted at YouTube, "This content has no place on @YouTube or anywhere '
+                  'else."'], [E(1, places=["Twitter", "@YouTube"])], rows("actors"), [[]],
+                 id="a handle only quoted is not made an actor"),
+    pytest.param(["It was posted to the personal blog of Something Awful user Brian Somerville on July "
+                  "20th, 2006."],
+                 [E(1, words="July 20th, 2006", places=["personal blog of Something Awful user Brian Somerville"],
+                    actors=["Brian Somerville"])], rows("locations", "actors"), [([], ["Brian Somerville"])],
+                 id="the actor's own page named around them is no place"),
+    pytest.param(['On March 1st, Viner Shourouk Abdalla uploaded clips. Instagrammer "fawaz_Alfahad" ripped '
+                  'the video.'], [E(1, 2, actors=["Viner Shourouk Abdalla", 'Instagrammer "fawaz_Alfahad'])],
+                 rows("actors"), [["Shourouk Abdalla", "fawaz_Alfahad"]], id="Viner and a stray quote are not the name"),
+    # an actor or place named only AFTER its event (2026-09-24)
+    pytest.param(["On November 13th, 2023, the IDF posted a video. The claim was refuted online that day by "
+                  "many. For example, that day, X user @zoo_bear made a post purportedly debunking the claim."],
+                 [E(1, words="November 13th, 2023", actors=["IDF"]),
+                  E(2, words="that day", places=["X"], actors=["@zoo_bear"])],
+                 lambda out: (pick(out[1], ("sentences", "actors", "locations")), "@zoo_bear" in out[1]["source_text"]),
+                 (([2, 3], ["@zoo_bear"], ["X"]), True), id="the next sentence it came from joins the event"),
+    pytest.param(["On May 16th, 2018, Redditor WhiteCrowWolf posted a question. The following day, on May "
+                  "17th, 2018, a Redditor posted in the /r/NoStupidQuestions subreddit."],
+                 [E(1, words="May 16th, 2018", places=["/r/NoStupidQuestions"], actors=["WhiteCrowWolf"]),
+                  E(2, words="May 17th, 2018", places=["/r/NoStupidQuestions"])],
+                 lambda out: (pick(out[0], ("sentences", "locations", "location_type")), out[1]["locations"]),
+                 (([1], [], "unknown"), ["/r/NoStupidQuestions"]), id="a later happening's place is dropped"),
+    pytest.param(["On May 4th, 2013, user x posted in the Foo Fans group. Later that day, user y posted "
+                  "there too."], [E(1, words="May 4th, 2013", places=["Foo Fans group"], actors=["x"]),
+                                  E(2, words="Later that day", places=["Foo Fans group"], actors=["y"])],
+                 lambda out: out[1]["locations"], ["Foo Fans group"], id="a place named earlier is referred back to"),
+    pytest.param(["On May 4th, 2013, x posted a video. That day, @y reposted it on Tumblr."],
+                 [E(1, words="May 4th, 2013", places=["Tumblr"], actors=["x"]),
+                  E(2, words="That day", places=["Tumblr"], actors=["@y"])],
+                 lambda out: pick(out[0], ("sentences", "locations")), ([1], []),
+                 id="a next sentence another event narrates is not joined"),
+    pytest.param(["On May 4th, 2013, x posted a video. The next day, @y reposted it on Tumblr."],
+                 [E(1, words="May 4th, 2013", places=["Tumblr"], actors=["x", "@y"])],
+                 lambda out: (pick(at(out, 1), ("sentences", "actors", "locations")),
+                              pick(at(out, 2), ("sentences", "actors", "date"))),
+                 (([1], ["x"], []), ([2], ["@y"], "2013-05-05")),
+                 id="a next sentence a day later is its own event"),
+    pytest.param(["On May 4th, 2013, YouTuber Wimpyapple uploaded a clip. On May 9th, 2013, the clip was "
+                  "reposted to YouTube."], [E(1, places=["YouTube"])], lambda out: out[0]["locations"],
+                 ["YouTube"], id="YouTuber names YouTube"),
+    pytest.param(["That day, journalist Tony Webster tweeted a screenshot. On May 9th, 2013, Twitter user "
+                  "@y did too."], [E(1, places=["Twitter"])], lambda out: out[0]["locations"], ["Twitter"],
+                 id="tweeted names Twitter"),
+    pytest.param(["On October 20th, 2019, Caiden Butler posted a video. Butler made a screenshot his cover "
+                  "photo."], [E(1, words="October 20th, 2019", actors=["Caiden Butler"]),
+                              E(2, actors=["Caiden Butler"])],
+                 lambda out: out[1]["actors"], ["Caiden Butler"], id="a full name named earlier beats a surname"),
+    pytest.param(["That evening, Warski posted a tweet. On January 1st, 2018, a thread about the Adam "
+                  "Warski meme was submitted to /pol/."], [E(1, words="That evening", actors=["Adam Warski"])],
+                 lambda out: out[0]["actors"], ["Warski"], id="adam-warski: a name only later aligns to its own words"),
+    pytest.param(["That day, Facebook user elliott.boydstringer posted in the Star Wars Sithposting "
+                  "shitposting group. Throughout the weekend, others began sharing parodies in the group."],
+                 [E(2, places=["Facebook", GROUP])], first(2, "locations"), ["Facebook", GROUP],
+                 id="a group named earlier is the group"),
+    pytest.param(["On October 13th, 2009, another video was uploaded by Kailyn Jensen. Between 2009 and "
+                  "2013, a handful of other videos were uploaded to YouTube."],
+                 [E(1, words="October 13th, 2009", places=["YouTube"], actors=["Kailyn Jensen"])],
+                 lambda out: (pick(at(out, 1), ("sentences", "locations")), at(out, 2)["sentences"]),
+                 (([1], []), [2]), id="a next sentence with its own date is not joined"),
+])
+def test_who_and_where(paragraphs, model_rows, view, want):
+    check(paragraphs, model_rows, view, want)
+
+
+# -- what joins an event: reception, description, background ------------------
+# (2026-09-24: 127 of 1,370 sentences were in no event; 4.0.0 puts every one in one)
+
+POSTED = "On May 4th, 2013, Tumblr user x posted a comic. "
+X_POST = E(1, words="May 4th, 2013", places=["Tumblr"], actors=["x"])
+STARS = ("Following the poster's release, parodies using the design of the image became much more "
+         "common. For example, that day, Facebook user elliott.boydstringer posted a version criticizing "
+         "some of the character reveals in the first trailer in the Star Wars Sithposting shitposting "
+         "group. The post received more than 2,000 reactions, 410 comments and 500 shares in three days "
+         "(shown below, left).")
+
+
+@pytest.mark.parametrize("paragraphs, model_rows, view, want", [
+    pytest.param([STARS, "Throughout the weekend, others began sharing parodies of the poster in the group."],
+                 [E(1), E(2, words="that day", places=["Facebook", GROUP], actors=["elliott.boydstringer"]),
+                  E(4, words="Throughout the weekend")],
+                 lambda out: (spans(out), out[1]["source_text"].endswith("(shown below, left).")),
+                 ([[1], [2, 3], [4]], True), id="the reviewer's missed sentence"),
+    pytest.param(["On May 4th, 2013, Tumblr user x posted a comic. The comic depicts a cat on a roof. The "
+                  "post received more than 10,000 notes in a year (shown below)."], [X_POST],
+                 rows("sentences", "date"), [([1, 2, 3], "2013-05-04")], id="the description in between joins too"),
+    pytest.param([POSTED + "As of April 2014, the post has more than 18,500 notes."], [X_POST],
+                 rows("sentences"), [[1, 2]], id="an as-of count is reception"),
+    pytest.param([POSTED + "The post received over 5,300 notes."], [X_POST, E(2)], rows("sentences"),
+                 [[1, 2]], id="a stat-only event is folded into the post"),
+    pytest.param(["The post received over 5,300 notes. On May 4th, 2013, Tumblr user x posted a comic."],
+                 [E(1), E(2, words="May 4th, 2013", places=["Tumblr"], actors=["x"])],
+                 rows("sentences", "date"), [([1, 2], "2013-05-04")],
+                 id="a stat-only event with nothing before it joins the first"),
+    pytest.param(["On May 4th, 2013, iFunny user x posted a meme. This post was liked 124 times and shared "
+                  "27 times."], [E(1, words="May 4th, 2013", places=["iFunny"], actors=["x"])],
+                 rows("sentences"), [[1, 2]], id="counted in times is reception"),
+    pytest.param(["On May 4th, 2013, iFunny user x posted a meme. The post received over 1,300 smiles in one "
+                  "year."], [E(1, words="May 4th, 2013", places=["iFunny"], actors=["x"])],
+                 rows("sentences"), [[1, 2]], id="counted in smiles is reception"),
+    *[pytest.param([f'On May 5th, 2009, Twitter user @x posted it. They wrote, {words}'],
+                   [E(1, words="May 5th, 2009", places=["Twitter"], actors=["@x"]), E(2)],
+                   rows("sentences"), [[1, 2]], id=f"periodt: the post's own words join it {i}")
+      for i, words in enumerate(('"Churches should pay property tax periodt."', '"I posted this yesterday, lol."'))],
+    *[pytest.param(["On May 23rd, 2018, the channel PBS Space Time published a video. " + text],
+                   [E(1, words="May 23rd, 2018", places=["YouTube"], actors=["PBS Space Time"]), E(2)],
+                   rows("sentences"), [[1, 2]], id=f"an event describing the work is folded into it {i}")
+      for i, text in enumerate(("The post features host Matthew O'Dowd discussing physics.",
+                                "In the video, the computer malfunctions and the boy screams.",
+                                "The multi-pane comic strip depicted Computer Reaction Guy."))],
+    *[pytest.param(["On March 2, 2008, the picture was posted on icanhascheezburger. " + text],
+                   [E(1, words="March 2, 2008"), E(2)], spans, [[1], [2]],
+                   id=f"the work's spread is not a description {i}")
+      for i, text in enumerate(("The picture was very well-received, and variations flowed forth.",
+                                "The comic grew into a popular exploitable shortly after.",
+                                "The video was also the source of dozens of photoshops.",
+                                "The image, which shows a cat, went viral on Tumblr."))],
+    *[pytest.param([POSTED + second], [X_POST], lambda out: (out[0]["sentences"], at(out, 2)["sentences"]),
+                   ([1], [2]), id=f"a possible missed happening is its own event {i}")
+      for i, second in enumerate((
+          "One such post by YouTuber Nathan Zed has gained 22,800 retweets.",
+          "One related video, by animator OneyG, received 4 million views.",
+          "A post by crybabygrande received 2,000 likes.",
+          "The next day, X user @y made a GIF that received 5.1 million views.",
+          "A March 5th reupload of the clip received over 400,000 views.",
+          "It was then reposted to Reddit, where it gained 1,200 upvotes."))],
+    *[pytest.param([POSTED + second], [X_POST], rows("sentences", "date"), [([1, 2], "2013-05-04")],
+                   id=f"the work's reception at a later time continues it {i}")
+      for i, second in enumerate(("The next day, the video received 5.1 million views.",
+                                  "The next day it had 900 upvotes."))],
+    pytest.param(["On May 4th, 2023, TikToker x posted a clip. After Link is struck by the Hinox, he falls "
+                  "on all fours. The clip gained over 1.6 million views in five days (shown below)."],
+                 [E(1, words="May 4th, 2023", places=["TikTok"], actors=["x"])], rows("sentences"),
+                 [[1, 2, 3]], id="links-balls: a passive by in a description is crossed"),
+    pytest.param([POSTED + "In 2014, Reddit users posted edits. The post received 900 upvotes."], [X_POST],
+                 lambda out: (at(out, 1)["sentences"], at(out, 2)["sentences"]), ([1], [2, 3]),
+                 id="a gap that narrates something is not crossed"),
+    pytest.param(["On February 17th, Viner x posted a clip. In two months, the Vine received over 26,000 "
+                  "loops and 700 revines."],
+                 [E(1, words="February 17th, 2016", places=["Vine"], actors=["x"]), E(2, words="In two months")],
+                 rows("sentences"), [[1, 2]], id="vine counts and duration words are reception"),
+    pytest.param(["Doge is a Shiba Inu. On May 4th, 2013, x posted a photo of her."],
+                 [E(2, words="May 4th, 2013", actors=["x"])], rows("sentences", "date"),
+                 [([1, 2], "2013-05-04")], id="background before the first happening joins it"),
+    pytest.param(["On May 4th, 2013, x posted a comic. The comic depicts a dog. The post received 900 upvotes."],
+                 [E(1, words="May 4th, 2013", actors=["x"])], rows("sentences", "source_text"),
+                 [([1, 2, 3], "On May 4th, 2013, x posted a comic. The comic depicts a dog. "
+                   "The post received 900 upvotes.")], id="a description or a count continues the event"),
+    # only the model's own sentences are read for an unquoted relative phrase
+    pytest.param(["On May 4th, 2013, x posted a comic. Later, y posted a remix. The next day it had 900 upvotes."],
+                 [E(1, words="May 4th, 2013", actors=["x"]), E(2, actors=["y"])],
+                 lambda out: (spans(out), at(out, 2)["date"]), ([[1], [2, 3]], None),
+                 id="a joined sentence never dates the event"),
+    pytest.param(["On May 4th, 2013, x posted a comic. On June 1st, 2013, u/zed reposted it to Reddit."],
+                 [E(1, words="May 4th, 2013", actors=["x"])],
+                 first(2, "sentences", "date", "actors", "locations"), ([2], "2013-06-01", ["u/zed"], []),
+                 id="a missed happening is its own event with its own date"),
+    *[pytest.param(None, model_rows,
+                   lambda out: {i for e in out for i in range(e["sentences"][0], e["sentences"][-1] + 1)},
+                   {1, 2, 3, 4, 5}, id=f"every record covers every sentence {i}")
+      for i, model_rows in enumerate(([], [event()], [E(3, words="On May 7th")]))],
+    # prompt 9 made 118 such events of the review sample's sentences
+    *[pytest.param([POSTED + second], [X_POST, E(2)], spans, [[1, 2]],
+                   id=f"an event made of commentary is folded {i}")
+      for i, second in enumerate(("One of the more prevalent names was \"Operation Crawler\".",
+                                  "This is the earliest known version of the meme.",
+                                  "The original dialogue was:"))],
+    pytest.param([POSTED + "On Instagram, there are over 2 million images tagged #murica as of June 2017."],
+                 [X_POST, E(2, words="as of June 2017", places=["Instagram"])], spans, [[1, 2]],
+                 id="a count as of a date is folded too"),
+    *[pytest.param([POSTED + second], [X_POST, E(2)], spans, [[1], [2]],
+                   id=f"an event where someone does something is not folded {i}")
+      for i, second in enumerate(("Snopes ultimately labeled the theory as false.",
+                                  "The Rake was eventually added to horror story databases.",
+                                  "This site spawned many other sites editing the GIF image.",
+                                  "Other social media users took footage of the dance and paired it with other music.",
+                                  "The picture was very well-received, and variations flowed forth."))],
+    pytest.param(["The exact origin of the video is unknown. On May 4th, 2013, Tumblr user x posted it."],
+                 [E(1), E(2, words="May 4th, 2013", places=["Tumblr"], actors=["x"])],
+                 lambda out: (spans(out), out[0]["date"], out[0]["actors"]), ([[1, 2]], "2013-05-04", ["x"]),
+                 id="an opening commentary event joins the first happening"),
+])
+def test_what_joins_an_event(paragraphs, model_rows, view, want):
+    check(paragraphs, model_rows, view, want)
+
+
+# -- attachments: by position, never by the model ------------------------------
+
+@pytest.mark.parametrize("model_rows, view, want", [
+    ([event()], lambda out: {"url": KYM_LINK, "text": "Tumblr", "kind": "link"} in at(out, 1)["links"], True),
+    ([event()], lambda out: {"url": REF_3, "text": "[3]", "kind": "citation"} in at(out, 1)["links"], True),
+    ([E(2, places=["4chan"])], first(2, "links"), []),
+    ([event()], lambda out: ([i["src"] for i in at(out, 1)["images"]], at(out, 1)["embeds"]), ([IMG], [])),
+    ([E(5, words="In 2013", places=["Reddit"])], first(5, "embeds", "images"),
+     ([{"url": TIKTOK, "platform": "tiktok"}], [])),
+    # 2.1.1 audited only the date words and refused good records: 2 of 3 chunks
+    ([E(3, words="On May 7th"), E(4)], first(4, "date_basis", "date_text"), ("relative", "That same day")),
+], ids=["a link inside the sentence", "the reference its marker cites", "not a link in another sentence",
+        "media after the paragraph go with its events", "and the next paragraph's with its own",
+        "a relative date read from the sentences passes the audit"])
+def test_attachments(model_rows, view, want):
+    check(None, model_rows, view, want)
+
+
+def test_media_before_the_first_paragraph_go_with_the_first():
+    e = entry()
+    e["sections"][1]["images"][0]["after_paragraph"] = -1
+    assert [i["src"] for i in at(run(event(), u=ev.section_unit(e, "origin")), 1)["images"]] == [IMG]
+
+
+# -- identity and the model policy ---------------------------------------------
+
+def test_identity():
+    assert ev.frame_key(URL) == url_doc_id(URL)
+    a = ev.event_id(URL, "origin", [1], "2010-02-23", "day")
+    assert a == ev.event_id(URL, "origin", [1], "2010-02-23", "day") and "-" in a
+    assert a not in {ev.event_id(URL, "origin", [2], "2010-02-23", "day"),
+                     ev.event_id(URL, "spread", [1], "2010-02-23", "day"),
+                     ev.event_id(URL, "origin", [1], None, "none")}
+    with pytest.raises(ValueError):
+        int(a)
+
+
+def test_the_policy_is_criteria_not_a_name():
+    assert ev.model_request({}).exclude_capabilities == {"thinking"}
+    assert ev.model_request({"KG_EVENTS_MODEL": "x"}).model == "x"
+    c, _ = client(StubSession())
+    chosen = ev.choose_model(c, ev.model_request({}))
+    assert (chosen.name, owc.host_name(chosen.host)) == (MINISTRAL, "ollama-ccdd")
+    with pytest.raises(owc.ModelUnavailableError):            # refused, not rerouted
+        ev.choose_model(c, ev.model_request({"KG_EVENTS_MODEL": "qwen3.8:27b"}))
+    cands = owc.resolve_candidates(c.inventory(), ev.model_request({}), c.cfg.host_order)
+    assert cands and not [m.name for m in cands if "thinking" in m.capabilities]
+
+
+# -- the artifact and extract() -------------------------------------------------
+
+def lines(path):
+    return path.read_text(encoding="utf-8").splitlines()
+
+
+def test_the_artifact_is_appended_never_rewritten_and_a_torn_line_is_skipped(tmp_path):
+    out = tmp_path / "events.jsonl"
+    ev.append_jsonl(str(out), {"frame_url": "a", "source_section": "origin"})
+    head = lines(out)[0]
+    for i in range(5):
+        ev.append_jsonl(str(out), {"frame_url": f"u{i}", "source_section": "spread"})
+    assert len(lines(out)) == 6 and lines(out)[0] == head
+    with open(out, "a") as fh:
+        fh.write('{"frame_url": "b", "source_sec')
+    assert len(list(ev.iter_jsonl(str(out)))) == 6
+
+
+@pytest.fixture
+def extract(tmp_path):
+    path = tmp_path / "events.jsonl"
+
+    def go(session, **kw):
         c, _ = client(session)
-        return ev.extract(c, units_ or [unit()], self.path(), REQ,
-                          schema_path=SCHEMA_PATH, progress=silent, **kw)
-
-    def test_a_unit_is_extracted_audited_stamped_and_written(self):
-        summary = self.extract(StubSession(reply([event()])))
-        self.assertEqual((summary["extracted"], summary["events"]), (1, 4))
-        record = json.loads(self.lines()[0])
-        self.assertEqual(record["extraction_version"], ev.EXTRACTION_VERSION)
-        self.assertEqual(record["model"], MINISTRAL)
-        self.assertNotIn("discarded", record)          # 2.2.0: no such field
-        self.assertNotIn("truncated", record)
-        self.assertEqual(record["events"][0]["source_text"][:18], "The original photo")
-
-    def test_an_addition_never_reaches_the_record(self):
-        summary = self.extract(StubSession(reply(
-            [event(actors=["Kabosu (dog)", "Kabosu's vet"])])))
-        self.assertEqual(summary["events"], 4)
-        record = json.loads(self.lines()[0])
-        # "(dog)" is the model's aside and goes; the vet is nobody the page
-        # names and is not stored at all. Neither is counted anywhere: the
-        # record says what the page supports, not what the model tried.
-        self.assertEqual(record["events"][0]["actors"], ["Kabosu"])
-        self.assertNotIn("discarded_count", record)
-
-    def test_a_reply_the_grammar_cannot_finish_is_retried_without_it(self):
-        """Ollama's constrained sampler dies mid-string on non-Latin text:
-        a Russian entry stopped dead two characters into "СтоЛичный
-        Она-Нас" at every num_predict, with format=schema and with
-        format=json, and came back complete with no format at all. 1.5% of
-        sections carry a non-Latin script, so dead-lettering them loses the
-        international memes specifically, not a random slice."""
-        def handler(body):
-            if "format" in body:
-                return Resp(200, {"message": {"content":
-                                  '{"events": [{"actors": ["\u0421\u0442'}})
-            return Resp(200, {"message": {"content":
-                "```json\n" + json.dumps({"events": [event()]}) + "\n```"}})
-
-        summary = self.extract(StubSession(routes(handler)))
-        self.assertEqual((summary["extracted"], summary["failed_count"]), (1, 0))
-        # the model's one event, plus the fixture's other sentences covered
-        self.assertEqual(summary["events"], 4)
-
-    def test_a_grammarless_reply_still_has_to_be_the_schemas_shape(self):
-        """The fence is tolerated; nothing else is."""
-        self.assertEqual(ev._loads('```json\n{"events": []}\n```'), {"events": []})
-        self.assertEqual(ev._loads('  {"events": []} '), {"events": []})
-        self.assertRaises(ValueError, ev._loads, "```json\nnot json\n```")
-
-    def test_the_request_is_numbered_sentences_and_the_extractive_grammar(self):
-        chat, bodies = recorder([])
-        self.extract(StubSession(chat))
-        [body] = bodies
-        user = body["messages"][1]["content"]
-        self.assertIn("Sentences (1 to 5; every one belongs to an event):\n"
-                      "1: The original photo", user)
-        self.assertNotIn("[3]", user)
-        self.assertIn("ORIGIN section", user)
-        self.assertEqual(body["format"], ev.request_format(schema()))
-        self.assertEqual(body["options"]["temperature"], 0)
-        self.assertIs(body["think"], False)
-        self.assertEqual(body["model"], MINISTRAL)
-
-    def test_a_record_failing_its_audit_is_never_written(self):
-        original = ev._attach
-        ev._attach = lambda row, u: {**original(row, u),
-                                     "actors": ["Somebody Invented"]}
-        try:
-            with self.assertRaises(AssertionError):
-                self.extract(StubSession(reply([event()])))
-        finally:
-            ev._attach = original
-        self.assertFalse(os.path.exists(self.path()))
-
-    def test_a_resumed_run_asks_for_nothing(self):
-        session = StubSession(reply([event()]))
-        self.extract(session)
-        before = len(session.posts())
-        summary = self.extract(session)
-        self.assertEqual(len(session.posts()), before)
-        self.assertEqual(summary["attempted"], 0)
-
-    def test_garbage_output_lands_in_failures_as_data(self):
-        summary = self.extract(StubSession(routes(Resp(200, {"message": {
-            "content": "Sure! Here are the events:"}}))))
-        self.assertEqual((summary["extracted"], summary["failed_count"]), (0, 1))
-        self.assertEqual(summary["failed"][0]["error_kind"], "invalid")
-        self.assertFalse(os.path.exists(self.path()))
-
-    def test_on_record_fires_after_the_line_is_on_disk(self):
-        seen = []
-        self.extract(StubSession(reply([event()])),
-                     on_record=lambda rec: seen.append(len(self.lines())))
-        self.assertEqual(seen, [1])
+        return ev.extract(c, [unit()], str(path), REQ, schema_path=SCHEMA_PATH,
+                          progress=lambda _: None, **kw)
+    go.path = path
+    return go
 
 
-if __name__ == "__main__":       # pragma: no cover
-    unittest.main(verbosity=2)
+def test_a_unit_is_extracted_audited_stamped_and_written(extract):
+    summary = extract(StubSession(reply([event()])))
+    assert (summary["extracted"], summary["events"]) == (1, 4)
+    record = json.loads(lines(extract.path)[0])
+    assert (record["extraction_version"], record["model"]) == (ev.EXTRACTION_VERSION, MINISTRAL)
+    assert not {"discarded", "truncated"} & set(record)
+    assert record["events"][0]["source_text"][:18] == "The original photo"
+
+
+def test_an_addition_never_reaches_the_record(extract):
+    # "(dog)" is the model's aside; the vet is nobody the page names; neither is counted
+    summary = extract(StubSession(reply([event(actors=["Kabosu (dog)", "Kabosu's vet"])])))
+    record = json.loads(lines(extract.path)[0])
+    assert (summary["events"], record["events"][0]["actors"]) == (4, ["Kabosu"])
+    assert "discarded_count" not in record
+
+
+def test_a_reply_the_grammar_cannot_finish_is_retried_without_it(extract):
+    """Ollama's constrained sampler dies mid-string on non-Latin text (1.5% of
+    sections); with no format the reply comes back whole."""
+    def handler(body):
+        if "format" in body:
+            return Resp(200, {"message": {"content": '{"events": [{"actors": ["Ст'}})
+        return Resp(200, {"message": {"content": "```json\n" + json.dumps({"events": [event()]}) + "\n```"}})
+    summary = extract(StubSession(routes(handler)))
+    assert (summary["extracted"], summary["failed_count"], summary["events"]) == (1, 0, 4)
+
+
+def test_a_grammarless_reply_still_has_to_be_the_schemas_shape():
+    assert ev._loads('```json\n{"events": []}\n```') == {"events": []}   # the fence is tolerated
+    assert ev._loads('  {"events": []} ') == {"events": []}
+    with pytest.raises(ValueError):
+        ev._loads("```json\nnot json\n```")
+
+
+def test_the_request_is_numbered_sentences_and_the_extractive_grammar(extract):
+    bodies = []
+    extract(StubSession(routes(lambda body: bodies.append(body) or Resp(
+        200, {"message": {"content": json.dumps({"events": []})}}))))
+    [body] = bodies
+    user = body["messages"][1]["content"]
+    assert "Sentences (1 to 5; every one belongs to an event):\n1: The original photo" in user
+    assert "[3]" not in user and "ORIGIN section" in user
+    assert body["format"] == ev.request_format(schema())
+    assert (body["options"]["temperature"], body["think"], body["model"]) == (0, False, MINISTRAL)
+
+
+def test_a_record_failing_its_audit_is_never_written(extract, monkeypatch):
+    original = ev._attach
+    monkeypatch.setattr(ev, "_attach", lambda row, u: {**original(row, u), "actors": ["Somebody Invented"]})
+    with pytest.raises(AssertionError):
+        extract(StubSession(reply([event()])))
+    assert not extract.path.exists()
+
+
+def test_a_resumed_run_asks_for_nothing(extract):
+    session = StubSession(reply([event()]))
+    extract(session)
+    before = len(session.posts())
+    assert extract(session)["attempted"] == 0 and len(session.posts()) == before
+
+
+def test_garbage_output_lands_in_failures_as_data(extract):
+    summary = extract(StubSession(routes(Resp(200, {"message": {"content": "Sure! Here are the events:"}}))))
+    assert (summary["extracted"], summary["failed_count"], summary["failed"][0]["error_kind"]) == (0, 1, "invalid")
+    assert not extract.path.exists()
+
+
+def test_on_record_fires_after_the_line_is_on_disk(extract):
+    seen = []
+    extract(StubSession(reply([event()])), on_record=lambda rec: seen.append(len(lines(extract.path))))
+    assert seen == [1]

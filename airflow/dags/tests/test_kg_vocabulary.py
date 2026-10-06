@@ -1,51 +1,30 @@
 """The vocabulary invariant: one graph, two derivations, one declared vocabulary.
 
-MemeAtlas's RDF is produced by kg/rdf.py and independently re-derived by
-kg_config/kg_mapping.yarrrml.yml (via morph-kgc, in kym_kg_validate). The
-diff gate compares their OUTPUT, but only for the data a build happens to
-contain. These tests compare the two derivations' DEFINITIONS, so a
-predicate added on one side and forgotten on the other fails here, before a
-build, even if no entry in the corpus exercises it yet.
-
-Checked, at the level of full IRIs (local names collide across m4s:/mk:/
-skos:, so comparing local names — as this test once did — is not enough):
-
-  * the predicates the mapping uses == the predicates rdf.py can emit
-  * the constant classes the mapping uses == rdf.py's constant classes,
-    and the data-driven class templates are the same namespaces
-  * the CSVs the mapping reads == the CSVs serialize.py writes, and every
-    ``$(column)`` it references is in that CSV's header
-  * every RDF-star annotation mapping quotes an existing edge mapping over
-    the SAME source (morph-kgc needs no join then), and the edge it quotes
-    is one of build.OCCURRENCE_EDGE_TYPES
-  * every mk: term rdf.py can emit is declared in kg_config/memeatlas.ttl,
-    and every term declared there is one rdf.py can emit (no dead terms)
-  * IMKG's own terms are used, not re-declared under mk:
-
-Run inside the Airflow container:
-    docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
-        python -m pytest /opt/airflow/dags/tests/test_kg_vocabulary.py -v
+kg/rdf.py produces the RDF and kg_config/kg_mapping.yarrrml.yml re-derives it
+(morph-kgc, kym_kg_validate). The diff gate compares their OUTPUT on the data a
+build contains; these tests compare the DEFINITIONS, at full-IRI level (local
+names collide across m4s:/mk:/skos:), so a term added on one side fails here
+before any build exercises it: predicates, constant classes and class
+templates, the CSVs read and every $(column), RDF-star annotations quoting an
+edge over the same source, every mk: term declared in memeatlas.ttl and none
+dead, and IMKG's own terms used, never re-declared under mk:.
 """
 import re
-import unittest
 from pathlib import Path
 
+import pytest
+import yaml
+
+from helpers import KG_CONFIG
 from modules.kg import build, cooccurs, rdf, serialize, siblings, taxonomy
 
-CONFIG = Path(__file__).resolve().parents[1] / "kg_config"
-# .yarrrml.yml, not .yarrrml: yatter refuses any extension but .yml/.yaml.
-MAPPING = CONFIG / "kg_mapping.yarrrml.yml"
-ONTOLOGY = CONFIG / "memeatlas.ttl"
-
+MAPPING = KG_CONFIG / "kg_mapping.yarrrml.yml"       # yatter refuses any extension but .yml/.yaml
+ONTOLOGY = KG_CONFIG / "memeatlas.ttl"
+MK, M4S = rdf.PREFIXES["mk"], rdf.PREFIXES["m4s"]
 _TEMPLATE = re.compile(r"\$\(([^)]+)\)")
 
 
-def load_mapping() -> dict:
-    import yaml
-    return yaml.safe_load(MAPPING.read_text(encoding="utf-8"))
-
-
-def expand(term: str, prefixes: dict[str, str]) -> str:
+def expand(term, prefixes):
     term = term.split("~", 1)[0]
     if term.startswith(("http://", "https://")):
         return term
@@ -53,280 +32,182 @@ def expand(term: str, prefixes: dict[str, str]) -> str:
     return prefixes[prefix] + local
 
 
-def source_file(rule: dict) -> str:
-    (source,) = rule["sources"]
+def source_file(rule):
+    [source] = rule["sources"]
     return Path(source[0].split("~", 1)[0]).name
 
 
-def declared_mk_terms() -> set[str]:
-    """Subjects of declarations in memeatlas.ttl: ``mk:Term a ...`` lines."""
-    mk = rdf.PREFIXES["mk"]
-    return {mk + m.group(1) for m in re.finditer(
-        r"^mk:([A-Za-z][A-Za-z0-9]*)\s+a\s", ONTOLOGY.read_text(encoding="utf-8"),
-        re.MULTILINE)}
+def declared_mk_terms():
+    """Subjects of `mk:Term a ...` lines in memeatlas.ttl."""
+    return {MK + m.group(1) for m in re.finditer(r"^mk:([A-Za-z][A-Za-z0-9]*)\s+a\s",
+                                                 ONTOLOGY.read_text(encoding="utf-8"), re.MULTILINE)}
 
 
-class MappingCrosswalkTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.doc = load_mapping()
-        cls.prefixes = {**rdf.PREFIXES, **cls.doc["prefixes"]}
-        cls.predicates: set[str] = set()
-        cls.constant_classes: set[str] = set()
-        cls.class_templates: set[str] = set()
-        cls.predicate_templates: set[str] = set()
-        for rule in cls.doc["mappings"].values():
-            for po in rule.get("po") or []:
-                pred, obj = po[0], po[1]
-                if pred == "a":
-                    if "$(" in obj:
-                        cls.class_templates.add(obj.split("$(", 1)[0])
-                    else:
-                        cls.constant_classes.add(expand(obj, cls.prefixes))
-                elif "$(" in pred:
-                    cls.predicate_templates.add(expand(pred, cls.prefixes).split("$(", 1)[0])
+def emitted():
+    return rdf.all_predicates(include_provenance=True) | rdf.constant_classes()
+
+
+@pytest.fixture(scope="module")
+def mapping():
+    doc = yaml.safe_load(MAPPING.read_text(encoding="utf-8"))
+    prefixes = {**rdf.PREFIXES, **doc["prefixes"]}
+    m = {"doc": doc, "prefixes": prefixes, "predicates": set(), "constant_classes": set(), "class_templates": set(),
+         "predicate_templates": set()}
+    for rule in doc["mappings"].values():
+        for pred, obj, *_ in rule.get("po") or []:
+            if pred == "a":
+                if "$(" in obj:
+                    m["class_templates"].add(obj.split("$(", 1)[0])
                 else:
-                    cls.predicates.add(expand(pred, cls.prefixes))
-
-    def test_mapping_prefixes_agree_with_rdf_py(self):
-        for prefix, iri in self.doc["prefixes"].items():
-            self.assertEqual(rdf.PREFIXES.get(prefix), iri, prefix)
-
-    def test_predicates_are_exactly_what_rdf_py_emits(self):
-        ours = rdf.all_predicates(include_provenance=False)
-        self.assertEqual(self.predicates - ours, set(),
-                         "mapping predicates rdf.py never emits")
-        self.assertEqual(ours - self.predicates, set(),
-                         "rdf.py predicates the mapping never emits")
-
-    def test_the_only_data_driven_predicates_are_wikidata_statements(self):
-        # 7.1.0: wdt:$(property), the linked items' statements; rdf.py
-        # emits that namespace for statement edges and nothing else from data.
-        self.assertEqual(self.predicate_templates, {rdf.WDT})
-
-    def test_constant_classes_are_exactly_rdf_pys(self):
-        self.assertEqual(self.constant_classes, rdf.constant_classes())
-
-    def test_class_templates_are_the_imkg_namespaces(self):
-        self.assertEqual(self.class_templates, {rdf.KYM_CLASS_BASE, rdf.TYPES_BASE})
-
-    def test_sources_are_exactly_the_files_serialize_writes(self):
-        read = {source_file(rule) for rule in self.doc["mappings"].values()}
-        self.assertEqual(read, serialize.all_rml_files())
-
-    def test_every_referenced_column_exists_in_its_csv(self):
-        headers = {name: tuple(c for c, _ in cols)
-                   for name, (_, cols) in serialize.RML_NODE_FILES.items()}
-        headers.update({name: ("url", col)
-                        for name, (_, col) in serialize.RML_LIST_FILES.items()})
-        # Event list files are keyed by the event IRI, not by a frame url.
-        headers.update({name: ("iri", col)
-                        for name, (_, col) in serialize.RML_EVENT_LIST_FILES.items()})
-        # ...and so are template list files (6.4.0), by the template IRI.
-        headers.update({name: ("iri", col)
-                        for name, (_, col) in serialize.RML_TEMPLATE_LIST_FILES.items()})
-        headers.update(serialize.RML_CONCEPT_FILES)
-        headers.update({name: header for name, header
-                        in serialize.EDGE_TYPE_TO_RML_FILE.values()})
-        headers.update({name: header for name, header
-                        in serialize.OCCURRENCE_RML_FILES.values()})
-        origin_subtype_name, origin_subtype_header = serialize.ORIGIN_SUBTYPE_RML_FILE
-        headers[origin_subtype_name] = origin_subtype_header
-        for name, header in (serialize.FRAME_IMAGE_RML_FILE,
-                             serialize.FRAME_IMAGE_OCCURRENCE_RML_FILE,
-                             serialize.STATEMENTS_RML_FILE):  # 7.1.0
-            headers[name] = header
-        for rule_name, rule in self.doc["mappings"].items():
-            header = headers[source_file(rule)]
-            subjects = rule["subjects"] if isinstance(rule["subjects"], str) else ""
-            texts = [subjects] + [str(x) for po in rule.get("po") or [] for x in po]
-            for text in texts:
-                for column in _TEMPLATE.findall(text):
-                    self.assertIn(column, header, f"{rule_name}: $({column})")
-
-    def test_no_csv_column_collides_with_morph_kgc_internals(self):
-        columns = {c for _, cols in serialize.RML_NODE_FILES.values() for c, _ in cols}
-        columns |= {c for _, c in serialize.RML_LIST_FILES.values()}
-        columns |= {c for _, c in serialize.RML_EVENT_LIST_FILES.values()}
-        columns |= {c for _, c in serialize.RML_TEMPLATE_LIST_FILES.values()}
-        columns |= {c for cols in serialize.RML_CONCEPT_FILES.values() for c in cols}
-        columns |= {c for _, cols in serialize.EDGE_TYPE_TO_RML_FILE.values() for c in cols}
-        columns |= {c for _, cols in serialize.OCCURRENCE_RML_FILES.values() for c in cols}
-        self.assertEqual(columns & serialize.RESERVED_COLUMNS, set())
-
-    def test_annotation_mappings_quote_an_edge_over_the_same_source(self):
-        mappings = self.doc["mappings"]
-        quoted_edges = set()
-        for name, rule in mappings.items():
-            if isinstance(rule["subjects"], str):
-                continue
-            (subject,) = rule["subjects"]
-            (target,) = subject.values()
-            self.assertIn(target, mappings, f"{name} quotes unknown mapping {target}")
-            self.assertEqual(source_file(rule), source_file(mappings[target]), name)
-            ((pred, _obj),) = mappings[target]["po"]
-            quoted_edges.add(expand(pred, self.prefixes))
-            for po in rule["po"]:
-                self.assertIn(expand(po[0], self.prefixes),
-                              {p for p, _ in rdf.OCCURRENCE_PREDICATES.values()}, name)
-        self.assertEqual(quoted_edges, {rdf.EDGE_PREDICATES[t][0]
-                                        for t in build.OCCURRENCE_EDGE_TYPES})
-
-    def test_event_terms_align_to_sem_without_emitting_it(self):
-        """Alignment is free; emission is expensive. Pin the asymmetry.
-
-        memeatlas.ttl declares mk:Event as a subclass of sem:Event — the
-        Simple Event Model, which is what EventKG is built on — so a
-        SEM-aware consumer reads MemeAtlas events through one entailment
-        step. But no sem: term is ever EMITTED, exactly as with schema:,
-        dct: and prov:. Promoting it would mean a new entry in
-        rdf.PREFIXES, one in the mapping's prefixes block, a new member of
-        constant_classes(), and ~120k triples asserting classes MemeAtlas
-        does not own. This test exists so that promotion is a deliberate
-        act, not a tidy-up.
-        """
-        ttl = ONTOLOGY.read_text(encoding="utf-8")
-        self.assertIn("@prefix sem:", ttl)
-        for alignment in ("sem:Event", "sem:hasBeginTimeStamp",
-                          "sem:hasEndTimeStamp", "sem:hasActor"):
-            self.assertIn(alignment, ttl, alignment)
-        self.assertNotIn("sem", rdf.PREFIXES)
-        self.assertNotIn("sem", self.doc["prefixes"])
-        sem = "http://semanticweb.cs.vu.nl/2009/11/sem/"
-        emitted = rdf.all_predicates(include_provenance=True) | rdf.constant_classes()
-        self.assertEqual({t for t in emitted if t.startswith(sem)}, set())
-
-    def test_wikidata_items_are_objects_never_classes_or_predicates(self):
-        """6.1.0. A linked item is Wikidata's resource: MemeAtlas points at
-        it and labels it, and never types it or uses a wd: term as a
-        predicate — the same restraint as sem: above, for the same reason."""
-        wd = rdf.PREFIXES["wd"]
-        self.assertEqual(wd, "http://www.wikidata.org/entity/")
-        emitted = rdf.all_predicates(include_provenance=True) | rdf.constant_classes()
-        self.assertEqual({t for t in emitted if t.startswith(wd)}, set())
-        self.assertEqual(rdf.NODE_CLASSES["wikidata_entity"], ())
-        self.assertEqual(rdf.node_iri("wd:Q42"), wd + "Q42")
-        for etype in build.ENTITY_FIELD_EDGES.values():
-            rule = next(r for r in self.doc["mappings"].values()
-                        if r.get("po") and r["po"][0][0] ==
-                        {"fromTitle": "mk:fromTitle", "fromTags": "m4s:fromTags",
-                         "fromAbout": "m4s:fromAbout"}[etype])
-            self.assertTrue(rule["po"][0][1].startswith(wd), etype)
-
-    def test_every_occurrence_field_has_a_predicate(self):
-        self.assertEqual(set(rdf.OCCURRENCE_PREDICATES), set(build.OCCURRENCE_FIELDS))
-
-    def test_every_edge_type_has_an_rml_file_and_a_predicate(self):
-        # coOccursWith deliberately excluded (5.0.1): tags are its only
-        # source (entry_type's was removed) and tag_concept has no RDF
-        # resource, so it has no RML file and no rdf.py predicate at all —
-        # property-graph-only, checked separately in test_kg_loaders.py.
-        ours = (set(build.EDGE_TYPES) | set(taxonomy.CONCEPT_EDGE_TYPES)
-                | set(siblings.SIBLING_EDGE_TYPES))
-        self.assertEqual(set(serialize.EDGE_TYPE_TO_RML_FILE), ours)
-        self.assertEqual(set(rdf.EDGE_PREDICATES), ours)
-
-    def test_edge_types_and_concept_types_do_not_overlap(self):
-        groups = [set(build.EDGE_TYPES), set(taxonomy.CONCEPT_EDGE_TYPES),
-                  set(cooccurs.COOCCURS_EDGE_TYPES), set(siblings.SIBLING_EDGE_TYPES)]
-        for i, a in enumerate(groups):
-            for b in groups[i + 1:]:
-                self.assertEqual(a & b, set())
+                    m["constant_classes"].add(expand(obj, prefixes))
+            elif "$(" in pred:
+                m["predicate_templates"].add(expand(pred, prefixes).split("$(", 1)[0])
+            else:
+                m["predicates"].add(expand(pred, prefixes))
+    return m
 
 
-class ImkgAlignmentTests(unittest.TestCase):
-    """Where IMKG has a term, MemeAtlas uses it."""
+# -- the mapping and rdf.py define the same graph ------------------------------------------
 
-    M4S = rdf.PREFIXES["m4s"]
-
-    def test_imkg_terms_are_used(self):
-        preds = rdf.all_predicates()
-        # "origin"/"spread" joined in 5.1.0. They are the other half of
-        # test_no_extension_term_shadows_an_imkg_one below, which has
-        # forbidden mk:origin/mk:spread since before either was emitted:
-        # IMKG keeps all three narrative sections as frame LITERALS, so
-        # the event layer hangs off mk: terms of its own rather than
-        # re-typing these into object properties.
-        # "fromAbout"/"fromTags" joined in 6.1.0: IMKG's own textual-
-        # enrichment predicates (frame -> Wikidata item), reused verbatim
-        # rather than re-minted under mk:.
-        # "templateOf"/"fromImage" joined in 6.4.0: IMKG's template -> frame
-        # link (its mapping; its data used m4s:sameAs, which MemeAtlas does
-        # not follow) and its image -> Wikidata enrichment, now for imgflip
-        # templates.
-        for local in ("title", "status", "year", "from", "about", "origin",
-                      "spread", "added", "last_update_source", "tag",
-                      "fromAbout", "fromTags", "templateOf", "fromImage"):
-            self.assertIn(self.M4S + local, preds, local)
-        self.assertIn(self.M4S + "MediaFrame", rdf.constant_classes())
-
-    def test_series_is_skos_broader_and_taxonomy_is_not(self):
-        skos = rdf.PREFIXES["skos"]
-        self.assertEqual(rdf.EDGE_PREDICATES["partOfSeries"],
-                         (skos + "broader", False, skos + "narrower"))
-        self.assertNotIn("skos", rdf.EDGE_PREDICATES["subTypeOf"][0])
-
-    def test_siblings_are_imkgs_see_also_both_ways(self):
-        """6.6.0. IMKG's sibling triples are rdfs:seeAlso (kym/mappings/
-        kym.media.frames.yaml: ``siblings``, from the Related Entries box),
-        so MemeAtlas emits exactly that — both ways, as each page lists the
-        others — and mints no mk: term an IMKG query would not know."""
-        see_also = rdf.PREFIXES["rdfs"] + "seeAlso"
-        self.assertEqual(rdf.EDGE_PREDICATES["sharesSameSeries"],
-                         (see_also, False, see_also))
-        self.assertNotIn(rdf.PREFIXES["mk"] + "sharesSameSeries", declared_mk_terms())
-        # The only edge type that emits it: the mk: link predicates are
-        # declared sub-properties of rdfs:seeAlso, never emitted as it.
-        self.assertEqual({t for t, (p, _, inv) in rdf.EDGE_PREDICATES.items()
-                          if see_also in (p, inv)}, {"sharesSameSeries"})
-
-    def test_no_extension_term_shadows_an_imkg_one(self):
-        mk_locals = {t[len(rdf.PREFIXES["mk"]):] for t in declared_mk_terms()}
-        imkg = {"MediaFrame", "title", "status", "year", "from", "about",
-                "added", "last_update_source", "tag", "origin", "spread",
-                "fromAbout", "fromTags", "fromImage", "fromCaption", "templateOf"}
-        self.assertEqual(mk_locals & imkg, set())
-
-    def test_templates_link_both_ways_with_imkgs_term(self):
-        """6.4.0: one property-graph edge, both RDF directions — IMKG's
-        m4s:templateOf (template -> frame) and MemeAtlas's mk:hasTemplate."""
-        self.assertEqual(rdf.EDGE_PREDICATES["hasTemplate"],
-                         (rdf.PREFIXES["mk"] + "hasTemplate", False, self.M4S + "templateOf"))
-        self.assertEqual(rdf.EDGE_PREDICATES["fromImage"][0], self.M4S + "fromImage")
-        self.assertEqual(rdf.node_iri("template:112126428"),
-                         rdf.PREFIXES["mk"] + "template/112126428")
+def test_the_mapping_and_rdf_py_agree_on_prefixes_predicates_and_classes(mapping):
+    assert {p: rdf.PREFIXES.get(p) for p in mapping["doc"]["prefixes"]} == mapping["doc"]["prefixes"]
+    ours = rdf.all_predicates(include_provenance=False)
+    assert mapping["predicates"] - ours == set(), "mapping predicates rdf.py never emits"
+    assert ours - mapping["predicates"] == set(), "rdf.py predicates the mapping never emits"
+    # 7.1.0: wdt:$(property), the linked items' statements, is the only data-driven predicate
+    assert mapping["predicate_templates"] == {rdf.WDT}
+    assert mapping["constant_classes"] == rdf.constant_classes()
+    assert mapping["class_templates"] == {rdf.KYM_CLASS_BASE, rdf.TYPES_BASE}
 
 
-class OntologyDeclarationTests(unittest.TestCase):
-    MK = rdf.PREFIXES["mk"]
-
-    @classmethod
-    def setUpClass(cls):
-        cls.declared = declared_mk_terms()
-        emitted = rdf.all_predicates(include_provenance=True) | rdf.constant_classes()
-        cls.emitted_mk = {t for t in emitted if t.startswith(cls.MK)}
-
-    def test_ontology_file_is_readable(self):
-        self.assertTrue(ONTOLOGY.is_file(), f"{ONTOLOGY} is missing")
-        self.assertTrue(self.declared)
-
-    def test_every_emitted_mk_term_is_declared(self):
-        self.assertEqual(self.emitted_mk - self.declared, set())
-
-    def test_every_declared_term_is_emitted_or_structural(self):
-        # Each scheme is emitted as a resource, not a predicate or class.
-        structural = {rdf.SCHEME_IRI, rdf.ORIGIN_SCHEME_IRI, rdf.BADGE_SCHEME_IRI}
-        self.assertEqual(self.declared - self.emitted_mk - structural, set())
-
-    def test_ontology_parses_as_turtle(self):
-        try:
-            import rdflib
-        except ImportError:
-            self.skipTest("rdflib not installed; the Fuseki load checks it live")
-        g = rdflib.Graph()
-        g.parse(str(ONTOLOGY), format="turtle")
-        self.assertGreater(len(g), 0)
+def csv_headers():
+    headers = {name: tuple(c for c, _ in cols) for name, (_, cols) in serialize.RML_NODE_FILES.items()}
+    headers.update({name: ("url", col) for name, (_, col) in serialize.RML_LIST_FILES.items()})
+    # event and template list files are keyed by their own IRI, not a frame url
+    headers.update({name: ("iri", col) for name, (_, col) in serialize.RML_EVENT_LIST_FILES.items()})
+    headers.update({name: ("iri", col) for name, (_, col) in serialize.RML_TEMPLATE_LIST_FILES.items()})
+    headers.update(serialize.RML_CONCEPT_FILES)
+    headers.update(dict(serialize.EDGE_TYPE_TO_RML_FILE.values()))
+    headers.update(dict(serialize.OCCURRENCE_RML_FILES.values()))
+    headers.update(dict([serialize.ORIGIN_SUBTYPE_RML_FILE, serialize.FRAME_IMAGE_RML_FILE,
+                         serialize.FRAME_IMAGE_OCCURRENCE_RML_FILE, serialize.STATEMENTS_RML_FILE]))
+    return headers
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+def test_the_mapping_reads_exactly_the_files_serialize_writes_and_only_their_columns(mapping):
+    rules = mapping["doc"]["mappings"]
+    assert {source_file(rule) for rule in rules.values()} == serialize.all_rml_files()
+    headers = csv_headers()
+    for name, rule in rules.items():
+        header = headers[source_file(rule)]
+        subjects = rule["subjects"] if isinstance(rule["subjects"], str) else ""
+        for text in [subjects] + [str(x) for po in rule.get("po") or [] for x in po]:
+            for column in _TEMPLATE.findall(text):
+                assert column in header, f"{name}: $({column})"
+
+
+def test_no_csv_column_collides_with_morph_kgc_internals():
+    columns = {c for _, cols in serialize.RML_NODE_FILES.values() for c, _ in cols}
+    columns |= {c for files in (serialize.RML_LIST_FILES, serialize.RML_EVENT_LIST_FILES,
+                                serialize.RML_TEMPLATE_LIST_FILES) for _, c in files.values()}
+    columns |= {c for cols in serialize.RML_CONCEPT_FILES.values() for c in cols}
+    columns |= {c for files in (serialize.EDGE_TYPE_TO_RML_FILE, serialize.OCCURRENCE_RML_FILES)
+                for _, cols in files.values() for c in cols}
+    assert columns & serialize.RESERVED_COLUMNS == set()
+
+
+def test_annotation_mappings_quote_an_edge_over_the_same_source(mapping):
+    rules, quoted = mapping["doc"]["mappings"], set()
+    occurrence_predicates = {p for p, _ in rdf.OCCURRENCE_PREDICATES.values()}
+    for name, rule in rules.items():
+        if isinstance(rule["subjects"], str):
+            continue
+        [subject] = rule["subjects"]
+        [target] = subject.values()
+        assert target in rules, f"{name} quotes unknown mapping {target}"
+        assert source_file(rule) == source_file(rules[target]), name    # morph-kgc needs no join
+        [(pred, _obj)] = rules[target]["po"]
+        quoted.add(expand(pred, mapping["prefixes"]))
+        assert all(expand(po[0], mapping["prefixes"]) in occurrence_predicates for po in rule["po"]), name
+    assert quoted == {rdf.EDGE_PREDICATES[t][0] for t in build.OCCURRENCE_EDGE_TYPES}
+
+
+def test_edge_types_occurrence_fields_and_their_rdf():
+    assert set(rdf.OCCURRENCE_PREDICATES) == set(build.OCCURRENCE_FIELDS)
+    # coOccursWith excluded (5.0.1): tags are its only source and have no RDF resource
+    ours = set(build.EDGE_TYPES) | set(taxonomy.CONCEPT_EDGE_TYPES) | set(siblings.SIBLING_EDGE_TYPES)
+    assert set(serialize.EDGE_TYPE_TO_RML_FILE) == ours == set(rdf.EDGE_PREDICATES)
+    groups = [set(build.EDGE_TYPES), set(taxonomy.CONCEPT_EDGE_TYPES), set(cooccurs.COOCCURS_EDGE_TYPES),
+              set(siblings.SIBLING_EDGE_TYPES)]
+    assert all(not a & b for i, a in enumerate(groups) for b in groups[i + 1:])
+
+
+def test_events_align_to_sem_without_emitting_it(mapping):
+    """mk:Event is a subclass of sem:Event (EventKG's model): a SEM-aware
+    consumer gets one entailment step, but no sem: term is ever EMITTED (as
+    with schema:, dct:, prov:). Promoting it would add a prefix, a class and
+    ~120k triples asserting classes MemeAtlas does not own: deliberate only."""
+    ttl = ONTOLOGY.read_text(encoding="utf-8")
+    assert "@prefix sem:" in ttl
+    assert all(a in ttl for a in ("sem:Event", "sem:hasBeginTimeStamp", "sem:hasEndTimeStamp", "sem:hasActor"))
+    assert "sem" not in rdf.PREFIXES and "sem" not in mapping["doc"]["prefixes"]
+    assert not {t for t in emitted() if t.startswith("http://semanticweb.cs.vu.nl/2009/11/sem/")}
+
+
+def test_wikidata_items_are_objects_never_classes_or_predicates(mapping):
+    # 6.1.0: a linked item is Wikidata's resource: pointed at and labelled, never typed
+    wd = rdf.PREFIXES["wd"]
+    assert wd == "http://www.wikidata.org/entity/" and not {t for t in emitted() if t.startswith(wd)}
+    assert rdf.NODE_CLASSES["wikidata_entity"] == () and rdf.node_iri("wd:Q42") == wd + "Q42"
+    terms = {"fromTitle": "mk:fromTitle", "fromTags": "m4s:fromTags", "fromAbout": "m4s:fromAbout"}
+    for etype in build.ENTITY_FIELD_EDGES.values():
+        rule = next(r for r in mapping["doc"]["mappings"].values() if r.get("po") and r["po"][0][0] == terms[etype])
+        assert rule["po"][0][1].startswith(wd), etype
+
+
+# -- IMKG's own terms ------------------------------------------------------------------------
+
+def test_imkg_terms_are_used():
+    # origin/spread (5.1.0): IMKG keeps narrative sections as literals; fromAbout/
+    # fromTags (6.1.0) and templateOf/fromImage (6.4.0) reused verbatim
+    preds = rdf.all_predicates()
+    for local in ("title", "status", "year", "from", "about", "origin", "spread", "added", "last_update_source",
+                  "tag", "fromAbout", "fromTags", "templateOf", "fromImage"):
+        assert M4S + local in preds, local
+    assert M4S + "MediaFrame" in rdf.constant_classes()
+    imkg = {"MediaFrame", "title", "status", "year", "from", "about", "added", "last_update_source", "tag", "origin",
+            "spread", "fromAbout", "fromTags", "fromImage", "fromCaption", "templateOf"}
+    assert {t[len(MK):] for t in declared_mk_terms()} & imkg == set()      # never shadowed under mk:
+
+
+def test_series_siblings_and_templates_use_imkgs_terms():
+    skos, see_also = rdf.PREFIXES["skos"], rdf.PREFIXES["rdfs"] + "seeAlso"
+    assert rdf.EDGE_PREDICATES["partOfSeries"] == (skos + "broader", False, skos + "narrower")
+    assert "skos" not in rdf.EDGE_PREDICATES["subTypeOf"][0]
+    # 6.6.0: IMKG's sibling triples are rdfs:seeAlso, both ways; no mk: term an
+    # IMKG query would not know, and the only edge type that emits it
+    assert rdf.EDGE_PREDICATES["sharesSameSeries"] == (see_also, False, see_also)
+    assert MK + "sharesSameSeries" not in declared_mk_terms()
+    assert {t for t, (p, _, inv) in rdf.EDGE_PREDICATES.items() if see_also in (p, inv)} == {"sharesSameSeries"}
+    # 6.4.0: one edge, both RDF directions: m4s:templateOf and mk:hasTemplate
+    assert rdf.EDGE_PREDICATES["hasTemplate"] == (MK + "hasTemplate", False, M4S + "templateOf")
+    assert rdf.EDGE_PREDICATES["fromImage"][0] == M4S + "fromImage"
+    assert rdf.node_iri("template:112126428") == MK + "template/112126428"
+
+
+# -- the ontology declares exactly what is emitted -----------------------------------------------
+
+def test_every_emitted_mk_term_is_declared_and_none_is_dead():
+    declared = declared_mk_terms()
+    emitted_mk = {t for t in emitted() if t.startswith(MK)}
+    assert ONTOLOGY.is_file() and declared
+    assert emitted_mk - declared == set()
+    # each scheme is emitted as a resource, not a predicate or a class
+    assert declared - emitted_mk - {rdf.SCHEME_IRI, rdf.ORIGIN_SCHEME_IRI, rdf.BADGE_SCHEME_IRI} == set()
+
+
+def test_the_ontology_parses_as_turtle():
+    rdflib = pytest.importorskip("rdflib", reason="rdflib not installed; the Fuseki load checks it live")
+    g = rdflib.Graph()
+    g.parse(str(ONTOLOGY), format="turtle")
+    assert len(g) > 0

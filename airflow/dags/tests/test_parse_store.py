@@ -1,393 +1,224 @@
-"""Smoke tests for parse_store.py (no network, no real Mongo — mongomock).
+"""parse_store: grading, upserts, staleness, dead letters, duplicate addresses."""
+from unittest import mock
 
-Mirrors the fresh_store() pattern in test_scrape_pipeline.py: bypass
-ParseStore.__init__ and wire mongomock collections directly.
+import pytest
 
-Run inside the Airflow container:
-    docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
-        python -m pytest /opt/airflow/dags/tests/test_parse_store.py -v
-"""
-import os
-import unittest
-
-import mongomock
-
+from helpers import FIXTURES, mock_store, serving
+from modules import dom_store
 from modules import parse_store as ps
-from modules.kym_models import (
-    CORPUS_POLICY_VERSION,
-    DEFAULT_CORPUS_POLICY,
-    CorpusPolicy,
-    KYMEntryScrape,
-)
-from modules.kym_parse import PARSER_VERSION, parse_entry
+from modules.kym_models import CORPUS_POLICY_VERSION as POLICY_V
+from modules.kym_models import DEFAULT_CORPUS_POLICY as POLICY
+from modules.kym_models import CorpusPolicy, KYMEntryScrape
+from modules.kym_parse import PARSER_VERSION as PARSER_V
+from modules.kym_parse import parse_entry
 
-FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "doge.html")
-DOGE_URL = "https://knowyourmeme.com/memes/doge"
+DOGE = "https://knowyourmeme.com/memes/doge"
+SENS = "https://knowyourmeme.com/sensitive/memes/doge"
+BROKEN = "https://knowyourmeme.com/memes/broken-page"
+OMIT = object()
 
 
-def fresh_store() -> ps.ParseStore:
-    client = mongomock.MongoClient()
-    store = ps.ParseStore.__new__(ps.ParseStore)
-    store.client = client
-    store.db = client["memes"]
-    store.urls = store.db["urls"]
-    store.entries = store.db["entries"]
-    store.failures = store.db["parse_failures"]
+@pytest.fixture
+def store():
+    return mock_store(ps.ParseStore)
+
+
+def entry(url="https://knowyourmeme.com/memes/thin-stub", **fields):
+    """Valid but corpus-incomplete: no year, entry type, region or sections."""
+    data = {"url": url, "title": "Thin Stub", "category": "meme",
+            "status": "confirmed", "origin": "Twitter", "tags": ["stub"], **fields}
+    return KYMEntryScrape.model_validate({k: v for k, v in data.items() if v is not OMIT})
+
+
+def doc(store, e=None, sha="sha1", policy=POLICY, parser=PARSER_V, policy_v=POLICY_V, **kw):
+    return store.build_entry_doc(e or entry(), sha, policy, parser, policy_v, **kw)
+
+
+def failure(url=BROKEN, sha="sha_bad", **kw):
+    return {"url": url, "dom_content_sha256": sha, "error_type": "ValidationError",
+            "error": "6 validation errors for KYMEntryScrape ...", **kw}
+
+
+# -- grading ------------------------------------------------------------------
+
+def test_a_complete_entry_is_ready_and_stamped(store):
+    d = doc(store, parse_entry((FIXTURES / "doge.html").read_text()), sha="sha_v1")
+    assert (d["corpus_status"], d["corpus_missing"]) == ("ready", [])
+    assert (d["dom_content_sha256"], d["parser_version"], d["corpus_policy_version"]) \
+        == ("sha_v1", PARSER_V, POLICY_V)
+    assert "parsed_at" in d
+
+
+def test_an_incomplete_entry_is_labelled_not_dropped(store):
+    d = doc(store)
+    assert d["corpus_status"] == "incomplete"
+    assert set(d["corpus_missing"]) == {"year", "entry_type", "region", "section:about",
+                                        "section:origin", "section:spread"}
+
+
+def test_an_entry_without_tags_validates_and_is_labelled(store):
+    # a real confirmed meme may have no tags: kept, labelled incomplete
+    d = doc(store, entry(tags=OMIT))
+    assert d["corpus_status"] == "incomplete" and "tags" in d["corpus_missing"]
+
+
+@pytest.mark.parametrize("policy, field, fields", [
+    (CorpusPolicy(require_region=False), "region", {}),
+    (CorpusPolicy(require_tags=False), "tags", {"tags": OMIT}),
+])
+def test_a_lenient_policy_stops_requiring_its_field(store, policy, field, fields):
+    assert field not in doc(store, entry(**fields), policy=policy, policy_v="lenient")["corpus_missing"]
+
+
+# -- upserts ------------------------------------------------------------------
+
+def test_upsert_tallies_persists_and_is_idempotent_on_url(store):
+    ready = doc(store, parse_entry((FIXTURES / "doge.html").read_text()))
+    assert store.upsert_entries([ready]) == {"ready": 1, "incomplete": 0}
+    store.upsert_entries([doc(store)])
+    store.upsert_entries([doc(store)])
+    assert store.entries.count_documents({}) == 2
+
+
+def test_a_retired_field_leaves_the_doc_on_reparse(store):
+    # template_image_url went in parser 1.7.0; $set alone would keep it forever
+    d = doc(store)
+    store.entries.insert_one({"_id": d["_id"], "template_image_url": "https://i.kym-cdn.com/x.jpg"})
+    store.upsert_entries([d])
+    stored = store.entries.find_one({"_id": d["_id"]})
+    assert "template_image_url" not in stored and stored["title"] == "Thin Stub"
+
+
+def test_stats_break_down_entries_and_failures(store):
+    store.upsert_entries([doc(store)])
+    store.save_failures([failure(namespace="memes"),
+                         failure("https://knowyourmeme.com/editorials/oops", "sha2",
+                                 namespace="editorials")], PARSER_V, POLICY_V)
+    s = store.stats()
+    assert (s["entries_total"], s["entries_incomplete"], s["missing_field_counts"]["year"]) == (1, 1, 1)
+    assert (s["parse_failures"], s["failure_type_counts"]) == (2, {"ValidationError": 2})
+    assert s["failure_namespace_counts"] == {"memes": 1, "editorials": 1}
+
+
+# -- staleness ----------------------------------------------------------------
+
+NEW = "https://knowyourmeme.com/memes/brand-new"
+
+
+@pytest.mark.parametrize("shas, parser, policy_v, force, expected", [
+    ({DOGE: "sha_v1"}, PARSER_V, POLICY_V, False, []),               # unchanged
+    ({DOGE: "sha_v2"}, PARSER_V, POLICY_V, False, [DOGE]),           # the page changed
+    ({DOGE: "sha_v1"}, "9.9.9", POLICY_V, False, [DOGE]),            # parser upgraded
+    ({DOGE: "sha_v1"}, PARSER_V, "other-policy", False, [DOGE]),     # policy changed
+    ({DOGE: "sha_v1", NEW: "s"}, PARSER_V, POLICY_V, False, [NEW]),  # never parsed
+    ({DOGE: "sha_v1"}, PARSER_V, POLICY_V, True, [DOGE]),            # forced
+    ({}, PARSER_V, POLICY_V, False, []),
+])
+def test_what_is_due_for_a_parse(store, shas, parser, policy_v, force, expected):
+    store.upsert_entries([doc(store, entry(DOGE), sha="sha_v1")])
+    assert store.select_pending(shas, parser, policy_v, force_reparse=force) == expected
+
+
+def test_limit_truncates(store):
+    shas = {f"https://knowyourmeme.com/memes/new-{i}": "s" for i in range(5)}
+    assert len(store.select_pending(shas, PARSER_V, POLICY_V, limit=2)) == 2
+
+
+# -- dead letters -------------------------------------------------------------
+
+def test_a_failure_goes_to_the_dead_letters_only(store):
+    assert store.save_failures([failure()], PARSER_V, POLICY_V) == 1
+    assert store.entries.count_documents({}) == 0
+    d = store.failures.find_one({"url": BROKEN})
+    assert (d["error_type"], d["attempts"]) == ("ValidationError", 1)
+    assert "validation errors" in d["error"] and "failed_at" in d
+
+
+def test_a_repeated_failure_counts_attempts_in_one_record(store):
+    store.save_failures([failure()], PARSER_V, POLICY_V)
+    store.save_failures([failure()], "1.0.2", POLICY_V)
+    d = store.failures.find_one({"url": BROKEN})
+    assert (d["attempts"], d["parser_version"], store.failures.count_documents({})) == (2, "1.0.2", 1)
+
+
+@pytest.mark.parametrize("sha, parser, expected", [
+    ("sha_bad", PARSER_V, []),        # same page, same parser: a deterministic failure
+    ("sha_bad", "9.9.9", [BROKEN]),   # parser upgraded
+    ("sha_new", PARSER_V, [BROKEN]),  # the page changed
+])
+def test_a_failure_is_retried_only_when_something_changed(store, sha, parser, expected):
+    store.save_failures([failure()], PARSER_V, POLICY_V)
+    assert store.select_pending({BROKEN: sha}, parser, POLICY_V) == expected
+
+
+def test_a_failed_reparse_never_touches_the_good_entry_nor_loops(store):
+    store.upsert_entries([doc(store, entry(BROKEN), sha="sha_v1")])
+    before = store.entries.find_one({"url": BROKEN})
+    store.save_failures([failure(sha="sha_v2")], PARSER_V, POLICY_V)
+    assert store.entries.find_one({"url": BROKEN}) == before
+    assert store.select_pending({BROKEN: "sha_v2"}, PARSER_V, POLICY_V) == []
+
+
+def test_a_successful_reparse_deletes_the_dead_letter(store):
+    store.save_failures([failure()], PARSER_V, POLICY_V)
+    store.upsert_entries([doc(store, entry(BROKEN), sha="sha_fixed")])
+    assert (store.failures.count_documents({}), store.entries.count_documents({})) == (0, 1)
+
+
+def test_entries_stay_schema_pure(store):
+    store.upsert_entries([doc(store)])
+    stored = store.entries.find_one({})
+    assert not {"parse_status", "last_parse_error", "last_parse_error_type"} & set(stored)
+
+
+@pytest.mark.parametrize("url_doc, expected", [
+    ({"url": BROKEN, "namespace": "editorials"}, "editorials"),  # discovery's label wins
+    ({"url": BROKEN}, "memes"),                                   # no label: from the path
+    (None, "memes"),                                              # unknown to discovery
+])
+def test_a_namespace_comes_from_discovery_else_the_path(store, url_doc, expected):
+    if url_doc:
+        store.urls.insert_one(url_doc)
+    assert store.namespaces_for([BROKEN])[BROKEN] == expected
+
+
+def test_a_failure_record_keeps_its_namespace(store):
+    store.urls.insert_one({"url": BROKEN, "namespace": "memes"})
+    ns = store.namespaces_for([BROKEN])[BROKEN]
+    store.save_failures([failure(namespace=ns)], PARSER_V, POLICY_V)
+    assert store.failures.find_one({"url": BROKEN})["namespace"] == "memes"
+
+
+# -- one entry, one address (gap 14) ------------------------------------------
+
+@pytest.fixture
+def twins(store):
+    for url in (DOGE, SENS):
+        store.upsert_entries([doc(store, entry(url), sha="sha")])
+        store.urls.insert_one({"url": url, "Confirmed": True})
+    store.urls.update_one({"url": DOGE}, {"$set": {"duplicate_of": SENS}})
+    store.failures.insert_one({"_id": ps.url_doc_id(DOGE), "url": DOGE})
     return store
 
 
-def _thin_entry(url: str = "https://knowyourmeme.com/memes/thin-stub"
-               ) -> KYMEntryScrape:
-    """A validly-scraped but corpus-incomplete entry, for gate testing."""
-    return KYMEntryScrape.model_validate({
-        "url": url, "title": "Thin Stub", "category": "meme",
-        "status": "confirmed", "origin": "Twitter", "tags": ["stub"],
-    })
+def test_retiring_drops_the_entry_and_its_dead_letter(twins):
+    out = twins.retire_duplicates()
+    assert (out["duplicate_addresses"], out["entries_retired"]) == (1, 1)
+    assert out["examples"] == [{"retired": DOGE, "kept": SENS}]
+    assert [e["url"] for e in twins.entries.find()] == [SENS]
+    assert twins.failures.count_documents({}) == 0
+    assert twins.retire_duplicates()["entries_retired"] == 0
 
 
-class BuildEntryDocTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        with open(FIXTURE, encoding="utf-8") as fh:
-            cls.doge = parse_entry(fh.read())
-
-    def setUp(self):
-        self.store = fresh_store()
-
-    def test_ready_entry_graded_correctly(self):
-        doc = self.store.build_entry_doc(
-            self.doge, "sha_v1", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
-            CORPUS_POLICY_VERSION)
-        self.assertEqual(doc["corpus_status"], "ready")
-        self.assertEqual(doc["corpus_missing"], [])
-        self.assertEqual(doc["dom_content_sha256"], "sha_v1")
-        self.assertEqual(doc["parser_version"], PARSER_VERSION)
-        self.assertEqual(doc["corpus_policy_version"], CORPUS_POLICY_VERSION)
-        self.assertIn("parsed_at", doc)
-
-    def test_incomplete_entry_flagged_not_dropped(self):
-        thin = _thin_entry()
-        doc = self.store.build_entry_doc(
-            thin, "sha_thin", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
-            CORPUS_POLICY_VERSION)
-        self.assertEqual(doc["corpus_status"], "incomplete")
-        self.assertEqual(
-            set(doc["corpus_missing"]),
-            {"year", "entry_type", "region",
-             "section:about", "section:origin", "section:spread"})
-
-    def test_region_optional_policy_changes_grading(self):
-        lenient = CorpusPolicy(require_region=False)
-        doc = self.store.build_entry_doc(
-            _thin_entry(), "sha", lenient, PARSER_VERSION, "lenient-v1")
-        self.assertNotIn("region", doc["corpus_missing"])
-
-    def test_missing_tags_flagged_incomplete_not_rejected(self):
-        # The behavior this whole change is about: a real confirmed meme
-        # without tags validates (no exception) and is kept in `entries`,
-        # just labelled incomplete.
-        no_tags = KYMEntryScrape.model_validate({
-            "url": "https://knowyourmeme.com/memes/no-tags-stub",
-            "title": "No Tags Stub", "category": "meme",
-            "status": "confirmed", "origin": "Twitter"})
-        doc = self.store.build_entry_doc(
-            no_tags, "sha_nt", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
-            CORPUS_POLICY_VERSION)
-        self.assertEqual(doc["corpus_status"], "incomplete")
-        self.assertIn("tags", doc["corpus_missing"])
-
-    def test_tags_optional_policy_changes_grading(self):
-        no_tags = KYMEntryScrape.model_validate({
-            "url": "https://knowyourmeme.com/memes/no-tags-stub2",
-            "title": "No Tags Stub 2", "category": "meme",
-            "status": "confirmed", "origin": "Twitter"})
-        lenient = CorpusPolicy(require_tags=False)
-        doc = self.store.build_entry_doc(
-            no_tags, "sha", lenient, PARSER_VERSION, "lenient-v2")
-        self.assertNotIn("tags", doc["corpus_missing"])
+def test_an_entry_is_filed_where_its_page_was_collected(store):
+    # a moved page names the new address in a canonical link; filed under it,
+    # TikTok's two pages overwrote one entry
+    d = doc(store, entry(DOGE), address=SENS)
+    assert (d["url"], d["_id"]) == (SENS, ps.url_doc_id(SENS))
 
 
-class UpsertTests(unittest.TestCase):
-    def setUp(self):
-        self.store = fresh_store()
-
-    def test_upsert_tallies_and_persists(self):
-        with open(FIXTURE, encoding="utf-8") as fh:
-            doge = parse_entry(fh.read())
-        doc = self.store.build_entry_doc(
-            doge, "sha1", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
-            CORPUS_POLICY_VERSION)
-        tallies = self.store.upsert_entries([doc])
-        self.assertEqual(tallies, {"ready": 1, "incomplete": 0})
-        self.assertEqual(self.store.entries.count_documents({}), 1)
-
-    def test_a_retired_field_leaves_the_doc_on_reparse(self):
-        # template_image_url (a copy of og:image) was dropped in parser
-        # 1.7.0; the $set upsert alone would have left it in every doc.
-        doc = self.store.build_entry_doc(
-            _thin_entry(), "sha1", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
-            CORPUS_POLICY_VERSION)
-        self.store.entries.insert_one({"_id": doc["_id"],
-                                       "template_image_url": "https://i.kym-cdn.com/x.jpg"})
-        self.store.upsert_entries([doc])
-        stored = self.store.entries.find_one({"_id": doc["_id"]})
-        self.assertNotIn("template_image_url", stored)
-        self.assertEqual(stored["title"], "Thin Stub")
-
-    def test_upsert_is_idempotent_on_url(self):
-        doc = self.store.build_entry_doc(
-            _thin_entry(), "sha1", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
-            CORPUS_POLICY_VERSION)
-        self.store.upsert_entries([doc])
-        self.store.upsert_entries([doc])  # re-run, same url
-        self.assertEqual(self.store.entries.count_documents({}), 1)
-
-    def test_stats_breaks_down_missing_fields(self):
-        doc = self.store.build_entry_doc(
-            _thin_entry(), "sha1", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
-            CORPUS_POLICY_VERSION)
-        self.store.upsert_entries([doc])
-        stats = self.store.stats()
-        self.assertEqual(stats["entries_total"], 1)
-        self.assertEqual(stats["entries_incomplete"], 1)
-        self.assertEqual(stats["missing_field_counts"]["year"], 1)
-
-
-class SelectPendingTests(unittest.TestCase):
-    """Staleness-detection logic — the reason entries/parser/policy
-    versions are stamped on every doc in the first place."""
-
-    def setUp(self):
-        self.store = fresh_store()
-        entry = _thin_entry(DOGE_URL)
-        doc = self.store.build_entry_doc(
-            entry, "sha_v1", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
-            CORPUS_POLICY_VERSION)
-        self.store.upsert_entries([doc])
-
-    def test_unchanged_needs_no_reparse(self):
-        pending = self.store.select_pending(
-            {DOGE_URL: "sha_v1"}, PARSER_VERSION, CORPUS_POLICY_VERSION)
-        self.assertEqual(pending, [])
-
-    def test_dom_content_change_triggers_reparse(self):
-        pending = self.store.select_pending(
-            {DOGE_URL: "sha_v2"}, PARSER_VERSION, CORPUS_POLICY_VERSION)
-        self.assertEqual(pending, [DOGE_URL])
-
-    def test_parser_upgrade_triggers_reparse(self):
-        pending = self.store.select_pending(
-            {DOGE_URL: "sha_v1"}, "9.9.9", CORPUS_POLICY_VERSION)
-        self.assertEqual(pending, [DOGE_URL])
-
-    def test_policy_change_triggers_reparse(self):
-        pending = self.store.select_pending(
-            {DOGE_URL: "sha_v1"}, PARSER_VERSION, "some-other-policy")
-        self.assertEqual(pending, [DOGE_URL])
-
-    def test_never_parsed_url_is_pending(self):
-        new_url = "https://knowyourmeme.com/memes/brand-new"
-        pending = self.store.select_pending(
-            {DOGE_URL: "sha_v1", new_url: "sha_new"},
-            PARSER_VERSION, CORPUS_POLICY_VERSION)
-        self.assertEqual(pending, [new_url])
-
-    def test_force_reparse_ignores_all_staleness_checks(self):
-        pending = self.store.select_pending(
-            {DOGE_URL: "sha_v1"}, PARSER_VERSION, CORPUS_POLICY_VERSION,
-            force_reparse=True)
-        self.assertEqual(pending, [DOGE_URL])
-
-    def test_empty_candidates_returns_empty(self):
-        self.assertEqual(
-            self.store.select_pending({}, PARSER_VERSION, CORPUS_POLICY_VERSION),
-            [])
-
-    def test_limit_truncates(self):
-        shas = {f"https://knowyourmeme.com/memes/new-{i}": "s" for i in range(5)}
-        pending = self.store.select_pending(
-            shas, PARSER_VERSION, CORPUS_POLICY_VERSION, limit=2)
-        self.assertEqual(len(pending), 2)
-
-
-class DuplicateTests(unittest.TestCase):
-    """Gap 14: an address marked a duplicate of another holds no entry."""
-    SENS = "https://knowyourmeme.com/sensitive/memes/doge"
-
-    def setUp(self):
-        self.store = fresh_store()
-        for url in (DOGE_URL, self.SENS):
-            self.store.upsert_entries([self.store.build_entry_doc(
-                _thin_entry(url), "sha", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
-                CORPUS_POLICY_VERSION)])
-            self.store.urls.insert_one({"url": url, "Confirmed": True})
-        self.store.urls.update_one({"url": DOGE_URL}, {"$set": {"duplicate_of": self.SENS}})
-        self.store.failures.insert_one({"_id": ps.url_doc_id(DOGE_URL), "url": DOGE_URL})
-
-    def test_retiring_drops_the_entry_and_its_dead_letter(self):
-        out = self.store.retire_duplicates()
-        self.assertEqual((out["duplicate_addresses"], out["entries_retired"]), (1, 1))
-        self.assertEqual(out["examples"], [{"retired": DOGE_URL, "kept": self.SENS}])
-        self.assertEqual([e["url"] for e in self.store.entries.find()], [self.SENS])
-        self.assertEqual(self.store.failures.count_documents({}), 0)
-        self.assertEqual(self.store.retire_duplicates()["entries_retired"], 0)
-
-    def test_an_entry_is_filed_where_its_page_was_collected(self):
-        # A moved page names the new address in a canonical link; filed
-        # under it, TikTok's two pages overwrote one entry.
-        doc = self.store.build_entry_doc(
-            _thin_entry(DOGE_URL), "sha", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
-            CORPUS_POLICY_VERSION, address=self.SENS)
-        self.assertEqual((doc["url"], doc["_id"]), (self.SENS, ps.url_doc_id(self.SENS)))
-
-    def test_a_duplicate_address_is_never_selected(self):
-        from unittest import mock
-        from modules import dom_store
-        with mock.patch.object(ps, "get_store", return_value=self.store), \
-                mock.patch.object(dom_store, "content_shas",
-                                  side_effect=lambda urls: {u: "new" for u in urls}):
-            pending = ps.pending_urls(current_parser_version=PARSER_VERSION,
-                                      current_policy_version=CORPUS_POLICY_VERSION)
-        self.assertEqual(pending, [self.SENS])
-
-
-class SaveFailuresTests(unittest.TestCase):
-    """Dead-letter behavior: failures live in `parse_failures`, never in
-    `entries` (which stays schema-pure)."""
-
-    URL = "https://knowyourmeme.com/memes/broken-page"
-
-    def setUp(self):
-        self.store = fresh_store()
-        self.fail = {"url": self.URL, "dom_content_sha256": "sha_bad",
-                     "error": "6 validation errors for KYMEntryScrape ...",
-                     "error_type": "ValidationError"}
-
-    def test_failure_goes_to_failures_collection_only(self):
-        n = self.store.save_failures([self.fail], PARSER_VERSION,
-                                     CORPUS_POLICY_VERSION)
-        self.assertEqual(n, 1)
-        self.assertEqual(self.store.entries.count_documents({}), 0)
-        doc = self.store.failures.find_one({"url": self.URL})
-        self.assertEqual(doc["error_type"], "ValidationError")
-        self.assertIn("validation errors", doc["error"])
-        self.assertEqual(doc["attempts"], 1)
-        self.assertIn("failed_at", doc)
-
-    def test_repeat_failure_increments_attempts(self):
-        self.store.save_failures([self.fail], PARSER_VERSION,
-                                 CORPUS_POLICY_VERSION)
-        self.store.save_failures([self.fail], "1.0.2",
-                                 CORPUS_POLICY_VERSION)
-        doc = self.store.failures.find_one({"url": self.URL})
-        self.assertEqual(doc["attempts"], 2)
-        self.assertEqual(doc["parser_version"], "1.0.2")
-        self.assertEqual(self.store.failures.count_documents({}), 1)
-
-    def test_failure_not_requeued_until_something_changes(self):
-        self.store.save_failures([self.fail], PARSER_VERSION,
-                                 CORPUS_POLICY_VERSION)
-        # same sha + same versions -> deterministic failure, do NOT retry
-        pending = self.store.select_pending(
-            {self.URL: "sha_bad"}, PARSER_VERSION, CORPUS_POLICY_VERSION)
-        self.assertEqual(pending, [])
-        # parser upgraded -> retry
-        pending = self.store.select_pending(
-            {self.URL: "sha_bad"}, "9.9.9", CORPUS_POLICY_VERSION)
-        self.assertEqual(pending, [self.URL])
-        # DOM content changed -> retry
-        pending = self.store.select_pending(
-            {self.URL: "sha_new"}, PARSER_VERSION, CORPUS_POLICY_VERSION)
-        self.assertEqual(pending, [self.URL])
-
-    def test_failure_never_touches_prior_ok_entry(self):
-        good = self.store.build_entry_doc(
-            _thin_entry(self.URL), "sha_v1", DEFAULT_CORPUS_POLICY,
-            PARSER_VERSION, CORPUS_POLICY_VERSION)
-        self.store.upsert_entries([good])
-        before = self.store.entries.find_one({"url": self.URL})
-        # page changed, new version fails to parse
-        self.store.save_failures(
-            [{**self.fail, "dom_content_sha256": "sha_v2"}],
-            PARSER_VERSION, CORPUS_POLICY_VERSION)
-        after = self.store.entries.find_one({"url": self.URL})
-        self.assertEqual(before, after)  # entries doc byte-identical
-        # and the failure record's stamp prevents a retry loop on the
-        # same broken DOM (select_pending consults both collections)
-        pending = self.store.select_pending(
-            {self.URL: "sha_v2"}, PARSER_VERSION, CORPUS_POLICY_VERSION)
-        self.assertEqual(pending, [])
-
-    def test_successful_reparse_deletes_dead_letter(self):
-        self.store.save_failures([self.fail], PARSER_VERSION,
-                                 CORPUS_POLICY_VERSION)
-        good = self.store.build_entry_doc(
-            _thin_entry(self.URL), "sha_fixed", DEFAULT_CORPUS_POLICY,
-            PARSER_VERSION, CORPUS_POLICY_VERSION)
-        self.store.upsert_entries([good])
-        self.assertEqual(self.store.failures.count_documents({}), 0)
-        self.assertEqual(self.store.entries.count_documents({}), 1)
-
-    def test_entries_stays_schema_pure(self):
-        good = self.store.build_entry_doc(
-            _thin_entry(), "sha1", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
-            CORPUS_POLICY_VERSION)
-        self.store.upsert_entries([good])
-        doc = self.store.entries.find_one({})
-        for legacy in ("parse_status", "last_parse_error",
-                       "last_parse_error_type"):
-            self.assertNotIn(legacy, doc)
-
-    def test_stats_counts_failures_by_type(self):
-        self.store.save_failures([self.fail], PARSER_VERSION,
-                                 CORPUS_POLICY_VERSION)
-        good = self.store.build_entry_doc(
-            _thin_entry(), "sha1", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
-            CORPUS_POLICY_VERSION)
-        self.store.upsert_entries([good])
-        stats = self.store.stats()
-        self.assertEqual(stats["parse_failures"], 1)
-        self.assertEqual(stats["failure_type_counts"],
-                         {"ValidationError": 1})
-        self.assertEqual(stats["entries_total"], 1)
-        self.assertEqual(stats["entries_incomplete"], 1)
-
-    def test_namespace_from_urls_collection_is_authoritative(self):
-        self.store.urls.insert_one({"url": self.URL, "namespace": "editorials"})
-        ns = self.store.namespaces_for([self.URL])
-        self.assertEqual(ns[self.URL], "editorials")
-
-    def test_namespace_falls_back_when_missing_from_urls_doc(self):
-        # urls doc exists but has no namespace field recorded
-        self.store.urls.insert_one({"url": self.URL})
-        ns = self.store.namespaces_for([self.URL])
-        self.assertEqual(ns[self.URL], "memes")  # inferred from /memes/... path
-
-    def test_namespace_falls_back_when_url_not_in_urls_collection(self):
-        ns = self.store.namespaces_for([self.URL])
-        self.assertEqual(ns[self.URL], "memes")
-
-    def test_failure_record_stores_namespace(self):
-        self.store.urls.insert_one({"url": self.URL, "namespace": "memes"})
-        ns_by_url = self.store.namespaces_for([self.URL])
-        fail_with_ns = {**self.fail, "namespace": ns_by_url[self.URL]}
-        self.store.save_failures([fail_with_ns], PARSER_VERSION,
-                                 CORPUS_POLICY_VERSION)
-        doc = self.store.failures.find_one({"url": self.URL})
-        self.assertEqual(doc["namespace"], "memes")
-
-    def test_stats_breaks_down_failures_by_namespace(self):
-        editorial_url = "https://knowyourmeme.com/editorials/oops"
-        self.store.save_failures(
-            [{**self.fail, "namespace": "memes"},
-             {"url": editorial_url, "dom_content_sha256": "sha2",
-              "error": "e", "error_type": "ValidationError",
-              "namespace": "editorials"}],
-            PARSER_VERSION, CORPUS_POLICY_VERSION)
-        stats = self.store.stats()
-        self.assertEqual(stats["failure_namespace_counts"],
-                         {"memes": 1, "editorials": 1})
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+def test_a_duplicate_address_is_never_selected(twins):
+    with serving(ps, twins), mock.patch.object(
+            dom_store, "content_shas", side_effect=lambda urls: {u: "new" for u in urls}):
+        assert ps.pending_urls(current_parser_version=PARSER_V,
+                               current_policy_version=POLICY_V) == [SENS]

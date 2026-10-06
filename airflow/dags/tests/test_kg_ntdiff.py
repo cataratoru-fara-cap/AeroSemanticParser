@@ -1,244 +1,115 @@
-"""Tests for kg/ntdiff.py — set difference over two N-Triples files.
-
-The gate this module powers exists because the in-process and RML
-derivations of the graph drifted 14,563 ``mk:relatesToMeme`` triples apart
-and nothing compared them for two months.
-
-``test_order_does_not_matter`` and ``test_repeats_are_not_differences`` are
-the load-bearing ones: RDF is a set, so a serializer emitting the same
-triples in a different order, or emitting one twice, is not a divergence.
-A line-oriented diff would report both as differences and the gate would be
-abandoned as noisy within a week.
-
-Run inside the Airflow container:
-    docker compose exec -e PYTHONPATH=/opt/airflow/dags airflow-dag-processor \
-        python -m pytest /opt/airflow/dags/tests/test_kg_ntdiff.py -v
-"""
-import tempfile
-import unittest
-from pathlib import Path
+"""kg/ntdiff.py: set difference over two N-Triples files, the gate that exists
+because the in-process and RML derivations drifted 14,563 mk:relatesToMeme
+triples apart unnoticed for two months. Load-bearing: order and repeats are not
+differences (RDF is a set); a line diff would report both and be abandoned as
+noisy within a week."""
+import pytest
 
 from modules.kg import ntdiff
 
 S = "<https://knowyourmeme.com/memes/doge>"
 P = "<https://meme4.science/atlas/hasTag>"
-TRIPLES = [
-    f'{S} {P} "doge" .',
-    f'{S} {P} "shiba" .',
-    f'{S} <https://meme4.science/atlas/partOfSeries> '
-    f'<https://knowyourmeme.com/memes/shiba-inu> .',
-]
+TRIPLES = [f'{S} {P} "doge" .', f'{S} {P} "shiba" .',
+           f'{S} <https://meme4.science/atlas/partOfSeries> <https://knowyourmeme.com/memes/shiba-inu> .']
+Q = f"<< {S} <https://meme4.science/atlas/citesExternal> <https://en.wikipedia.org/wiki/Doge> >>"
+A = "<https://meme4.science/atlas/anchorText>"
+XSD = "http://www.w3.org/2001/XMLSchema#"
+norm = ntdiff.normalize_line
 
 
-class NormalizeTests(unittest.TestCase):
-    def test_blank_and_comment_lines_carry_no_triple(self):
-        self.assertIsNone(ntdiff.normalize_line("   "))
-        self.assertIsNone(ntdiff.normalize_line("# a comment"))
+# -- normalisation ----------------------------------------------------------------------
 
-    def test_whitespace_is_collapsed(self):
-        a = ntdiff.normalize_line(f'{S}   {P}    "doge" .')
-        b = ntdiff.normalize_line(f'{S} {P} "doge" .')
-        self.assertEqual(a, b)
-
-    def test_explicit_xsd_string_is_equivalent_to_a_plain_literal(self):
-        typed = (f'{S} {P} "doge"'
-                 '^^<http://www.w3.org/2001/XMLSchema#string> .')
-        self.assertEqual(ntdiff.normalize_line(typed),
-                         ntdiff.normalize_line(f'{S} {P} "doge" .'))
-
-    def test_trailing_dot_is_normalised_not_doubled(self):
-        self.assertTrue(ntdiff.normalize_line(f'{S} {P} "x" .').endswith(' .'))
-        self.assertFalse(ntdiff.normalize_line(f'{S} {P} "x" .').endswith('. .'))
-
-    def test_whitespace_inside_a_literal_is_preserved(self):
-        # Regression: collapsing runs of spaces inside literals merged two
-        # distinct triples into one on the real corpus. Between terms it is
-        # formatting; inside a literal it is the value.
-        one = ntdiff.normalize_line(f'{S} {P} "doge  meme" .')
-        two = ntdiff.normalize_line(f'{S} {P} "doge meme" .')
-        self.assertNotEqual(one, two)
-        self.assertIn('"doge  meme"', one)
-
-    def test_tab_inside_a_literal_is_preserved_as_a_value(self):
-        # Canonical form decodes the escape; the TAB itself survives.
-        got = ntdiff.normalize_line(f'{S} {P} "a\\tb" .')
-        self.assertIn('"a\tb"', got)
-
-    def test_language_tag_and_datatype_survive(self):
-        tagged = ntdiff.normalize_line(f'{S} {P} "doge"@en .')
-        self.assertIn('"doge"@en', tagged)
-        typed = ntdiff.normalize_line(
-            f'{S} {P} "3"^^<http://www.w3.org/2001/XMLSchema#integer> .')
-        self.assertIn("XMLSchema#integer", typed)
-
-    def test_escaped_and_raw_tab_are_the_same_term(self):
-        # Found by probing morph-kgc: it writes TAB raw, kg/rdf.py writes \t.
-        # Same RDF term; must not be reported as a divergence.
-        raw = ntdiff.normalize_line(f'{S} {P} "a\tb" .')
-        escaped = ntdiff.normalize_line(f'{S} {P} "a\\tb" .')
-        self.assertEqual(raw, escaped)
-
-    def test_unicode_escape_equals_the_raw_character(self):
-        self.assertEqual(ntdiff.normalize_line(f'{S} {P} "\\u00E9" .'),
-                         ntdiff.normalize_line(f'{S} {P} "é" .'))
-
-    def test_required_escapes_are_preserved_canonically(self):
-        got = ntdiff.normalize_line(f'{S} {P} "q\\"uote back\\\\slash nl\\n" .')
-        self.assertIn('"q\\"uote back\\\\slash nl\\n"', got)
-
-    def test_datatype_suffix_survives_canonicalisation(self):
-        got = ntdiff.normalize_line(
-            f'{S} {P} "a\\tb"^^<http://www.w3.org/2001/XMLSchema#integer> .')
-        self.assertTrue(got.endswith('^^<http://www.w3.org/2001/XMLSchema#integer> .'))
-
-    def test_literal_containing_a_space_is_one_term(self):
-        got = ntdiff.normalize_line(f'{S} {P} "two words" .')
-        self.assertEqual(got, f'{S} {P} "two words" .')
+@pytest.mark.parametrize("a, b", [
+    (f'{S}   {P}    "doge" .', f'{S} {P} "doge" .'),                       # whitespace between terms
+    (f'{S} {P} "doge"^^<{XSD}string> .', f'{S} {P} "doge" .'),             # explicit xsd:string = plain
+    # morph-kgc writes TAB raw, kg/rdf.py writes \t: one term
+    (f'{S} {P} "a\tb" .', f'{S} {P} "a\\tb" .'),
+    (f'{S} {P} "\\u00E9" .', f'{S} {P} "é" .'),
+    (f'{Q} {A} "a\\tb \\"c\\"" .', f'{Q}  {A}\t"a\tb \\"c\\""  .'),        # ours and morph-kgc's annotation
+])
+def test_spellings_of_one_triple_normalise_equal(a, b):
+    assert norm(a) == norm(b)
 
 
-class PredicateTests(unittest.TestCase):
-    def test_local_name_after_slash(self):
-        self.assertEqual(ntdiff.predicate_of(TRIPLES[0]), "hasTag")
-
-    def test_local_name_after_hash(self):
-        line = ('<a> <http://www.w3.org/2004/02/skos/core#broader> <b> .')
-        self.assertEqual(ntdiff.predicate_of(line), "broader")
-
-    def test_unparsed_line_is_labelled_not_crashed(self):
-        self.assertEqual(ntdiff.predicate_of("nonsense"), "(unparsed)")
+@pytest.mark.parametrize("a, b", [
+    # inside a literal whitespace is the value: collapsing it merged two real triples
+    (f'{S} {P} "doge  meme" .', f'{S} {P} "doge meme" .'),
+    (f'{Q} {A} "a  b" .', f'{Q} {A} "a b" .'),
+])
+def test_different_values_stay_different(a, b):
+    assert norm(a) != norm(b)
 
 
-class QuotedTripleTests(unittest.TestCase):
-    """KG 4.0.0 annotations: << s p o >> annotation "value" ."""
-
-    Q = f"<< {S} <https://meme4.science/atlas/citesExternal> <https://en.wikipedia.org/wiki/Doge> >>"
-    A = "<https://meme4.science/atlas/anchorText>"
-
-    def test_ours_and_morph_kgcs_spelling_normalise_equal(self):
-        ours = f'{self.Q} {self.A} "a\\tb \\"c\\"" .'
-        theirs = f'{self.Q}  {self.A}\t"a\tb \\"c\\""  .'       # raw tab, extra spacing
-        self.assertEqual(ntdiff.normalize_line(ours), ntdiff.normalize_line(theirs))
-
-    def test_different_annotation_values_stay_different(self):
-        one = ntdiff.normalize_line(f'{self.Q} {self.A} "a  b" .')
-        two = ntdiff.normalize_line(f'{self.Q} {self.A} "a b" .')
-        self.assertNotEqual(one, two)
-
-    def test_the_reported_predicate_is_the_annotation(self):
-        line = ntdiff.normalize_line(f'{self.Q} {self.A} "wiki" .')
-        self.assertEqual(ntdiff.predicate_of(line), "anchorText")
-        self.assertEqual(ntdiff.predicate_of(ntdiff.normalize_line(f"{S} {P} {S} .")), "hasTag")
-
-    def test_a_quoted_subject_is_not_mistaken_for_a_blank_node(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp, "g.nt")
-            path.write_text(f'{self.Q} {self.A} "wiki" .\n', encoding="utf-8")
-            _, count, preds = ntdiff.digest(str(path))
-        self.assertEqual((count, preds), (1, {"anchorText": 1}))
+@pytest.mark.parametrize("line, kept", [
+    (f'{S} {P} "doge  meme" .', '"doge  meme"'), (f'{S} {P} "a\\tb" .', '"a\tb"'),   # the TAB survives decoded
+    (f'{S} {P} "doge"@en .', '"doge"@en'), (f'{S} {P} "3"^^<{XSD}integer> .', "XMLSchema#integer"),
+    (f'{S} {P} "q\\"uote back\\\\slash nl\\n" .', '"q\\"uote back\\\\slash nl\\n"'),   # required escapes canonical
+])
+def test_what_normalisation_keeps(line, kept):
+    assert kept in norm(line)
 
 
-class DigestTests(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
+def test_normalised_line_shapes():
+    assert norm("   ") is None and norm("# a comment") is None
+    assert norm(f'{S} {P} "x" .').endswith(" .") and not norm(f'{S} {P} "x" .').endswith(". .")
+    assert norm(f'{S} {P} "a\\tb"^^<{XSD}integer> .').endswith(f"^^<{XSD}integer> .")
+    assert norm(f'{S} {P} "two words" .') == f'{S} {P} "two words" .'          # one term
 
-    def write(self, name, lines):
-        path = self.tmp / name
-        path.write_text("\n".join(lines) + "\n")
+
+@pytest.mark.parametrize("line, pred", [
+    (TRIPLES[0], "hasTag"), ("<a> <http://www.w3.org/2004/02/skos/core#broader> <b> .", "broader"),
+    ("nonsense", "(unparsed)"), (norm(f'{Q} {A} "wiki" .'), "anchorText"), (norm(f"{S} {P} {S} ."), "hasTag"),
+])
+def test_the_predicate_local_name(line, pred):
+    assert ntdiff.predicate_of(line) == pred
+
+
+# -- digest and diff ----------------------------------------------------------------------------
+
+@pytest.fixture
+def nt(tmp_path):
+    def write(name, lines):
+        path = tmp_path / name
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return str(path)
-
-    def test_order_does_not_matter(self):
-        a = ntdiff.digest(self.write("a.nt", TRIPLES))
-        b = ntdiff.digest(self.write("b.nt", list(reversed(TRIPLES))))
-        self.assertEqual(a[0], b[0])
-        self.assertEqual(a[1], b[1])
-
-    def test_repeats_are_not_differences(self):
-        a = ntdiff.digest(self.write("a.nt", TRIPLES))
-        b = ntdiff.digest(self.write("b.nt", TRIPLES + [TRIPLES[0]]))
-        self.assertEqual(a[0], b[0])
-        self.assertEqual(a[1], b[1])   # counted once
-
-    def test_a_different_set_digests_differently(self):
-        a = ntdiff.digest(self.write("a.nt", TRIPLES))
-        b = ntdiff.digest(self.write("b.nt", TRIPLES[:2]))
-        self.assertNotEqual(a[0], b[0])
-
-    def test_per_predicate_counts(self):
-        _, count, preds = ntdiff.digest(self.write("a.nt", TRIPLES))
-        self.assertEqual(count, 3)
-        self.assertEqual(preds, {"hasTag": 2, "partOfSeries": 1})
+    return write
 
 
-class DiffTests(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
-
-    def write(self, name, lines):
-        path = self.tmp / name
-        path.write_text("\n".join(lines) + "\n")
-        return str(path)
-
-    def test_identical_files_are_equal(self):
-        a = self.write("a.nt", TRIPLES)
-        b = self.write("b.nt", list(reversed(TRIPLES)))
-        report = ntdiff.diff(a, b)
-        self.assertTrue(report["equal"])
-        self.assertEqual(report["in-process"]["triples"], 3)
-
-    def test_divergence_is_reported_per_predicate(self):
-        a = self.write("a.nt", TRIPLES)
-        b = self.write("b.nt", TRIPLES[:1] + [
-            f'{S} {P} "different" .',
-            f'{S} <https://meme4.science/atlas/citesMediaFrame> '
-            f'<https://knowyourmeme.com/memes/cheems> .'])
-        report = ntdiff.diff(a, b, buckets=8)
-        self.assertFalse(report["equal"])
-        self.assertEqual(report["by_predicate"]["hasTag"]["only_in_in-process"], 1)
-        self.assertEqual(report["by_predicate"]["hasTag"]["only_in_rml"], 1)
-        self.assertEqual(
-            report["by_predicate"]["partOfSeries"]["only_in_in-process"], 1)
-        self.assertEqual(
-            report["by_predicate"]["citesMediaFrame"]["only_in_rml"], 1)
-
-    def test_samples_are_captured_and_capped(self):
-        a = self.write("a.nt", [f'{S} {P} "t{i}" .' for i in range(40)])
-        b = self.write("b.nt", [f'{S} {P} "t0" .'])
-        report = ntdiff.diff(a, b, buckets=8, samples=5)
-        self.assertEqual(len(report["only_in_in-process"]), 5)
-        self.assertEqual(report["first_divergent_predicate"], "hasTag")
-
-    def test_bucket_count_does_not_change_the_answer(self):
-        a = self.write("a.nt", [f'{S} {P} "t{i}" .' for i in range(50)])
-        b = self.write("b.nt", [f'{S} {P} "t{i}" .' for i in range(25)])
-        few = ntdiff.diff(a, b, buckets=2)
-        many = ntdiff.diff(a, b, buckets=64)
-        self.assertEqual(few["by_predicate"]["hasTag"]["only_in_in-process"],
-                         many["by_predicate"]["hasTag"]["only_in_in-process"])
-        self.assertEqual(few["by_predicate"]["hasTag"]["only_in_in-process"], 25)
-
-    def test_blank_nodes_are_refused_rather_than_mishandled(self):
-        a = self.write("a.nt", ["_:b0 <http://p> <http://o> ."])
-        b = self.write("b.nt", TRIPLES)
-        with self.assertRaises(ValueError) as ctx:
-            ntdiff.diff(a, b)
-        self.assertIn("blank node", str(ctx.exception))
-
-    def test_report_renders(self):
-        a = self.write("a.nt", TRIPLES)
-        b = self.write("b.nt", TRIPLES[:1])
-        text = ntdiff.format_report(ntdiff.diff(a, b, buckets=4))
-        self.assertIn("DIVERGENT", text)
-        self.assertIn("hasTag", text)
-
-    def test_equal_report_renders(self):
-        a = self.write("a.nt", TRIPLES)
-        text = ntdiff.format_report(ntdiff.diff(a, a))
-        self.assertIn("identical", text)
+def test_digest_is_a_set(nt):
+    a = ntdiff.digest(nt("a.nt", TRIPLES))
+    assert a[:2] == ntdiff.digest(nt("b.nt", list(reversed(TRIPLES))))[:2]           # order
+    assert a[:2] == ntdiff.digest(nt("c.nt", TRIPLES + [TRIPLES[0]]))[:2]            # repeats, counted once
+    assert a[0] != ntdiff.digest(nt("d.nt", TRIPLES[:2]))[0]
+    assert a[1:] == (3, {"hasTag": 2, "partOfSeries": 1})
+    # a quoted subject is not mistaken for a blank node
+    assert ntdiff.digest(nt("q.nt", [f'{Q} {A} "wiki" .']))[1:] == (1, {"anchorText": 1})
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+def test_identical_and_divergent_files(nt):
+    a = nt("a.nt", TRIPLES)
+    report = ntdiff.diff(a, nt("b.nt", list(reversed(TRIPLES))))
+    assert report["equal"] and report["in-process"]["triples"] == 3
+    assert "identical" in ntdiff.format_report(ntdiff.diff(a, a))
+    report = ntdiff.diff(a, nt("c.nt", TRIPLES[:1] + [
+        f'{S} {P} "different" .', f'{S} <https://meme4.science/atlas/citesMediaFrame> <https://knowyourmeme.com/memes/cheems> .']),
+        buckets=8)
+    by = report["by_predicate"]
+    assert not report["equal"]
+    assert (by["hasTag"]["only_in_in-process"], by["hasTag"]["only_in_rml"], by["partOfSeries"]["only_in_in-process"],
+            by["citesMediaFrame"]["only_in_rml"]) == (1, 1, 1, 1)
+    text = ntdiff.format_report(ntdiff.diff(a, nt("d.nt", TRIPLES[:1]), buckets=4))
+    assert "DIVERGENT" in text and "hasTag" in text
+
+
+def test_samples_are_capped_and_buckets_do_not_change_the_answer(nt):
+    report = ntdiff.diff(nt("a.nt", [f'{S} {P} "t{i}" .' for i in range(40)]), nt("b.nt", [f'{S} {P} "t0" .']),
+                         buckets=8, samples=5)
+    assert len(report["only_in_in-process"]) == 5 and report["first_divergent_predicate"] == "hasTag"
+    a, b = nt("c.nt", [f'{S} {P} "t{i}" .' for i in range(50)]), nt("d.nt", [f'{S} {P} "t{i}" .' for i in range(25)])
+    assert ntdiff.diff(a, b, buckets=2)["by_predicate"]["hasTag"]["only_in_in-process"] == \
+        ntdiff.diff(a, b, buckets=64)["by_predicate"]["hasTag"]["only_in_in-process"] == 25
+
+
+def test_blank_nodes_are_refused_rather_than_mishandled(nt):
+    with pytest.raises(ValueError, match="blank node"):
+        ntdiff.diff(nt("a.nt", ["_:b0 <http://p> <http://o> ."]), nt("b.nt", TRIPLES))

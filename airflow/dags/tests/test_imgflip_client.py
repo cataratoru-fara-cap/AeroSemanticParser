@@ -1,57 +1,45 @@
-"""Tests for imgflip_client.py — a fake session, a fake clock, no network.
-
-What these pin:
-
-  * **Politeness is enforced by the client**, not hoped for: consecutive
-    page requests are at least ``html_delay_s`` apart.
-  * **A refusal is never "no results"**: 403/429/challenge pages count
-    toward ``blocked_after``, then switch to ScrapingAnt (auto) or raise
-    (direct) so the task fails loudly.
-  * **404 is permanent; a 500 past page 1 is the end of results**; a 200
-    without the expected markup is retried, not parsed.
-  * **robots.txt is obeyed.**
-  * **ScrapingAnt is capped** at its credit budget.
-"""
-import unittest
+"""imgflip_client.py: a fake session and a fake clock, no network. Pinned:
+politeness is enforced by the client (page requests at least html_delay_s
+apart); a refusal is never "no results" (403/429/challenge pages count toward
+blocked_after, then switch to ScrapingAnt in auto or raise in direct, so the
+task fails loudly); 404 is permanent and a 500 past page 1 the end of results;
+a 200 without the expected markup is retried, not parsed; robots.txt is
+obeyed; ScrapingAnt is capped at its credit budget."""
 from types import SimpleNamespace
+
+import pytest
 
 from modules import imgflip_client as ic
 
 SEARCH_OK = '<html><div id="mt-boxes-wrap"></div></html>'
 ROBOTS = "user-agent: *\ndisallow: /orig/\ndisallow: /browse/\n"
+URL = ic.search_url("distracted boyfriend")
+CHALLENGE = "<title>Just a moment...</title>"
 
 
 class FakeResponse:
-    def __init__(self, status=200, text="", headers=None, content=None, url=None):
-        self.status_code = status
-        self.text = text
+    def __init__(self, status=200, text="", headers=None, content=None):
+        self.status_code, self.text, self.url = status, text, None
         self.content = content if content is not None else text.encode()
         self.headers = headers or {"Content-Type": "text/html"}
-        self.url = url
 
 
 class FakeSession:
     def __init__(self, responses):
-        self.responses = list(responses)
-        self.headers = {}
-        self.urls: list[str] = []
+        self.responses, self.headers, self.urls = list(responses), {}, []
 
     def get(self, url, timeout=None):
         if url.endswith("/robots.txt"):
             return FakeResponse(200, ROBOTS)
         self.urls.append(url)
         r = self.responses.pop(0)
-        if isinstance(r, Exception):
-            raise r
-        if r.url is None:
-            r.url = url
+        r.url = r.url or url
         return r
 
 
 class Clock:
     def __init__(self):
-        self.now = 1000.0
-        self.slept: list[float] = []
+        self.now, self.slept = 1000.0, []
 
     def time(self):
         return self.now
@@ -61,143 +49,93 @@ class Clock:
         self.now += s
 
 
-def client(responses, clock=None, fallback=None, **cfg):
-    clock = clock or Clock()
-    c = ic.ImgflipClient(ic.ImgflipConfig(**cfg), FakeSession(responses),
-                         scrapingant_fetch=fallback, sleep=clock.sleep, clock=clock.time)
-    return c, clock
+def client(responses, fallback=None, **cfg):
+    clock = Clock()
+    return ic.ImgflipClient(ic.ImgflipConfig(**cfg), FakeSession(responses), scrapingant_fetch=fallback,
+                            sleep=clock.sleep, clock=clock.time), clock
 
 
-URL = ic.search_url("distracted boyfriend")
+def page(c, url=URL, **kw):
+    return c.fetch_page(url, markers=ic.SEARCH_MARKERS, **kw)
 
 
-class PageTests(unittest.TestCase):
-    def test_ok_and_user_agent(self):
-        c, _ = client([FakeResponse(200, SEARCH_OK)], contact="https://example.org/p")
-        res = c.fetch_page(URL, markers=ic.SEARCH_MARKERS)
-        self.assertTrue(res.ok)
-        self.assertEqual(c.session.headers["User-Agent"],
-                         "MemeAtlas-Research-Indexer/1.0 (+https://example.org/p)")
-
-    def test_requests_are_spaced(self):
-        c, clock = client([FakeResponse(200, SEARCH_OK)] * 2, html_delay_s=2.0)
-        c.fetch_page(URL, markers=ic.SEARCH_MARKERS)
-        c.fetch_page(URL + "&page=2", markers=ic.SEARCH_MARKERS)
-        self.assertEqual(clock.slept, [2.0])
-
-    def test_404_is_permanent_and_not_retried(self):
-        c, _ = client([FakeResponse(404)])
-        res = c.fetch_page(URL, markers=ic.SEARCH_MARKERS)
-        self.assertEqual((res.ok, res.error_kind, res.attempts_used), (False, "permanent", 1))
-
-    def test_500_past_page_one_is_the_end(self):
-        c, _ = client([FakeResponse(500)])
-        res = c.fetch_page(URL + "&page=251", markers=ic.SEARCH_MARKERS,
-                           end_of_results_on_500=True)
-        self.assertEqual(res.error_kind, "end_of_results")
-
-    def test_a_200_without_the_markup_is_retried(self):
-        c, _ = client([FakeResponse(200, "<html>ad</html>"), FakeResponse(200, SEARCH_OK)])
-        res = c.fetch_page(URL, markers=ic.SEARCH_MARKERS)
-        self.assertTrue(res.ok)
-        self.assertEqual(res.attempts_used, 2)
-
-    def test_retry_after_is_honoured(self):
-        c, clock = client([FakeResponse(429, headers={"Retry-After": "7"}),
-                           FakeResponse(200, SEARCH_OK)], html_delay_s=0)
-        self.assertTrue(c.fetch_page(URL, markers=ic.SEARCH_MARKERS).ok)
-        self.assertIn(7.0, clock.slept)
-        self.assertEqual(c.consecutive_blocks, 0)            # reset by the success
-
-    def test_robots_disallow_is_refused_without_a_request(self):
-        c, _ = client([])
-        res = c.fetch_page("https://imgflip.com/browse/x", markers=ic.SEARCH_MARKERS)
-        self.assertEqual((res.ok, res.error_kind), (False, "permanent"))
-        self.assertEqual(c.session.urls, [])
+def ant_ok(url):
+    return SimpleNamespace(ok=True, html=SEARCH_OK, error_kind=None, error=None, status_code=200)
 
 
-class BlockTests(unittest.TestCase):
-    def challenge(self):
-        return FakeResponse(403, "<title>Just a moment...</title>")
+# -- pages ------------------------------------------------------------------------------------
 
-    def test_direct_raises_after_blocked_after_refusals(self):
-        c, _ = client([self.challenge()] * 3, transport="direct", blocked_after=3,
-                      max_attempts=4)
-        with self.assertRaises(ic.ImgflipBlockedError):
-            c.fetch_page(URL, markers=ic.SEARCH_MARKERS)
-
-    def test_a_challenge_with_status_200_is_a_block_too(self):
-        c, _ = client([FakeResponse(200, "<title>Just a moment...</title>")] * 2,
-                      transport="direct", blocked_after=2)
-        with self.assertRaises(ic.ImgflipBlockedError):
-            c.fetch_page(URL, markers=ic.SEARCH_MARKERS)
-
-    def test_auto_switches_to_scrapingant(self):
-        calls = []
-
-        def fallback(url):
-            calls.append(url)
-            return SimpleNamespace(ok=True, html=SEARCH_OK, error_kind=None, error=None,
-                                   status_code=200)
-
-        c, _ = client([self.challenge()] * 2, fallback=fallback, blocked_after=2)
-        res = c.fetch_page(URL, markers=ic.SEARCH_MARKERS)
-        self.assertTrue(res.ok)
-        self.assertEqual((res.transport, c.transport, c.credits_used),
-                         ("scrapingant", "scrapingant", 1))
-        self.assertEqual(calls, [URL])
-
-    def test_auto_without_a_scrapingant_key_raises(self):
-        c, _ = client([self.challenge()] * 2, fallback=None, blocked_after=2)
-        with self.assertRaises(ic.ImgflipBlockedError):
-            c.fetch_page(URL, markers=ic.SEARCH_MARKERS)
-
-    def test_the_credit_budget_is_a_hard_stop(self):
-        ok = SimpleNamespace(ok=True, html=SEARCH_OK, error_kind=None, error=None,
-                             status_code=200)
-        c, _ = client([], fallback=lambda url: ok, transport="scrapingant",
-                      scrapingant_max_credits=1)
-        self.assertTrue(c.fetch_page(URL, markers=ic.SEARCH_MARKERS).ok)
-        with self.assertRaises(ic.ImgflipBlockedError):
-            c.fetch_page(URL + "&page=2", markers=ic.SEARCH_MARKERS)
+def test_ok_with_our_user_agent_and_spaced_requests():
+    c, clock = client([FakeResponse(200, SEARCH_OK)] * 2, contact="https://example.org/p", html_delay_s=2.0)
+    assert page(c).ok and page(c, URL + "&page=2").ok
+    assert c.session.headers["User-Agent"] == "MemeAtlas-Research-Indexer/1.0 (+https://example.org/p)"
+    assert clock.slept == [2.0]
 
 
-class ImageTests(unittest.TestCase):
-    def test_an_image(self):
-        c, _ = client([FakeResponse(200, headers={"Content-Type": "image/jpeg"},
-                                    content=b"\xff\xd8jpeg")])
-        got = c.fetch_image("https://i.imgflip.com/4/1ur9b0.jpg")
-        self.assertEqual((got.ok, got.content), (True, b"\xff\xd8jpeg"))
-
-    def test_a_wrong_extension_is_a_permanent_404(self):
-        c, _ = client([FakeResponse(404, "<html>not found</html>")])
-        got = c.fetch_image("https://i.imgflip.com/3jpogl.jpg")
-        self.assertEqual((got.ok, got.error_kind), (False, "permanent"))
-
-    def test_html_served_as_an_image_is_permanent(self):
-        c, _ = client([FakeResponse(200, "<html>", headers={"Content-Type": "text/html"})])
-        self.assertEqual(c.fetch_image("https://i.imgflip.com/x.jpg").error_kind, "permanent")
+@pytest.mark.parametrize("responses, url, kw, want", [
+    ([FakeResponse(404)], URL, {}, (False, "permanent", 1)),                                  # not retried
+    ([FakeResponse(500)], URL + "&page=251", {"end_of_results_on_500": True}, (False, "end_of_results", 1)),
+    ([FakeResponse(200, "<html>ad</html>"), FakeResponse(200, SEARCH_OK)], URL, {}, (True, None, 2)),  # no markup
+])
+def test_outcomes(responses, url, kw, want):
+    res = page(client(responses)[0], url, **kw)
+    assert (res.ok, res.error_kind, res.attempts_used) == want
 
 
-class ConfigTests(unittest.TestCase):
-    def test_from_env_rejects_an_unknown_transport(self):
-        import os
-        old = os.environ.get("IMGFLIP_TRANSPORT")
-        os.environ["IMGFLIP_TRANSPORT"] = "carrier-pigeon"
-        try:
-            with self.assertRaises(ValueError):
-                ic.ImgflipConfig.from_env()
-        finally:
-            if old is None:
-                os.environ.pop("IMGFLIP_TRANSPORT")
-            else:
-                os.environ["IMGFLIP_TRANSPORT"] = old
-
-    def test_search_url(self):
-        self.assertEqual(ic.search_url("this is fine"),
-                         "https://imgflip.com/memesearch?q=this+is+fine")
-        self.assertEqual(ic.search_url("doge", 3), "https://imgflip.com/memesearch?q=doge&page=3")
+def test_retry_after_is_honoured_and_a_success_resets_the_block_count():
+    c, clock = client([FakeResponse(429, headers={"Retry-After": "7"}), FakeResponse(200, SEARCH_OK)], html_delay_s=0)
+    assert page(c).ok and 7.0 in clock.slept and c.consecutive_blocks == 0
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_robots_disallow_is_refused_without_a_request():
+    c, _ = client([])
+    res = page(c, "https://imgflip.com/browse/x")
+    assert (res.ok, res.error_kind, c.session.urls) == (False, "permanent", [])
+
+
+# -- blocks --------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("responses, cfg", [
+    ([FakeResponse(403, CHALLENGE)] * 3, {"transport": "direct", "blocked_after": 3, "max_attempts": 4}),
+    ([FakeResponse(200, CHALLENGE)] * 2, {"transport": "direct", "blocked_after": 2}),   # a challenge with 200
+    ([FakeResponse(403, CHALLENGE)] * 2, {"blocked_after": 2}),                          # auto, no ScrapingAnt key
+])
+def test_blocked_raises(responses, cfg):
+    with pytest.raises(ic.ImgflipBlockedError):
+        page(client(responses, **cfg)[0])
+
+
+def test_auto_switches_to_scrapingant():
+    calls = []
+    c, _ = client([FakeResponse(403, CHALLENGE)] * 2, fallback=lambda url: calls.append(url) or ant_ok(url),
+                  blocked_after=2)
+    res = page(c)
+    assert res.ok and (res.transport, c.transport, c.credits_used, calls) == ("scrapingant", "scrapingant", 1, [URL])
+
+
+def test_the_credit_budget_is_a_hard_stop():
+    c, _ = client([], fallback=ant_ok, transport="scrapingant", scrapingant_max_credits=1)
+    assert page(c).ok
+    with pytest.raises(ic.ImgflipBlockedError):
+        page(c, URL + "&page=2")
+
+
+# -- images, config -------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("response, url, want", [
+    (FakeResponse(200, headers={"Content-Type": "image/jpeg"}, content=b"\xff\xd8jpeg"),
+     "https://i.imgflip.com/4/1ur9b0.jpg", (True, None, b"\xff\xd8jpeg")),
+    (FakeResponse(404, "<html>not found</html>"), "https://i.imgflip.com/3jpogl.jpg", (False, "permanent", None)),  # a wrong extension
+    (FakeResponse(200, "<html>"), "https://i.imgflip.com/x.jpg", (False, "permanent", None)),   # HTML as an image
+])
+def test_images(response, url, want):
+    got = client([response])[0].fetch_image(url)
+    assert (got.ok, got.error_kind, got.content if got.ok else None) == want
+
+
+def test_config_and_search_url(monkeypatch):
+    monkeypatch.setenv("IMGFLIP_TRANSPORT", "carrier-pigeon")
+    with pytest.raises(ValueError):
+        ic.ImgflipConfig.from_env()
+    assert ic.search_url("this is fine") == "https://imgflip.com/memesearch?q=this+is+fine"
+    assert ic.search_url("doge", 3) == "https://imgflip.com/memesearch?q=doge&page=3"

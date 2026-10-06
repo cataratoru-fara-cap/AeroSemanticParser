@@ -106,3 +106,29 @@ def _patch_mongomock_truthiness() -> None:
 
 
 _patch_mongomock_truthiness()
+
+
+# ---------------------------------------------------------------------------
+# Shared fixtures
+# ---------------------------------------------------------------------------
+import pytest  # noqa: E402
+
+
+@pytest.fixture(scope="session")
+def fixture_lexicon_build(tmp_path_factory):
+    """(path, build summary): the real lexicon builder over wikidata_fixture's
+    synthetic dump, run once per session."""
+    from modules.kg import wikidata as wd
+    from wikidata_fixture import write_dump
+    tmp = tmp_path_factory.mktemp("lexicon")
+    path = str(tmp / "lexicon.sqlite")
+    summary = wd.build_lexicon(write_dump(str(tmp / "dump.json.gz")), path, workers=0, progress=lambda _l: None)
+    return path, summary
+
+
+@pytest.fixture(scope="session")
+def fixture_lexicon(fixture_lexicon_build):
+    from modules.kg import wikidata as wd
+    lexicon = wd.Lexicon(fixture_lexicon_build[0])
+    yield lexicon
+    lexicon.close()

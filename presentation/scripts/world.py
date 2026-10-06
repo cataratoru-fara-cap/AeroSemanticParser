@@ -27,11 +27,10 @@ The camera path between two stops is van Wijk and Nuij's smooth zoom-and-pan
 zooms out just enough to see both ends, pans, and zooms back in, as one
 motion. Each move becomes a series of pages that advance by themselves.
 
-Per page the script also decides what is visible and at what detail, so a
-page draws only what is on screen: chapters fade from their map icon to their
-contents as the camera nears; a slide is drawn as a small, medium or large
-thumbnail (figures/thumbs/, rendered from thumbs.pdf by the Makefile) by the
-size it has on screen, and as itself, in vector, when the camera arrives.
+Per page the script also decides what is visible, so a page draws only what
+is on screen: chapters fade from their map icon to their contents as the
+camera nears; a slide is drawn as its page of thumbs.pdf (built first by the
+Makefile), and as itself when the camera arrives.
 """
 from __future__ import annotations
 
@@ -55,7 +54,6 @@ FPS_DUR = 0.045                     # seconds per motion page (written into the 
 RHO = math.sqrt(2)                  # van Wijk's zoom/pan trade-off (d3's default): along a track
 RHO_TRAVEL = 2.0                    # between chapters: pull back further, so the map is seen
 FADE_FROM, FADE_TO = 1.0, 2.2       # on-screen node radius (cm): map icon -> contents
-LOD_SMALL, LOD_MEDIUM = 3.0, 7.5    # on-screen slide width (cm) for the s / m / l thumbnails
 
 
 # -- reading the deck ---------------------------------------------------------------------
@@ -286,6 +284,21 @@ def visible(view, x0, y0, x1, y1) -> bool:
     return x1 >= vx0 and x0 <= vx1 and y1 >= vy0 and y0 <= vy1
 
 
+MACHINE = (1.72, 0.8, 12.35, 8.5)   # the machine's dashed outline (cm, map; theme's \gmFM)
+CAPTION = (10.9, 7.3, 15.8, 8.8)     # the overview's caption, at its top right
+
+
+def machine_visible(view) -> bool:
+    """The machine's outline or the caption is on screen. Inside the box, with its
+    outline off screen, it is not drawn: zoomed in, the outline is thousands of
+    dashes, and a viewer pays for every one of them."""
+    x0, y0, x1, y1 = MACHINE
+    m = 0.25                         # the outline's rounded corners lie within this of it
+    strips = ((x0 - m, y0 - m, x1 + m, y0 + m), (x0 - m, y1 - m, x1 + m, y1 + m),
+              (x0 - m, y0 - m, x0 + m, y1 + m), (x1 - m, y0 - m, x1 + m, y1 + m))
+    return any(visible(view, *r) for r in strips) or visible(view, *CAPTION)
+
+
 def scene(cam, avatar) -> str:
     """One page: the camera (scale, centre) and what to draw, as TeX."""
     cx, cy, w = cam
@@ -299,7 +312,7 @@ def scene(cam, avatar) -> str:
         if visible(view, min(ca.x, cb.x) - 1.2, min(ca.y, cb.y) - 1.2, max(ca.x, cb.x) + 1.2,
                    max(ca.y, cb.y) + 1.2):
             items.append(f"\\gmFE{{{k}}}")
-    if visible(view, 1.6, 0.4, 12.4, 8.6):
+    if machine_visible(view):
         items.append("\\gmFM")
     for ch in order:
         if not visible(view, ch.x - R - 0.9, ch.y - R - 0.5, ch.x + R + 0.9, ch.y + R + 0.2):
@@ -309,19 +322,15 @@ def scene(cam, avatar) -> str:
         if alpha > 0:
             for st in ch.sats:
                 if visible(view, st.x0, st.y0, st.x0 + st.w, st.y0 + st.h):
-                    items.append(f"\\gmFS{{{st.index}}}{{{lod(st.w * s)}}}{{{alpha:.2f}}}")
+                    items.append(f"\\gmFS{{{st.index}}}{{{alpha:.2f}}}")
     for st in sats:
         if st.chapter not in CHAPTERS and visible(view, st.x0, st.y0, st.x0 + st.w, st.y0 + st.h):
-            items.append(f"\\gmFS{{{st.index}}}{{{lod(st.w * s)}}}{{1}}")
+            items.append(f"\\gmFS{{{st.index}}}{{1}}")
     if avatar is not None:
         ax, ay = avatar
         if visible(view, ax - AVATAR_R, ay - AVATAR_R, ax + AVATAR_R, ay + AVATAR_R):
             items.append(f"\\gmFD{{{ax:.4f}}}{{{ay:.4f}}}")
     return f"\\gmF{{{s:.5f}}}{{{cx:.5f}}}{{{cy:.5f}}}{{{''.join(items)}}}"
-
-
-def lod(width_on_page: float) -> str:
-    return "s" if width_on_page <= LOD_SMALL else "m" if width_on_page <= LOD_MEDIUM else "l"
 
 
 def avatar_at(stop: Stop):
