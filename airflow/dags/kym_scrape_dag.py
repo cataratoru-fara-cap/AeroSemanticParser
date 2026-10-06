@@ -13,6 +13,13 @@ Pipeline:
     scrape_chunk   (mapped) re-filter already-done, stream-fetch via
                    ScrapingAnt browser=false (1 credit/page), persist each
                    DOM the moment it lands
+    resolve_duplicates  one entry, one address (gap 14): group the
+                   addresses that hold one entry — KYM moves an entry to
+                   /sensitive/ and back, or renames it, and the old address
+                   keeps answering — keep the most recently discovered one
+                   (the address the entry's newest page names), mark the
+                   others duplicate_of it. Parse drops them; kym_kg sends
+                   their links to the kept address.
     summarize      corpus-level tallies from Mongo
 
 Two retry tiers, as in the old Playwright batch task:
@@ -29,6 +36,8 @@ Trigger-time params:
     namespaces    comma-separated filter, e.g. "memes" ("" = all)
     refetch_days  re-scrape OK pages older than N days (0 = never)
     confirmed_only  restrict to sitemap-confirmed URLs
+    trigger_parse   trigger kym_parse at the end (and with it the rest of the
+                    chain); off for a run that should stop at collection
 """
 
 from __future__ import annotations
@@ -80,6 +89,10 @@ DEFAULT_ARGS = {
                               description="Re-scrape OK pages older than N "
                                           "days (0 = never refetch)"),
         "confirmed_only": Param(True, type="boolean"),
+        "trigger_parse": Param(True, type="boolean",
+                               description="Trigger kym_parse (and the rest of "
+                                           "the chain) when done. Turn OFF to "
+                                           "stop at collection."),
     },
 )
 def kym_scrape():
@@ -127,18 +140,29 @@ def kym_scrape():
         log.info("Chunk done — %s (≈%d credits)", tallies, tallies["ok"])
         return tallies
 
-    # -- Phase 3: corpus-level summary ---------------------------------------
+    # -- Phase 3: one entry, one address (gap 14) ----------------------------
+    @task(trigger_rule="none_failed", execution_timeout=timedelta(minutes=30))
+    def resolve_duplicates(chunk_stats: list[dict]) -> dict:
+        """Discovery keeps every address it ever found, and KYM leaves an
+        entry's old address answering when it moves it (Doge: /memes/doge ->
+        /sensitive/memes/doge, July 2026). Over every stored page, keep one
+        address per entry — the most recently discovered, read from the
+        entry's newest page — and mark the others. Runs after the fetch so
+        this run's pages are part of the evidence."""
+        return dom_store.resolve_duplicates()
+
+    # -- Phase 4: corpus-level summary ---------------------------------------
     @task(trigger_rule="none_failed")
-    def summarize(chunk_stats: list[dict]) -> dict:
+    def summarize(chunk_stats: list[dict], duplicates: dict) -> dict:
         run_totals: dict[str, int] = {}
         for s in chunk_stats:
             for k, v in s.items():
                 run_totals[k] = run_totals.get(k, 0) + v
         corpus = dom_store.scrape_stats()
         log.info("SCRAPE RUN COMPLETE — run=%s corpus=%s", run_totals, corpus)
-        return {"run": run_totals, "corpus": corpus}
+        return {"run": run_totals, "corpus": corpus, "duplicates": duplicates}
 
-    # -- Phase 4: persist the summary for the dashboard ----------------------
+    # -- Phase 5: persist the summary for the dashboard ----------------------
     @task(trigger_rule="none_failed")
     def record_summary(summary: dict, run_id: str | None = None) -> str:
         """Give this run's stats a durable, queryable home in
@@ -149,6 +173,16 @@ def kym_scrape():
             stage="scrape", dag_id="kym_scrape",
             run_id=run_id or "manual", summary=summary)
 
+    @task.short_circuit(trigger_rule="all_done")
+    def should_trigger_parse(params: dict | None = None) -> bool:
+        """Same switch as kym_parse's trigger_entities: a run that only
+        collects (or only resolves duplicates) need not cascade into
+        parsing, LLM work and a graph rebuild."""
+        wanted = bool((params or {}).get("trigger_parse", True))
+        if not wanted:
+            log.info("trigger_parse=false — stopping at collection this run")
+        return wanted
+
     trigger_parse = TriggerDagRunOperator(
         task_id="trigger_kym_parse",
         trigger_dag_id="kym_parse",
@@ -158,8 +192,8 @@ def kym_scrape():
     urls = select_urls()
     chunks = chunk_urls(urls)
     stats = scrape_chunk.expand(chunk=chunks)
-    summary = summarize(stats)
-    record_summary(summary) >> trigger_parse
+    summary = summarize(stats, resolve_duplicates(stats))
+    record_summary(summary) >> should_trigger_parse() >> trigger_parse
 
 
 kym_scrape()

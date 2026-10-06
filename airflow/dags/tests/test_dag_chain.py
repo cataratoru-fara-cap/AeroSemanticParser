@@ -105,5 +105,30 @@ class ChainTests(unittest.TestCase):
                     self.assertTrue(set(t.conf) <= set(nxt.params.keys()))
 
 
+
+@unittest.skipUnless(HAVE_AIRFLOW, "Airflow is not installed")
+class CollectionTests(unittest.TestCase):
+    """Gap 14: one entry, one address is resolved at the end of collection,
+    and parse drops what it marked."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.scrape = importlib.import_module("kym_scrape_dag").kym_scrape()
+        cls.parse = build("kym_parse")
+
+    def test_duplicates_are_resolved_after_the_fetch_and_before_parse(self):
+        step = self.scrape.get_task("resolve_duplicates")
+        self.assertIn("scrape_chunk", step.upstream_task_ids)
+        self.assertIn("summarize", step.downstream_task_ids)
+        (t,) = triggers(self.scrape)
+        self.assertEqual(t.trigger_dag_id, "kym_parse")
+        self.assertIn("should_trigger_parse", t.upstream_task_ids)
+        self.assertIs(self.scrape.params["trigger_parse"], True)   # the monthly chain
+
+    def test_parse_retires_the_marked_entries_into_its_summary(self):
+        step = self.parse.get_task("retire_duplicates")
+        self.assertIn("summarize", step.downstream_task_ids)
+
+
 if __name__ == "__main__":
     unittest.main()

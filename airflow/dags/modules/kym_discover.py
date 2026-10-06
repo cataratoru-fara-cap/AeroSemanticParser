@@ -21,6 +21,9 @@ Phases
   Phase 1  — Sitemaps          fetch_all_sitemaps()
   Phase 1b — Taxonomy          infer_taxonomy()
   Phase 2  — Listing crawl     crawl_categories() / crawl_listing()
+  Phase 3  — One entry, one address   resolve_duplicates()
+             (run by kym_scrape once the pages are in: it needs what each
+             page says about itself, page_identity())
 
 Usage
 -----
@@ -41,10 +44,12 @@ import logging
 import re
 import time
 import xml.etree.ElementTree as ET
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
+from html import unescape as html_unescape
 from math import inf
-from typing import Iterable
-from urllib.parse import urljoin, urlparse
+from typing import Iterable, Mapping
+from urllib.parse import unquote, urljoin, urlparse
 
 # ---------------------------------------------------------------------------
 # Static site knowledge (true constants — never mutated at runtime)
@@ -587,6 +592,192 @@ def crawl_categories(session, known_urls: set[str],
     stats = {"added": len(all_new)}
     log.info("Listing crawl done — added=%d", stats["added"])
     return all_new, stats
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — One entry, one address (gap 14)
+# ---------------------------------------------------------------------------
+# KYM moves an entry without retiring its old address. An entry it marks
+# sensitive moves from /memes/<slug> to /sensitive/memes/<slug> (Doge, July
+# 2026), one it un-marks moves back, a renamed one gets a new slug — and the
+# old address keeps answering, often still listed in the sitemap. Discovery
+# keeps every address it ever found, so the corpus held such an entry twice:
+# 830 of them on 2026-10-05, 813 with both copies in the graph.
+#
+# Normally no two entries hold the same name. This phase keeps one address
+# per entry: the most recently discovered one, read from KYM itself — every
+# collected page names its entry's address (og:url) on the day it was
+# fetched, so the newest page's answer is the newest address KYM gave. The
+# others are marked duplicates of it; the parse stage drops them from the
+# corpus and the graph build sends their links to the kept address.
+
+SENSITIVE_ROOT = "/sensitive"
+SITE_TITLE_SUFFIX = " | Know Your Meme"
+# Evidence that two addresses hold one entry, as resolve_duplicates names it.
+DUPLICATE_EVIDENCE = ("address", "page_url", "title")
+
+_OG_META = re.compile(
+    r"""<meta\s[^>]*?\bproperty\s*=\s*["']og:(url|title)["'][^>]*>""", re.I)
+_CONTENT_ATTR = re.compile(r"""\bcontent\s*=\s*(["'])(.*?)\1""", re.S)
+
+
+def address_key(url: str) -> str:
+    """One spelling per address: no scheme, no ``www.``, percent-decoded, no
+    trailing slash. KYM writes an emoji slug raw in a page's og:url
+    (``/memes/folk-😭``) and percent-encoded in its sitemap
+    (``/memes/folk-%F0%9F%98%AD``): one address, two spellings."""
+    parsed = urlparse(url.strip())
+    host = parsed.netloc.lower().removeprefix("www.")
+    return host + unquote(parsed.path).rstrip("/")
+
+
+def entry_key(url: str) -> str:
+    """The entry an address names: its ``address_key`` without KYM's
+    ``/sensitive`` root, which KYM puts in front of an entry's own path when
+    it marks it sensitive (``/sensitive/memes/doge`` is ``/memes/doge``)."""
+    host, sep, path = address_key(url).partition("/")
+    path = sep + path
+    if path.startswith(SENSITIVE_ROOT + "/"):
+        path = path[len(SENSITIVE_ROOT):]
+    return host + path
+
+
+def is_media_frame(url: str) -> bool:
+    """A meme entry, sensitive or not (``/memes/…``): what IMKG calls a media
+    frame. Only these must not share a title; photos and editorial pages
+    legitimately do ("Link | Rule 63" is four different photos)."""
+    segments = [s for s in urlparse(url).path.split("/") if s]
+    if segments[:1] == [SENSITIVE_ROOT.strip("/")]:
+        segments = segments[1:]
+    return len(segments) >= 2 and segments[0] == "memes"
+
+
+def page_identity(html: str) -> dict[str, str | None]:
+    """What a stored page says about itself: ``page_url`` (its og:url, the
+    address KYM gives the entry today) and ``page_title`` (its og:title
+    without " | Know Your Meme" — the parser's title on every page
+    measured). None where the page has no such tag. Reads the head only."""
+    head_end = html.find("</head>")
+    head = html if head_end < 0 else html[:head_end]
+    found: dict[str, str] = {}
+    for meta in _OG_META.finditer(head):
+        prop = meta.group(1).lower()
+        content = _CONTENT_ATTR.search(meta.group(0))
+        if prop not in found and content:
+            found[prop] = html_unescape(content.group(2)).strip()
+    title = (found.get("title") or "").removesuffix(SITE_TITLE_SUFFIX).strip()
+    return {"page_url": found.get("url") or None, "page_title": title or None}
+
+
+def resolve_duplicates(addresses: Iterable[str],
+                       pages: Mapping[str, Mapping]) -> list[dict]:
+    """Group the addresses that hold one entry; keep one address per entry.
+
+    ``addresses`` is every url discovery knows. ``pages`` is
+    ``{url: {"fetched_at", "page_url", "page_title"}}`` for the ones with a
+    stored page (``fetched_at`` comparable, or None). Two addresses hold the
+    same entry when:
+
+    * ``address`` — they differ only by KYM's /sensitive root or by spelling
+      (``entry_key``);
+    * ``page_url`` — the page stored at one names the other as its address;
+    * ``title`` — both are meme entries with the same title: normally no two
+      entries hold the same name.
+
+    The kept address is the most recently discovered one: the address named
+    by the most recently fetched page of the entry, when we hold its page;
+    otherwise that page's own address (its content is the newest we have).
+    An entry none of whose addresses has a page is left alone: nothing of it
+    is in the corpus.
+
+    Returns one ``{"kept", "dropped", "by"}`` per entry held by more than
+    one address — ``dropped`` sorted, ``by`` the evidence that grouped it —
+    ordered by kept address. Pure and deterministic.
+    """
+    urls = list(dict.fromkeys([*addresses, *pages]))
+    at_address: dict[str, list[str]] = defaultdict(list)
+    by_entry: dict[str, list[str]] = defaultdict(list)
+    for url in urls:
+        at_address[address_key(url)].append(url)
+        by_entry[entry_key(url)].append(url)
+
+    links: list[tuple[str, str, str]] = []
+    for members in by_entry.values():
+        links += [(members[0], other, "address") for other in members[1:]]
+    by_title: dict[str, list[str]] = defaultdict(list)
+    for url, page in pages.items():
+        named = page.get("page_url")
+        if named:
+            links += [(url, other, "page_url")
+                      for other in at_address.get(address_key(named), ())
+                      if other != url]
+        if page.get("page_title") and is_media_frame(url):
+            by_title[page["page_title"]].append(url)
+    for members in by_title.values():
+        links += [(members[0], other, "title") for other in members[1:]]
+
+    parent = {url: url for url in urls}
+
+    def root(url: str) -> str:
+        while parent[url] != url:
+            parent[url] = parent[parent[url]]
+            url = parent[url]
+        return url
+
+    for a, b, _why in links:
+        ra, rb = root(a), root(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    groups: dict[str, list[str]] = defaultdict(list)
+    for url in urls:
+        groups[root(url)].append(url)
+    evidence: dict[str, set[str]] = defaultdict(set)
+    for a, _b, why in links:
+        evidence[root(a)].add(why)
+
+    def fetched(url: str):
+        return (pages[url].get("fetched_at") is not None,
+                pages[url].get("fetched_at") or 0, url)
+
+    out: list[dict] = []
+    for key, members in groups.items():
+        collected = [u for u in members if u in pages]
+        if len(members) < 2 or not collected:
+            continue
+        newest = max(collected, key=fetched)
+        named = pages[newest].get("page_url")
+        candidates = [u for u in at_address.get(address_key(named), ())
+                      if u in pages and root(u) == key] if named else []
+        kept = max(candidates, key=fetched) if candidates else newest
+        out.append({"kept": kept,
+                    "dropped": sorted(u for u in members if u != kept),
+                    "by": sorted(evidence[key])})
+    return sorted(out, key=lambda g: g["kept"])
+
+
+def duplicate_stats(groups: list[dict], collected: Iterable[str],
+                    examples: int = 12) -> dict:
+    """What a resolve_duplicates result did, for the run summary: entries
+    held twice, addresses dropped (and how many of them had a page in the
+    corpus), where the kept address lives, which evidence grouped them, and
+    a few examples. Entries grouped by title alone are listed in full —
+    the one rule that could, in principle, join two different entries."""
+    collected = set(collected)
+    dropped = [u for g in groups for u in g["dropped"]]
+    kept_in = Counter("sensitive" if urlparse(g["kept"]).path.startswith(
+        SENSITIVE_ROOT + "/") else "public" for g in groups)
+    return {
+        "entries_with_duplicates": len(groups),
+        "addresses_dropped": len(dropped),
+        "pages_dropped": sum(u in collected for u in dropped),
+        "kept_sensitive": kept_in["sensitive"],
+        "kept_public": kept_in["public"],
+        "by_evidence": {why: sum(why in g["by"] for g in groups)
+                        for why in DUPLICATE_EVIDENCE},
+        "title_only": [g for g in groups if g["by"] == ["title"]],
+        "examples": groups[:examples],
+    }
 
 
 # ---------------------------------------------------------------------------

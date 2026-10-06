@@ -73,6 +73,34 @@ if state["by_error_kind"]:
 
 st.divider()
 
+st.subheader("One entry, one address")
+st.caption(
+    "KYM moves an entry — into its sensitive section and back, or to a new "
+    "name — and the old address keeps answering. After every fetch, "
+    "`kym_scrape` keeps the address the entry's newest page gives and marks "
+    "the others; parse drops their entries and the graph sends their links "
+    "to the kept address (gap 14).")
+dup = data.duplicate_state()
+if not dup["addresses"]:
+    ui.empty_state("No address is marked a duplicate.",
+                   "The check runs at the end of every `kym_scrape` run.")
+else:
+    ui.stat_tiles([
+        {"label": "Entries at two addresses", "value": dup["entries"]},
+        {"label": "Addresses dropped", "value": dup["addresses"]},
+        {"label": "Kept in /sensitive/", "value": dup["kept_sensitive"],
+         "help": "Entries KYM moved into its sensitive section: their "
+                 "newest page gives the /sensitive/ address."},
+    ], pal)
+    ui.data_table(
+        [{"dropped": r["url"], "kept": r["duplicate_of"],
+          "since": (r["duplicate_since"].strftime("%Y-%m-%d")
+                    if r.get("duplicate_since") else "")}
+         for r in dup["rows"]],
+        "Show every duplicate address")
+
+st.divider()
+
 st.subheader("Across runs")
 rows = data.run_history("scrape")
 if len(rows) < 2:

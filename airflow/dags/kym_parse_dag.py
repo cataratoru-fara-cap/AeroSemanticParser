@@ -16,6 +16,9 @@ Pipeline:
                   each, grade it against CorpusPolicy, upsert immediately —
                   per-page durable, peak memory ~one page, and nothing is
                   discarded for being incomplete, only labelled
+    retire_duplicates  drop the entries held at addresses the scrape stage
+                  marked a duplicate of another (gap 14: one entry, one
+                  address); select_urls never picks those addresses
     summarize     corpus-level tallies from Mongo
 
 A page that fails schema validation (missing url/title/category/status/
@@ -151,7 +154,9 @@ def kym_parse_dag():
                         "error": str(exc), "error_type": type(exc).__name__})
                     log.warning("Parse failed for %s: %s", url, exc)
                     continue
-                yield entry, sha
+                # Filed where the page was collected (gap 14), not under
+                # the canonical link a moved page carries.
+                yield entry, sha, url
 
         tallies = store.save_parsed(
             parsed_stream(), DEFAULT_CORPUS_POLICY, kym_parse.PARSER_VERSION,
@@ -178,18 +183,27 @@ def kym_parse_dag():
         log.info("Chunk done — %s", tallies)
         return tallies
 
-    # -- Phase 3: corpus-level summary ---------------------------------------
+    # -- Phase 3: one entry, one address (gap 14) ----------------------------
+    @task
+    def retire_duplicates() -> dict:
+        """The scrape stage marks an address that holds the same KYM entry
+        as another (KYM moved it and the old address still answers); its
+        entry is not a second entry, so it leaves the corpus here — and with
+        it every later stage and the graph."""
+        return store.retire_duplicates()
+
+    # -- Phase 4: corpus-level summary ---------------------------------------
     @task(trigger_rule="none_failed")
-    def summarize(chunk_stats: list[dict]) -> dict:
+    def summarize(chunk_stats: list[dict], duplicates: dict) -> dict:
         run_totals: dict[str, int] = {}
         for s in chunk_stats:
             for k, v in s.items():
                 run_totals[k] = run_totals.get(k, 0) + v
         corpus = store.parse_stats()
         log.info("PARSE RUN COMPLETE — run=%s corpus=%s", run_totals, corpus)
-        return {"run": run_totals, "corpus": corpus}
+        return {"run": run_totals, "corpus": corpus, "duplicates": duplicates}
     
-    # -- Phase 4: persist the summary for the dashboard ----------------------
+    # -- Phase 5: persist the summary for the dashboard ----------------------
     @task(trigger_rule="none_failed")
     def record_summary(summary: dict, run_id: str | None = None) -> str:
         """Give this run's stats a durable, queryable home in
@@ -226,7 +240,7 @@ def kym_parse_dag():
     urls = select_urls()
     chunks = chunk_urls(urls)
     stats = parse_chunk.expand(chunk=chunks)
-    summary = summarize(stats)
+    summary = summarize(stats, retire_duplicates())
     record_summary(summary) >> should_trigger_entities() >> trigger_entities
 
 

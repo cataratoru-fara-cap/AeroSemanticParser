@@ -168,7 +168,7 @@ kind. In RDF both are the same resource, which is correct there.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 from urllib.parse import urlparse
 
 from . import tag_normalize
@@ -183,6 +183,14 @@ _KYM_HOSTS = {"knowyourmeme.com", "www.knowyourmeme.com"}
 # its property (`P31`), wdt:P31 in RDF, one hop (kym_wikidata_statements,
 # added after the per-entry build by kym_kg's write_wikidata_statements).
 # MINOR: additive, and no term is minted.
+# Also in 7.1.0 (gap 14): one entry, one address. KYM moves an entry to
+# /sensitive/ and back, or renames it, and the old address keeps answering;
+# 830 entries were held at two addresses, 813 of them as two frames. The
+# scrape stage marks every address but the most recently discovered one;
+# the build leaves their entries out (kg_store.snapshot), sends every link
+# to them to the kept address, and lists them on the kept frame as
+# ``also_at`` (property graph only). A frame's IRI is the address KYM
+# gives the entry today — Doge is https://knowyourmeme.com/sensitive/memes/doge.
 # 7.0.0: relatesToMeme is renamed citesMediaFrame — RDF mk:citesMediaFrame,
 # and its RML files cites_frame_*.csv — the counterpart of citesExternal,
 # naming what it points at with IMKG's class. A link to a KYM page that is
@@ -652,6 +660,8 @@ def build_nodes_and_edges(
         entities: Sequence[dict] = (),
         templates: Sequence[dict] = (),
         frame_images: Sequence[dict] = (),
+        kept_address: Mapping[str, str] | None = None,
+        also_at: Sequence[str] = (),
 ) -> tuple[list[dict], list[dict]]:
     """One `entries` doc (as stored by parse_store) -> (nodes, edges).
 
@@ -692,10 +702,21 @@ def build_nodes_and_edges(
     in-graph mentions of modules/frame_image_store.py, the shape a
     template's ``mentions`` have. They become ``fromImage`` from the frame,
     IMKG's m4s:fromImage as IMKG used it.
+
+    ``kept_address`` (7.1.0, gap 14) maps an address that holds another
+    address's entry to the kept one — KYM moved the entry and the old
+    address still answers. Every link this entry makes (series parent,
+    page links, event links) goes to the kept address, so a page that
+    still links /memes/doge reaches the frame at /sensitive/memes/doge.
+    ``also_at`` is the addresses this frame absorbed, kept on its node.
     """
     url = entry.get("url")
     if not url:
         return [], []
+    kept_address = kept_address or {}
+
+    def at(link: str | None) -> str | None:
+        return kept_address.get(link, link) if link else link
 
     sections = entry.get("sections") or []
     meta = entry.get("meta") or {}
@@ -722,6 +743,7 @@ def build_nodes_and_edges(
         "parser_version": entry.get("parser_version"),
         "parsed_at": iso_utc(entry.get("parsed_at")),
         "scraped_at": iso_utc(entry.get("scraped_at")),
+        "also_at": list(also_at),
     })]
     edges: list[dict] = []
     by_key: dict[tuple[str, str], dict] = {}
@@ -813,7 +835,7 @@ def build_nodes_and_edges(
 
         for link in ev.get("links") or []:
             event_edge(EVENT_MEDIA_EDGES.get(link.get("kind"), "eventLink"),
-                       link.get("url"))
+                       at(link.get("url")))
         for embed in ev.get("embeds") or []:
             event_edge(EVENT_EMBED_EDGE, embed.get("url"))
         for image in ev.get("images") or []:
@@ -944,12 +966,15 @@ def build_nodes_and_edges(
                 alt_text=image.get("alt"), caption=image.get("caption")))
 
     # -- series + frame-level link edges ------------------------------------
-    sp = entry.get("series_parent")
+    sp = at(entry.get("series_parent"))
+    if sp == url:
+        sp = None   # the parent was this entry's own other address
     if sp:
         nodes.append(guess_stub_node(sp))
         edge("partOfSeries", sp)
 
     for link_url, occurrence in _iter_links(entry):
+        link_url = at(link_url)
         if link_url == url or link_url == sp:
             continue  # a self-link, or the series parent (partOfSeries says it)
         if _is_kym_entry(link_url):

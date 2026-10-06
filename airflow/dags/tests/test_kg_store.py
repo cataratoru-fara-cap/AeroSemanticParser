@@ -40,6 +40,7 @@ def fresh_store() -> ks.KGStore:
     store.client = client
     store.db = client["memes"]
     store.entries = store.db["entries"]
+    store.urls = store.db["urls"]
     store.nodes = store.db["kg_nodes"]
     store.edges = store.db["kg_edges"]
     store.builds = store.db["kg_builds"]
@@ -313,11 +314,14 @@ class StalenessTests(unittest.TestCase):
               "wikidata_statement_items": 90, "wikidata_statements": 1100,
               "wikidata_statement_dumps": ["wikidata-20260914-all.json.gz"],
               "wikidata_statement_versions": ["1.0.0"],
-              "wikidata_statements_max_extracted_at": "2026-10-05T10:00:00+00:00"}
+              "wikidata_statements_max_extracted_at": "2026-10-05T10:00:00+00:00",
+              # Gap 14: which addresses are another's duplicate — a mark that
+              # moves to another kept address changes only the digest.
+              "duplicate_addresses": 830, "duplicate_addresses_digest": "4f2a"}
 
     def test_every_layer_stamp_is_compared(self):
         for keys in (ks.TEMPLATE_STAMP_KEYS, ks.FRAME_IMAGE_STAMP_KEYS,
-                     ks.WIKIDATA_STATEMENT_STAMP_KEYS):
+                     ks.WIKIDATA_STATEMENT_STAMP_KEYS, ks.DUPLICATE_ADDRESS_STAMP_KEYS):
             self.assertLessEqual(set(keys), set(self.STAMPS))
 
     def test_every_event_stamp_is_compared(self):
@@ -365,6 +369,23 @@ class SnapshotTests(unittest.TestCase):
              "parser_version": "1.5.0", "corpus_policy_version": "p1",
              "corpus_status": "incomplete"},
         ])
+
+    def test_snapshot_leaves_duplicate_addresses_out(self):
+        # Gap 14: FRAME's entry is held at an address marked a duplicate.
+        self.store.urls.insert_one({"url": FRAME, "duplicate_of": FRAME + "-kept"})
+        dups = self.store.duplicate_addresses()
+        self.assertEqual(dups, {FRAME: FRAME + "-kept"})
+        snap = self.store.snapshot(exclude_urls=dups)
+        self.assertEqual(snap["entry_ids"], ["b"])
+        self.assertEqual([d.get("url") for d in self.store.iter_field(
+            "url", now_utc(), exclude_urls=dups)], [PARENT])
+
+    def test_the_duplicate_stamp_moves_when_a_mark_moves(self):
+        a = ks.duplicate_address_stamps({FRAME: PARENT})
+        b = ks.duplicate_address_stamps({FRAME: PARENT + "-2"})
+        self.assertEqual((a["duplicate_addresses"], b["duplicate_addresses"]), (1, 1))
+        self.assertNotEqual(a["duplicate_addresses_digest"], b["duplicate_addresses_digest"])
+        self.assertEqual(a, ks.duplicate_address_stamps({FRAME: PARENT}))
 
     def test_snapshot_collects_ids_and_versions(self):
         snap = self.store.snapshot()

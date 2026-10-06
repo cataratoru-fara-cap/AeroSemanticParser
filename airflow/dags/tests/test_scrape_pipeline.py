@@ -201,5 +201,71 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.stats()["failed_permanent"], 1)
 
 
+
+def entry_page(address: str, title: str) -> str:
+    return (f"<html><head><meta property='og:url' content='{address}' />"
+            f"<meta property='og:title' content='{title} | Know Your Meme' />"
+            "</head><body>" + "meme " * 200 + "</body></html>")
+
+
+class DuplicateTests(unittest.TestCase):
+    """Gap 14: one entry, one address — the scrape stage's bookkeeping."""
+    PUB = "https://knowyourmeme.com/memes/doge"
+    SENS = "https://knowyourmeme.com/sensitive/memes/doge"
+
+    def setUp(self):
+        self.store = fresh_store()
+        self.store.urls.insert_many([
+            {"_id": dom_store.url_doc_id(u), "url": u, "Confirmed": True,
+             "namespace": ns, "lastmod": None, "last_scraped": None}
+            for u, ns in ((self.PUB, "memes"), (self.SENS, "sensitive/memes"))])
+
+    def test_a_stored_page_records_what_it_says_about_itself(self):
+        self.store.save_result(url=self.PUB, ok=True, html=entry_page(self.SENS, "Doge"))
+        doc = self.store.doms.find_one({"url": self.PUB})
+        self.assertEqual((doc["page_url"], doc["page_title"]), (self.SENS, "Doge"))
+
+    def test_pages_stored_before_are_read_once_and_written_back(self):
+        self.store.save_result(url=self.PUB, ok=True, html=entry_page(self.PUB, "Doge"))
+        self.store.doms.update_one({"url": self.PUB},
+                                   {"$unset": {"page_url": "", "page_title": ""}})
+        got = self.store.page_identities()
+        self.assertEqual((got[self.PUB]["page_url"], got[self.PUB]["page_title"]),
+                         (self.PUB, "Doge"))
+        self.assertEqual(self.store.doms.find_one({"url": self.PUB})["page_title"], "Doge")
+        self.assertEqual(got[self.PUB]["fetched_at"].tzinfo, timezone.utc)
+
+    def test_marks_are_set_kept_and_lifted(self):
+        first = self.store.mark_duplicates({self.PUB: self.SENS})
+        self.assertEqual(first, {"marked": 1, "unchanged": 0, "unmarked": 0, "duplicates": 1})
+        since = self.store.urls.find_one({"url": self.PUB})["duplicate_since"]
+        again = self.store.mark_duplicates({self.PUB: self.SENS})
+        self.assertEqual(again["unchanged"], 1)
+        self.assertEqual(self.store.urls.find_one({"url": self.PUB})["duplicate_since"], since)
+        moved_back = self.store.mark_duplicates({self.SENS: self.PUB})
+        self.assertEqual((moved_back["marked"], moved_back["unmarked"]), (1, 1))
+        self.assertNotIn("duplicate_of", self.store.urls.find_one({"url": self.PUB}))
+        self.assertEqual(self.store.urls.find_one({"url": self.SENS})["duplicate_of"], self.PUB)
+
+    def test_the_whole_step_keeps_the_address_the_newest_page_names(self):
+        old = datetime(2026, 7, 10, tzinfo=timezone.utc)
+        self.store.save_result(url=self.PUB, ok=True, html=entry_page(self.PUB, "Doge"),
+                               fetched_at=old)
+        self.store.save_result(url=self.SENS, ok=True, html=entry_page(self.SENS, "Doge"))
+        with mock.patch.object(dom_store, "get_store", return_value=self.store):
+            out = dom_store.resolve_duplicates()
+        self.assertEqual(self.store.urls.find_one({"url": self.PUB})["duplicate_of"], self.SENS)
+        self.assertEqual((out["entries_with_duplicates"], out["pages_dropped"],
+                          out["kept_sensitive"], out["marks"]["marked"]), (1, 1, 1, 1))
+
+    def test_a_duplicate_is_still_refetched_when_it_goes_stale(self):
+        # Its fresh page is the evidence that KYM moved the entry back.
+        old = datetime(2025, 12, 1, tzinfo=timezone.utc)
+        self.store.save_result(url=self.PUB, ok=True, html=BIG_HTML, fetched_at=old)
+        self.store.urls.update_one({"url": self.PUB}, {"$set": {
+            "lastmod": "2026-01-01", "duplicate_of": self.SENS}})
+        self.assertIn(self.PUB, self.store.select_pending())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

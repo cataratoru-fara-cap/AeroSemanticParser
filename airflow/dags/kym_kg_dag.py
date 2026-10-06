@@ -244,8 +244,12 @@ def kym_kg_dag():
         from modules.kg import origin, taxonomy
 
         p = params or {}
+        # Gap 14: addresses holding the same KYM entry as another. Their
+        # entries stay out of the build, their links go to the kept address.
+        duplicates = store.duplicate_addresses()
         snap = store.snapshot(ready_only=p.get("ready_only", False),
-                              limit=p.get("batch_size", 0))
+                              limit=p.get("batch_size", 0),
+                              exclude_urls=duplicates)
         tax = taxonomy.load(TAXONOMY_PATH)
         origin_tax = origin.load(ORIGIN_TAXONOMY_PATH)
         with open(TAG_DENYLIST_PATH, "rb") as fh:
@@ -275,6 +279,8 @@ def kym_kg_dag():
             # linked items' Wikidata statements.
             **store.frame_image_stamps(snap["snapshot_at"]),
             **store.wikidata_statement_stamps(snap["snapshot_at"]),
+            # Gap 14: which addresses are another's duplicate, and of which.
+            **store.duplicate_address_stamps(duplicates),
         }
         stale, reason = store.KGStore.is_stale(
             stamps, store.published_stamps(), force=p.get("force_rebuild", False))
@@ -284,7 +290,8 @@ def kym_kg_dag():
                  snap["entries_count"], stamps["snapshot_at"], stale, reason,
                  build_id)
         return {"build_id": build_id, "stamps": stamps, "stale": stale,
-                "reason": reason, "entry_ids": snap["entry_ids"]}
+                "reason": reason, "entry_ids": snap["entry_ids"],
+                "duplicates": duplicates}
 
     @task
     def gate(snap: dict) -> dict:
@@ -294,7 +301,9 @@ def kym_kg_dag():
             raise AirflowSkipException(f"KG up to date: {snap['reason']}")
         store.begin_build(snap["build_id"], snap["stamps"])
         return {"build_id": snap["build_id"],
-                "snapshot_at": snap["stamps"]["snapshot_at"]}
+                "snapshot_at": snap["stamps"]["snapshot_at"],
+                # {address: kept address}, frozen with the snapshot (~100 KB)
+                "duplicates": snap.get("duplicates") or {}}
 
     @task
     def reconcile(snap: dict) -> dict:
@@ -389,6 +398,12 @@ def kym_kg_dag():
         templates_by_url = store.template_links_for(chunk, snapshot_at)
         # 7.1.0: what each frame's own image shows.
         frame_images_by_url = store.frame_image_links_for(chunk, snapshot_at)
+        # Gap 14: links to an address that holds another's entry go to the
+        # kept address, and each kept frame lists the addresses it absorbed.
+        kept_address = proceed.get("duplicates") or {}
+        also_at: dict[str, list[str]] = {}
+        for dropped, kept in sorted(kept_address.items()):
+            also_at.setdefault(kept, []).append(dropped)
         nodes: list[dict] = []
         edges: list[dict] = []
         seen = 0
@@ -399,7 +414,9 @@ def kym_kg_dag():
                 events=events_by_url.get(entry.get("url"), ()),
                 entities=entities_by_url.get(entry.get("url"), ()),
                 templates=templates_by_url.get(entry.get("url"), ()),
-                frame_images=frame_images_by_url.get(entry.get("url"), ()))
+                frame_images=frame_images_by_url.get(entry.get("url"), ()),
+                kept_address=kept_address,
+                also_at=also_at.get(entry.get("url"), ()))
             nodes.extend(n)
             edges.extend(e)
         written = store.save_graph(proceed["build_id"], nodes, edges)
@@ -483,7 +500,8 @@ def kym_kg_dag():
         from modules.kg import census as kg_census
         snapshot_at = datetime.fromisoformat(proceed["snapshot_at"])
         return kg_census.run_census(
-            store.iter_field("entry_type", snapshot_at), "entry_type")
+            store.iter_field("entry_type", snapshot_at, proceed.get("duplicates") or ()),
+            "entry_type")
 
     @task
     def load_taxonomy(proceed: dict, entry_type_census: dict) -> dict:
@@ -510,7 +528,8 @@ def kym_kg_dag():
         from modules.kg import census as kg_census
         snapshot_at = datetime.fromisoformat(proceed["snapshot_at"])
         return kg_census.run_census(
-            store.iter_field("origin", snapshot_at), "origin")
+            store.iter_field("origin", snapshot_at, proceed.get("duplicates") or ()),
+            "origin")
 
     @task
     def load_origin_taxonomy(proceed: dict, origin_census: dict) -> dict:
@@ -539,7 +558,8 @@ def kym_kg_dag():
         def normalize(v: str) -> str:
             return tag_normalize.fold(v.strip().lower(), denylist)
         return kg_census.run_census(
-            store.iter_field("tags", snapshot_at), "tags", normalize=normalize)
+            store.iter_field("tags", snapshot_at, proceed.get("duplicates") or ()),
+            "tags", normalize=normalize)
 
     @task
     def write_cooccurs_edges(proceed: dict, tags_census: dict) -> dict:

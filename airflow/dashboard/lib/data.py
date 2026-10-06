@@ -144,6 +144,24 @@ def scrape_state() -> dict[str, Any]:
 
 
 @st.cache_data(ttl=CACHE_TTL)
+def duplicate_state() -> dict[str, Any]:
+    """Gap 14: the addresses kym_scrape marked a duplicate of another —
+    the same KYM entry, at an address KYM no longer gives it."""
+    urls = _coll("MONGODB_URLS_COLLECTION", "urls")
+    rows = sorted(urls.find({"duplicate_of": {"$ne": None}},
+                            {"_id": 0, "url": 1, "duplicate_of": 1,
+                             "duplicate_since": 1}),
+                  key=lambda r: (r["duplicate_of"], r["url"]))
+    kept = {r["duplicate_of"] for r in rows}
+    return {
+        "addresses": len(rows),
+        "entries": len(kept),
+        "kept_sensitive": sum("/sensitive/" in k for k in kept),
+        "rows": rows,
+    }
+
+
+@st.cache_data(ttl=CACHE_TTL)
 def parse_state() -> dict[str, Any]:
     entries = _coll("MONGODB_ENTRIES_COLLECTION", "entries")
     failures = _coll("MONGODB_PARSE_FAILURES_COLLECTION", "parse_failures")

@@ -210,6 +210,47 @@ class SelectPendingTests(unittest.TestCase):
         self.assertEqual(len(pending), 2)
 
 
+class DuplicateTests(unittest.TestCase):
+    """Gap 14: an address marked a duplicate of another holds no entry."""
+    SENS = "https://knowyourmeme.com/sensitive/memes/doge"
+
+    def setUp(self):
+        self.store = fresh_store()
+        for url in (DOGE_URL, self.SENS):
+            self.store.upsert_entries([self.store.build_entry_doc(
+                _thin_entry(url), "sha", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
+                CORPUS_POLICY_VERSION)])
+            self.store.urls.insert_one({"url": url, "Confirmed": True})
+        self.store.urls.update_one({"url": DOGE_URL}, {"$set": {"duplicate_of": self.SENS}})
+        self.store.failures.insert_one({"_id": ps.url_doc_id(DOGE_URL), "url": DOGE_URL})
+
+    def test_retiring_drops_the_entry_and_its_dead_letter(self):
+        out = self.store.retire_duplicates()
+        self.assertEqual((out["duplicate_addresses"], out["entries_retired"]), (1, 1))
+        self.assertEqual(out["examples"], [{"retired": DOGE_URL, "kept": self.SENS}])
+        self.assertEqual([e["url"] for e in self.store.entries.find()], [self.SENS])
+        self.assertEqual(self.store.failures.count_documents({}), 0)
+        self.assertEqual(self.store.retire_duplicates()["entries_retired"], 0)
+
+    def test_an_entry_is_filed_where_its_page_was_collected(self):
+        # A moved page names the new address in a canonical link; filed
+        # under it, TikTok's two pages overwrote one entry.
+        doc = self.store.build_entry_doc(
+            _thin_entry(DOGE_URL), "sha", DEFAULT_CORPUS_POLICY, PARSER_VERSION,
+            CORPUS_POLICY_VERSION, address=self.SENS)
+        self.assertEqual((doc["url"], doc["_id"]), (self.SENS, ps.url_doc_id(self.SENS)))
+
+    def test_a_duplicate_address_is_never_selected(self):
+        from unittest import mock
+        from modules import dom_store
+        with mock.patch.object(ps, "get_store", return_value=self.store), \
+                mock.patch.object(dom_store, "content_shas",
+                                  side_effect=lambda urls: {u: "new" for u in urls}):
+            pending = ps.pending_urls(current_parser_version=PARSER_VERSION,
+                                      current_policy_version=CORPUS_POLICY_VERSION)
+        self.assertEqual(pending, [self.SENS])
+
+
 class SaveFailuresTests(unittest.TestCase):
     """Dead-letter behavior: failures live in `parse_failures`, never in
     `entries` (which stays schema-pure)."""

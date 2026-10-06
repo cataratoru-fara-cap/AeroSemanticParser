@@ -82,7 +82,13 @@ is never clobbered.
 zlib-compressed. Two retry tiers (in-process backoff, then Airflow task
 retries). A failed refetch never destroys a previously good DOM. Failures
 carry an error *kind*; `permanent` ones (400/404/405/422) are never
-re-queued.
+re-queued. Then **one entry, one address** (gap 14): KYM moves an entry,
+into its sensitive section and back or to a new name, and the old address
+keeps answering. So over every stored page, the addresses that hold one
+entry are grouped (same path but for `/sensitive`, a page naming the other
+as its `og:url`, or a meme title in common). The one the entry's newest
+page gives is kept; the others are marked `duplicate_of` it in `urls`.
+`trigger_parse=false` stops a run at collection.
 
 **`kym_parse`** — parses stored DOMs into validated `KYMEntryScrape` rows in
 `entries`, grading each against `CorpusPolicy` as `ready` or `incomplete`.
@@ -90,7 +96,9 @@ Nothing is discarded for being incomplete — it is *labelled*, so a policy
 change re-grades the corpus without re-parsing. Pages that fail schema
 validation land in `parse_failures`, a dead-letter collection carrying the
 same staleness stamps as `entries`, so a deterministic failure is not
-retried until the parser version or the page content actually changes.
+retried until the parser version or the page content actually changes. An
+address marked a duplicate is never parsed, and its entry is retired;
+every entry is filed under the address its page was collected at.
 
 **`kym_entities`** (triggered by parse) — recognises the named entities
 (and the common-noun concepts) in every frame's title, tags and About

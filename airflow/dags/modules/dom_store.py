@@ -8,10 +8,13 @@ the DAG glues them via FetchResult.as_doc() -> save_result(**doc).
 
 Collections
 -----------
-``urls``  (owned by discovery, read here + one write-back)
+``urls``  (owned by discovery, read here + two write-backs)
     We read: url, namespace, Confirmed, lastmod  — to decide what to scrape.
     We write: last_scraped  — the field mongo_store's discovery merge
-    explicitly preserves for this stage.
+    explicitly preserves for this stage; and duplicate_of / duplicate_since
+    (gap 14) — set on an address that holds the same entry as another, the
+    kept one, by mark_duplicates. The discovery merge keeps every field it
+    is not given, so these survive a discovery run.
 
 ``doms``  (owned by this module)
     _id             sha1(url)  (same convention as mongo_store)
@@ -23,6 +26,9 @@ Collections
     content_length  uncompressed size in bytes
     status_code     upstream status ScrapingAnt relayed
     fetched_at      when the stored html was fetched (ok docs only)
+    page_url / page_title   what the stored page says about itself: its
+                    og:url (the address KYM gives the entry) and its title,
+                    read when the html is stored (kym_discover.page_identity)
     first_fetched_at / last_attempt_at / attempts
     last_error / last_error_kind   'permanent' failures are never re-queued
 
@@ -35,6 +41,8 @@ Selection (``select_pending``) walks urls ⋈ doms and queues, in order:
     2. failed with error_kind != 'permanent' and attempts < cap
     3. ok but stale — sitemap lastmod newer than fetched_at, or
        fetched_at older than an optional refetch window
+An address marked duplicate_of is still fetched when it goes stale: its
+fresh page is the evidence that says whether KYM moved the entry back.
 
 Connection settings come from the environment (docker-compose):
     MONGODB_URI               (default: mongodb://localhost:27017)
@@ -233,6 +241,7 @@ class DomStore(MongoStoreBase):
         doc_id = url_doc_id(url)
 
         if ok and html:
+            from modules.kym_discover import page_identity
             payload, encoding = _encode_html(html, self.compression)
             self.doms.update_one(
                 {"_id": doc_id},
@@ -241,6 +250,7 @@ class DomStore(MongoStoreBase):
                     "scrape_status": "ok",
                     "html": payload,
                     "encoding": encoding,
+                    **page_identity(html),
                     "content_sha256": hashlib.sha256(
                         html.encode("utf-8")).hexdigest(),
                     "content_length": len(html.encode("utf-8")),
@@ -303,6 +313,72 @@ class DomStore(MongoStoreBase):
                 {"scrape_status": "failed", "last_error_kind": "permanent"}),
         }
 
+    # -- one entry, one address (gap 14) -------------------------------------
+
+    def page_identities(self) -> dict[str, dict]:
+        """{url: {fetched_at, page_url, page_title}} for every stored page.
+
+        Pages stored before save_result recorded page_url / page_title are
+        read from their html here, once, and written back — one page at a
+        time off the cursor (never the corpus in memory)."""
+        from pymongo import UpdateOne
+        from modules.kym_discover import page_identity
+
+        ops: list = []
+        for doc in self.doms.find(
+                {"scrape_status": "ok", "page_title": {"$exists": False}},
+                {"html": 1, "encoding": 1}):
+            if doc.get("html") is None:
+                continue
+            identity = page_identity(_decode_html(doc["html"], doc.get("encoding")))
+            ops.append(UpdateOne({"_id": doc["_id"]}, {"$set": identity}))
+            if len(ops) >= 500:
+                self.doms.bulk_write(ops, ordered=False)
+                ops = []
+        if ops:
+            self.doms.bulk_write(ops, ordered=False)
+
+        return {d["url"]: {"fetched_at": as_utc(d.get("fetched_at")),
+                           "page_url": d.get("page_url"),
+                           "page_title": d.get("page_title")}
+                for d in self.doms.find(
+                    {"scrape_status": "ok"},
+                    {"_id": 0, "url": 1, "fetched_at": 1, "page_url": 1,
+                     "page_title": 1})
+                if d.get("url")}
+
+    def known_urls(self) -> list[str]:
+        return [d["url"] for d in self.urls.find({}, {"_id": 0, "url": 1})
+                if d.get("url")]
+
+    def mark_duplicates(self, kept_for: dict[str, str]) -> dict[str, int]:
+        """Make ``urls`` say exactly ``kept_for`` ({address: kept address}).
+
+        A new or changed mark gets ``duplicate_since`` = now; an unchanged
+        one keeps its date; a mark no longer in ``kept_for`` is removed (KYM
+        moved the entry back, or the evidence changed)."""
+        from pymongo import UpdateOne
+
+        now = now_utc()
+        current = {d["url"]: d.get("duplicate_of") for d in self.urls.find(
+            {"duplicate_of": {"$ne": None}}, {"_id": 0, "url": 1, "duplicate_of": 1})}
+        ops, stats = [], {"marked": 0, "unchanged": 0, "unmarked": 0}
+        for url, kept in kept_for.items():
+            if current.get(url) == kept:
+                stats["unchanged"] += 1
+                continue
+            ops.append(UpdateOne({"_id": url_doc_id(url)}, {"$set": {
+                "duplicate_of": kept, "duplicate_since": now}}))
+            stats["marked"] += 1
+        for url in current.keys() - kept_for.keys():
+            ops.append(UpdateOne({"_id": url_doc_id(url)}, {"$unset": {
+                "duplicate_of": "", "duplicate_since": ""}}))
+            stats["unmarked"] += 1
+        if ops:
+            self.urls.bulk_write(ops, ordered=False)
+        stats["duplicates"] = len(kept_for)
+        return stats
+
 
 def get_store(uri: str | None = None, db_name: str | None = None) -> DomStore:
     return DomStore(uri=uri, db_name=db_name)
@@ -352,6 +428,27 @@ def scrape_stats() -> dict[str, int]:
 def namespace_counts() -> dict[str, int]:
     with get_store() as store:
         return store.namespace_counts()
+
+
+def resolve_duplicates() -> dict[str, Any]:
+    """Phase 3 of discovery, run once the pages are in (gap 14): group the
+    addresses that hold one entry, keep the most recently discovered one
+    (kym_discover.resolve_duplicates), and mark the others in ``urls``.
+    Returns the marks' bookkeeping plus kym_discover.duplicate_stats."""
+    from modules import kym_discover as kd
+
+    with get_store() as store:
+        pages = store.page_identities()
+        groups = kd.resolve_duplicates(store.known_urls(), pages)
+        marks = store.mark_duplicates(
+            {url: g["kept"] for g in groups for url in g["dropped"]})
+    stats = kd.duplicate_stats(groups, pages)
+    for g in stats["title_only"]:
+        log.warning("Grouped by title alone — check by hand: %s", g)
+    log.info("One entry, one address — %s; marks %s",
+             {k: v for k, v in stats.items() if k not in ("examples", "title_only")},
+             marks)
+    return {**stats, "marks": marks}
 
 # ---------------------------------------------------------------------------
 # Read-only facades for the parse stage. All writes to `doms` stay owned by

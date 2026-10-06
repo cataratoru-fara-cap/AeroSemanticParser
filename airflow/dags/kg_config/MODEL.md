@@ -366,6 +366,17 @@ inside morph-kgc). It is minted once, in `kg/events.py`, and stored.
    need, and what IMKG got only because those items happened to be linked.
    The statement edges are left out of the IMKG-comparable core metrics;
    the full scope counts them, as IMKG's full graph counts its WD subset.
+14. **One frame per entry, at the address KYM gives it today** (7.1.0, gap
+   14). KYM moves an entry (into its sensitive section and back, or to a
+   new name) and the old address keeps answering; IMKG's frame IRI was
+   whichever address its spider reached, and KG 7.0.0 held 813 entries
+   twice. From 7.1.0 the addresses of one entry are grouped at collection
+   and only the one the entry's newest page names is a frame: Doge is
+   `https://knowyourmeme.com/sensitive/memes/doge`, not IMKG's
+   `/memes/doge`. Every link to an old address is sent to the kept one;
+   the old addresses are listed on the frame as `also_at` (property graph
+   only — RDF says nothing of them, so an IMKG IRI for a moved entry does
+   not resolve in SPARQL; `owl:sameAs` would be the way, not taken).
 
 ## Events: drawn from EventKG, not copied from it
 

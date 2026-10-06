@@ -773,6 +773,51 @@ class EntityTests(unittest.TestCase):
                 self.assertLessEqual(set(occ), set(build.OCCURRENCE_FIELDS))
 
 
+class KeptAddressTests(unittest.TestCase):
+    """Gap 14: links to an address that holds another address's entry go
+    to the kept address — pages still link /memes/doge after KYM moved Doge
+    to /sensitive/memes/doge."""
+    SENS = "https://knowyourmeme.com/sensitive/memes/doge"
+    OLD_PARENT = "https://knowyourmeme.com/memes/old-parent"
+
+    def build(self, **over):
+        return build.build_nodes_and_edges(
+            entry(**over), kept_address={URL: self.SENS, self.OLD_PARENT: PARENT})
+
+    def test_series_parent_and_page_links_reach_the_kept_address(self):
+        child = "https://knowyourmeme.com/memes/swole-doge"
+        _, edges = build.build_nodes_and_edges(
+            entry(url=child, series_parent=URL,
+                  sections=[section(links=[{"url": URL, "text": "Doge"},
+                                           {"url": self.OLD_PARENT, "text": "p"}])]),
+            kept_address={URL: self.SENS, self.OLD_PARENT: PARENT})
+        got = edge_set(edges)
+        self.assertIn((child, "partOfSeries", self.SENS), got)
+        self.assertIn((child, "citesMediaFrame", PARENT), got)
+        self.assertFalse([e for e in edges if e["dst"] in (URL, self.OLD_PARENT)])
+        # The kept address is the series parent, so it is not also a citation.
+        self.assertNotIn((child, "citesMediaFrame", self.SENS), got)
+
+    def test_a_link_to_its_own_other_address_is_a_self_link(self):
+        _, edges = build.build_nodes_and_edges(
+            entry(url=self.SENS, series_parent=URL,
+                  sections=[section(links=[{"url": URL, "text": "Doge"}])]),
+            kept_address={URL: self.SENS})
+        self.assertFalse([e for e in edges if e["type"] in ("partOfSeries", "citesMediaFrame")])
+
+    def test_event_links_reach_the_kept_address(self):
+        ev = dict(EventTests.EV, links=[{"url": URL, "text": "Doge", "kind": "link"}])
+        _, edges = build.build_nodes_and_edges(
+            entry(url=OTHER), events=[ev], kept_address={URL: self.SENS})
+        self.assertIn(("event:abc123def4-0011223344", "eventLink", self.SENS), edge_set(edges))
+
+    def test_the_kept_frame_lists_the_addresses_it_absorbed(self):
+        nodes, _ = build.build_nodes_and_edges(entry(url=self.SENS), also_at=[URL])
+        self.assertEqual(nodes_by_id(nodes)[self.SENS]["also_at"], [URL])
+        nodes, _ = build.build_nodes_and_edges(entry())
+        self.assertNotIn("also_at", nodes_by_id(nodes)[URL])
+
+
 class StubNodeTests(unittest.TestCase):
     def test_category_guessed_from_the_path(self):
         self.assertEqual(

@@ -9,7 +9,8 @@ nothing about Mongo; the DAG glues them via parse_entry() -> build_entry_doc()
 Collections
 -----------
 ``urls``   (owned by discovery, read-only here)
-    We read: url, namespace, Confirmed — to build the candidate set.
+    We read: url, namespace, Confirmed, duplicate_of — to build the
+    candidate set.
 
 ``doms``   (owned by the scrape stage, read-only here, via dom_store)
     Selection reads ONLY content_sha256 (dom_store.content_shas — never the
@@ -45,7 +46,12 @@ Collections
                             until the parser or the page actually changes
 
 Nothing is ever discarded for being "incomplete" — corpus_status/missing are
-labels, not a filter. A thin entry stays in `entries`, fully queryable
+labels, not a filter. The one thing that is dropped is an entry held at an
+address the scrape stage marked a duplicate of another (``urls.duplicate_of``,
+gap 14): it is the same KYM entry as the kept address, so its doc leaves
+``entries`` (retire_duplicates) and the address is never selected again
+while the mark stands. Its stored page stays, so lifting the mark brings it
+back with an ordinary parse. A thin entry stays in `entries`, fully queryable
 (``db.entries.find({"corpus_missing": "region"})``), and can be re-graded in
 place by re-running corpus_ready() without re-parsing, or re-parsed in place
 if PARSER_VERSION or the DOM itself has moved on.
@@ -89,7 +95,7 @@ RETIRED_FIELDS = ("template_image_url",)
 __all__ = [
     "ParseStore", "get_store", "clean_namespaces", "pending_urls",
     "iter_html", "save_parsed", "namespaces_for", "save_failures",
-    "parse_stats",
+    "parse_stats", "retire_duplicates",
 ]
 
 
@@ -182,13 +188,22 @@ class ParseStore(MongoStoreBase):
 
     def build_entry_doc(self, entry: KYMEntryScrape, dom_content_sha256: str,
                         policy: CorpusPolicy, parser_version: str,
-                        policy_version: str) -> dict:
+                        policy_version: str, address: str | None = None) -> dict:
         """Grade + flatten one parsed entry into a Mongo-ready dict. Pure
         (no I/O) — kept on the store so the DAG task stays a one-liner per
-        page, mirroring FetchResult.as_doc() -> save_result(**doc)."""
+        page, mirroring FetchResult.as_doc() -> save_result(**doc).
+
+        ``address`` is where the page was collected; the entry is filed
+        there (gap 14). A page KYM serves at a moved address names the new
+        one in a canonical link, which the parser reports as ``url``: filed
+        under it, two pages overwrote one entry (TikTok's two addresses) or
+        an entry sat at an address with no page (a renamed entry). Which
+        address holds the entry is the collection phase's decision."""
         ready, missing = corpus_ready(entry, policy)
         doc = entry.model_dump(mode="json", exclude_none=True)
-        doc["_id"] = url_doc_id(str(entry.url))
+        if address:
+            doc["url"] = address
+        doc["_id"] = url_doc_id(doc["url"])
         doc["corpus_status"] = "ready" if ready else "incomplete"
         doc["corpus_missing"] = missing
         doc["corpus_policy_version"] = policy_version
@@ -260,6 +275,23 @@ class ParseStore(MongoStoreBase):
             n += 1
         return n
 
+    def retire_duplicates(self, examples: int = 12) -> dict[str, Any]:
+        """Drop the entries (and dead letters) held at addresses marked a
+        duplicate of another (gap 14). Derived data, re-derivable from the
+        stored page; the mark in ``urls`` is the record of why."""
+        dropped = {d["url"]: d["duplicate_of"] for d in self.urls.find(
+            {"duplicate_of": {"$ne": None}}, {"_id": 0, "url": 1, "duplicate_of": 1})}
+        ids = [url_doc_id(u) for u in dropped]
+        retired = sorted(d["url"] for d in self.entries.find(
+            {"_id": {"$in": ids}}, {"_id": 0, "url": 1}))
+        if ids:
+            self.entries.delete_many({"_id": {"$in": ids}})
+            self.failures.delete_many({"_id": {"$in": ids}})
+        return {"duplicate_addresses": len(dropped),
+                "entries_retired": len(retired),
+                "examples": [{"retired": u, "kept": dropped[u]}
+                             for u in retired[:examples]]}
+
     # -- reads / stats ------------------------------------------------------
 
     def stats(self) -> dict[str, Any]:
@@ -308,7 +340,9 @@ def pending_urls(namespaces: Iterable[str] | None = None,
     ns = clean_namespaces(namespaces)
     candidate_shas: dict[str, str] = {}
     with get_store() as store:
-        query: dict = {}
+        # An address marked a duplicate of another holds no entry of its
+        # own (gap 14); None also matches a doc without the field.
+        query: dict = {"duplicate_of": None}
         if confirmed_only:
             query["Confirmed"] = True
         if ns:
@@ -342,17 +376,27 @@ def iter_html(urls: list[str]):
     yield from dom_store.iter_html_for(urls)
 
 
-def save_parsed(entries_with_meta: Iterable[tuple[KYMEntryScrape, str]],
+def save_parsed(entries_with_meta: Iterable[tuple[KYMEntryScrape, str, str]],
                 policy: CorpusPolicy, parser_version: str,
                 policy_version: str) -> dict[str, int]:
-    """``entries_with_meta`` is (KYMEntryScrape, dom_content_sha256) pairs.
+    """``entries_with_meta`` is (KYMEntryScrape, dom_content_sha256,
+    address the page was collected at) triples — see build_entry_doc.
     Builds + upserts in one pass so the DAG task body stays a loop + one
     call, mirroring dom_store.save_results()."""
     with get_store() as store:
         docs = (store.build_entry_doc(entry, sha, policy, parser_version,
-                                      policy_version)
-                for entry, sha in entries_with_meta)
+                                      policy_version, address=address)
+                for entry, sha, address in entries_with_meta)
         return store.upsert_entries(docs)
+
+
+def retire_duplicates() -> dict[str, Any]:
+    """See ParseStore.retire_duplicates."""
+    with get_store() as store:
+        out = store.retire_duplicates()
+    log.info("Retired %d entries held at duplicate addresses (%d marked)",
+             out["entries_retired"], out["duplicate_addresses"])
+    return out
 
 
 def namespaces_for(urls: Iterable[str]) -> dict[str, str]:

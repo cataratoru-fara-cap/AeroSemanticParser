@@ -70,5 +70,13 @@ and each one gets worse the longer it sits.
   formats, JSON stored as a string, one curation decision recorded four
   ways. The fix is a staged rewrite of the store layer.
 
+- ~~[14-one-entry-two-addresses.md](14-one-entry-two-addresses.md)~~ **(closed 2026-10-05)** —
+  KYM moves an entry (into its sensitive section and back, or to a new
+  name) and the old address keeps answering, so 830 entries were held
+  twice, 813 of them as two frames (Doge among them). `kym_scrape` now
+  keeps the address the entry's newest page gives, `kym_parse` drops the
+  others, and the graph sends their links to the kept one: 815 entries
+  retired, 24,291 → 23,477.
+
 Update the status line at the top of a file when a gap is closed; leave the
 file (don't delete it) so the decision trail survives.

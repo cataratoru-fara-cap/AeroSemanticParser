@@ -27,6 +27,12 @@ Collections
     re-exports of entity_store, for the same one-store-per-stage reason as
     events. Frozen at the snapshot by ``linked_at <= snapshot_at``.
 
+``urls``      (owned by discovery, read-only here)
+    Only ``duplicate_of``: an address the scrape stage found to hold the
+    same KYM entry as another (gap 14). The snapshot leaves its entry out,
+    every link to it is sent to the kept address (kg/build.py), and the map
+    is stamped, so a new or lifted mark rebuilds the graph.
+
 ``kg_nodes`` / ``kg_edges``  (owned by this module) — GENERATIONAL
     _id        "<build_id>|<node_id>"  /  "<build_id>|<src>|<type>|<dst>"
     build_id   which build wrote this document
@@ -66,6 +72,7 @@ Connection settings come from the environment (docker-compose):
     MONGODB_URI                     (default: mongodb://localhost:27017)
     MONGODB_DB                      (default: memes)
     MONGODB_ENTRIES_COLLECTION      (default: entries)
+    MONGODB_URLS_COLLECTION         (default: urls)
     MONGODB_KG_NODES_COLLECTION     (default: kg_nodes)
     MONGODB_KG_EDGES_COLLECTION     (default: kg_edges)
     MONGODB_KG_BUILDS_COLLECTION    (default: kg_builds)
@@ -75,8 +82,9 @@ Connection settings come from the environment (docker-compose):
 
 from __future__ import annotations
 
+import hashlib
 import logging
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator, Mapping
 
 from modules.mongo_base import MongoStoreBase, as_utc, now_utc
 
@@ -93,7 +101,8 @@ __all__ = [
     "ENTITY_STAMP_KEYS", "template_links_for", "template_stamps",
     "TEMPLATE_STAMP_KEYS", "frame_image_links_for", "frame_image_stamps",
     "FRAME_IMAGE_STAMP_KEYS", "wikidata_statements_for", "wikidata_statement_stamps",
-    "WIKIDATA_STATEMENT_STAMP_KEYS",
+    "WIKIDATA_STATEMENT_STAMP_KEYS", "duplicate_addresses",
+    "duplicate_address_stamps", "DUPLICATE_ADDRESS_STAMP_KEYS",
 ]
 
 # The pointer document's _id. A build_id can never collide with it because
@@ -182,11 +191,21 @@ WIKIDATA_STATEMENT_STAMP_KEYS: tuple[str, ...] = (
 )
 
 
+# Gap 14: the addresses marked a duplicate of another, and where each one's
+# links go. A new or lifted mark changes which frames exist and where links
+# point, so it rebuilds the graph like any other layer's stamps.
+DUPLICATE_ADDRESS_STAMP_KEYS: tuple[str, ...] = (
+    "duplicate_addresses", "duplicate_addresses_digest",
+)
+
+
 class KGStore(MongoStoreBase):
-    """Owner of ``kg_nodes``, ``kg_edges`` and ``kg_builds``; reads ``entries``."""
+    """Owner of ``kg_nodes``, ``kg_edges`` and ``kg_builds``; reads
+    ``entries``, and ``urls`` for the duplicate marks."""
 
     def _configure(self) -> None:
         self.entries = self.collection("MONGODB_ENTRIES_COLLECTION", "entries")
+        self.urls = self.collection("MONGODB_URLS_COLLECTION", "urls")
         self.nodes = self.collection("MONGODB_KG_NODES_COLLECTION", "kg_nodes")
         self.edges = self.collection("MONGODB_KG_EDGES_COLLECTION", "kg_edges")
         self.builds = self.collection("MONGODB_KG_BUILDS_COLLECTION", "kg_builds")
@@ -222,8 +241,16 @@ class KGStore(MongoStoreBase):
 
     # -- selection ----------------------------------------------------------
 
+    def duplicate_addresses(self) -> dict[str, str]:
+        """{address: kept address} for every address the scrape stage marked
+        a duplicate of another (gap 14)."""
+        return {d["url"]: d["duplicate_of"] for d in self.urls.find(
+            {"duplicate_of": {"$ne": None}},
+            {"_id": 0, "url": 1, "duplicate_of": 1})}
+
     def snapshot(self, namespaces: Iterable[str] | None = None,
-                 ready_only: bool = False, limit: int = 0) -> dict[str, Any]:
+                 ready_only: bool = False, limit: int = 0,
+                 exclude_urls: Iterable[str] = ()) -> dict[str, Any]:
         """Freeze the corpus generation this build will read.
 
         ``parse_store.build_entry_doc`` stamps ``parsed_at`` at write time,
@@ -231,11 +258,18 @@ class KGStore(MongoStoreBase):
         ``parsed_at`` and is invisible to this build — and its newer stamp
         makes the next build pick it up. That is what makes the snapshot
         consistent without a transaction.
+
+        ``exclude_urls`` are left out — the duplicate addresses, whose
+        entries the parse stage retires, so a build is right even before it
+        has.
         """
         snapshot_at = now_utc()
         query: dict[str, Any] = {"parsed_at": {"$lte": snapshot_at}}
         if ready_only:
             query["corpus_status"] = "ready"
+        excluded = list(exclude_urls)
+        if excluded:
+            query["url"] = {"$nin": excluded}
 
         cursor = self.entries.find(query, {"_id": 1, "parser_version": 1,
                                            "corpus_policy_version": 1,
@@ -280,10 +314,14 @@ class KGStore(MongoStoreBase):
             {"_id": {"$in": entry_ids}, "parsed_at": {"$lte": snapshot_at}},
             ENTRY_PROJECTION)
 
-    def iter_field(self, field: str, snapshot_at) -> Iterator[dict]:
+    def iter_field(self, field: str, snapshot_at,
+                   exclude_urls: Iterable[str] = ()) -> Iterator[dict]:
         """Stream one field across the whole snapshot, for the census."""
-        yield from self.entries.find(
-            {"parsed_at": {"$lte": snapshot_at}}, {"_id": 0, field: 1})
+        query: dict[str, Any] = {"parsed_at": {"$lte": snapshot_at}}
+        excluded = list(exclude_urls)
+        if excluded:
+            query["url"] = {"$nin": excluded}
+        yield from self.entries.find(query, {"_id": 0, field: 1})
 
     # -- build lifecycle ----------------------------------------------------
 
@@ -323,7 +361,8 @@ class KGStore(MongoStoreBase):
                     "entries_count", "parser_versions",
                     "corpus_policy_versions", "max_parsed_at",
                     *EVENT_STAMP_KEYS, *ENTITY_STAMP_KEYS, *TEMPLATE_STAMP_KEYS,
-                    *FRAME_IMAGE_STAMP_KEYS, *WIKIDATA_STATEMENT_STAMP_KEYS):
+                    *FRAME_IMAGE_STAMP_KEYS, *WIKIDATA_STATEMENT_STAMP_KEYS,
+                    *DUPLICATE_ADDRESS_STAMP_KEYS):
             if stamps.get(key) != published.get(key):
                 return True, (f"{key} changed: "
                               f"{published.get(key)!r} -> {stamps.get(key)!r}")
@@ -596,10 +635,11 @@ def get_store(uri: str | None = None, db_name: str | None = None) -> KGStore:
 # Facade functions — the only calls the KG DAG makes (dom_store style)
 # ---------------------------------------------------------------------------
 
-def snapshot(namespaces=None, ready_only: bool = False, limit: int = 0) -> dict:
+def snapshot(namespaces=None, ready_only: bool = False, limit: int = 0,
+             exclude_urls: Iterable[str] = ()) -> dict:
     with get_store() as store:
         snap = store.snapshot(namespaces=namespaces, ready_only=ready_only,
-                              limit=limit)
+                              limit=limit, exclude_urls=exclude_urls)
         log.info("KG snapshot: %d entries at %s",
                  snap["entries_count"], snap["snapshot_at"])
         return snap
@@ -636,9 +676,24 @@ def iter_entries(entry_ids: list[str], snapshot_at):
         yield from store.iter_entries(entry_ids, snapshot_at)
 
 
-def iter_field(field: str, snapshot_at):
+def iter_field(field: str, snapshot_at, exclude_urls: Iterable[str] = ()):
     with get_store() as store:
-        yield from store.iter_field(field, snapshot_at)
+        yield from store.iter_field(field, snapshot_at, exclude_urls)
+
+
+def duplicate_addresses() -> dict[str, str]:
+    """{address: kept address} — see KGStore.duplicate_addresses."""
+    with get_store() as store:
+        return store.duplicate_addresses()
+
+
+def duplicate_address_stamps(kept_for: Mapping[str, str]) -> dict[str, Any]:
+    """How many addresses are marked, and a digest of the whole map: a mark
+    that moves to another kept address changes the graph without changing
+    the count. See DUPLICATE_ADDRESS_STAMP_KEYS."""
+    lines = "\n".join(f"{a} {k}" for a, k in sorted(kept_for.items()))
+    return {"duplicate_addresses": len(kept_for),
+            "duplicate_addresses_digest": hashlib.sha256(lines.encode()).hexdigest()}
 
 
 def events_for(entry_ids: list[str], snapshot_at) -> dict[str, list[dict]]:
