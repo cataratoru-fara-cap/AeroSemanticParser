@@ -33,9 +33,8 @@ mapping files or data:
 | `mk:` | `https://meme4.science/atlas/` | MemeAtlas |
 | `skos:`, `rdfs:`, `rdf:`, `xsd:` | W3C | |
 
-The `mk:` IRI is a sub-path of IMKG's own domain. **IMKG's authors must agree
-to it before publication.** If they don't, changing it takes one constant in
-`rdf.py` plus the prefix lines in the mapping and ontology files.
+The `mk:` IRI is a sub-path of IMKG's own domain. **IMKG's authors have agreed
+to it** (2026-10-06; gap 01, closed).
 
 ## Crosswalk
 
@@ -549,8 +548,8 @@ largest generic regions per template reach the graph; the rest stays in
 not kept, imgflip popularity, and the featured flag (property graph only).
 
 `mk:template/<id>` is the graph's second minted IRI for derived content,
-after `mk:event/<id>`, and falls under gap 01 (the `mk:` namespace needs
-IMKG's authors' agreement) like every other `mk:` term.
+after `mk:event/<id>`, in the `mk:` namespace IMKG's authors agreed to
+(gap 01, closed 2026-10-06), like every other `mk:` term.
 
 ## Frame images and Wikidata statements (7.1.0)
 

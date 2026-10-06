@@ -7,8 +7,9 @@ it's true, why it matters, and what fixing it looks like. Not urgent by
 definition — if it were, it would have been fixed instead of noted — but real,
 and each one gets worse the longer it sits.
 
-- [01-mk-namespace-needs-agreement.md](01-mk-namespace-needs-agreement.md) —
-  the MemeAtlas RDF namespace sits under IMKG's own domain without sign-off.
+- ~~[01-mk-namespace-needs-agreement.md](01-mk-namespace-needs-agreement.md)~~ **(closed 2026-10-06)** —
+  the MemeAtlas RDF namespace sits under IMKG's own domain; IMKG's authors have
+  agreed to it.
 - ~~[02-category-class-casing-unverified.md](02-category-class-casing-unverified.md)~~ **(closed 2026-09-30)** —
   `kym:<Category>` IRIs were a guess at IMKG's casing; verified byte-equal
   from IMKG's own scraper and mapping, and against every stored page.

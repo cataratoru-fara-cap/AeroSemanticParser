@@ -36,8 +36,7 @@
 # the term, which is the layout that test relies on.
 #
 # The namespace https://meme4.science/atlas/ sits under the domain IMKG's
-# m4s: vocabulary uses. That is to be agreed with IMKG's authors before
-# publication.
+# m4s: vocabulary uses, with IMKG's authors' agreement (2026-10-06).
 
 @prefix mk:     <https://meme4.science/atlas/> .
 @prefix m4s:    <https://meme4.science/> .

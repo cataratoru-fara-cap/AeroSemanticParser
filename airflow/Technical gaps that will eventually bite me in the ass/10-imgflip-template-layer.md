@@ -89,7 +89,7 @@ than the rest of the graph, on purpose or by necessity:
       (`text_link_ok`: 19/38 right before, 12/14 after).
 - [x] Pool cap: NONE (Gabi, 2026-09-29). Every frame keeps its 1-10.
       See "Throughput" below.
-- [ ] Ask IMKG's authors about `mk:template/` along with gap 01.
+- [x] Ask IMKG's authors about `mk:template/` along with gap 01 (agreed with the `mk:` namespace, 2026-10-06).
 
 ## Throughput (measured 2026-09-29, 300-frame run + 200-template pilot)
 
