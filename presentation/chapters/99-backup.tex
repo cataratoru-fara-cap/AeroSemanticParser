@@ -80,14 +80,15 @@
       PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema\#>\\
       PREFIX m4s:  <https://meme4.science/>\\
       SELECT ?sibling ?title WHERE \{\\
-      \hspace*{2mm}<https://knowyourmeme.com/memes/doge>\\
+      \hspace*{2mm}?doge m4s:title "Doge" ;\\
       \hspace*{6mm}rdfs:seeAlso ?sibling .\\
       \hspace*{2mm}?sibling m4s:title ?title .\\
       \}}
   \end{columns}
   \note{If there is time: a live demo. Neo4j Browser with the shared stylesheet --- the Doge query
   draws the graph of chapter 8. The SPARQL query is the one IMKG itself would write for an
-  entry's siblings; it runs unchanged on MemeAtlas.}
+  entry's siblings; it runs unchanged on MemeAtlas. It finds Doge by his title: his IRI is KYM's new
+  address since 7.1.0 (chapter 2), not IMKG's kym:doge.}
 \end{frame}
 
 \begin{frame}{Backup: the numbers behind the slides}
@@ -98,5 +99,5 @@
   Facts that come from documents --- IMKG's paper, the review measurements --- are in
   {\ttfamily chapters/facts.tex}, each with its source.
   \note{If someone asks where a number comes from: this. Re-running the three scripts against the
-  7.1.0 build updates every chart and number in the deck.}
+  live build updates every chart and number in the deck.}
 \end{frame}

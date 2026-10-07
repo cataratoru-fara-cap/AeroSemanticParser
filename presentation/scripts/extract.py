@@ -101,11 +101,62 @@ out["top_image_items"] = cy(
 out["layers"] = cy(
     "MATCH (f:Frame {build_id: $b}) "
     "WITH f, EXISTS { (f)-[:fromTitle|fromTags|fromAbout]->() } AS wd, "
-    "     EXISTS { (f)-[:hasTemplate]->() } AS tpl, EXISTS { (f)-[:hasEvent]->() } AS ev "
+    "     EXISTS { (f)-[:hasTemplate]->() } AS tpl, EXISTS { (f)-[:hasEvent]->() } AS ev, "
+    "     EXISTS { (f)-[:fromImage]->() } AS img "
     "RETURN count(*) AS frames, sum(CASE WHEN wd THEN 1 ELSE 0 END) AS with_wikidata, "
     "sum(CASE WHEN tpl THEN 1 ELSE 0 END) AS with_template, sum(CASE WHEN ev THEN 1 ELSE 0 END) AS with_events, "
+    "sum(CASE WHEN img THEN 1 ELSE 0 END) AS with_image_items, "
     "sum(CASE WHEN wd AND tpl AND ev THEN 1 ELSE 0 END) AS with_all, "
-    "sum(CASE WHEN NOT wd AND NOT tpl AND NOT ev THEN 1 ELSE 0 END) AS with_none", **B)[0]
+    "sum(CASE WHEN NOT wd AND NOT tpl AND NOT ev THEN 1 ELSE 0 END) AS with_none, "
+    "sum(CASE WHEN wd AND tpl AND ev AND img THEN 1 ELSE 0 END) AS with_all4, "
+    "sum(CASE WHEN NOT wd AND NOT tpl AND NOT ev AND NOT img THEN 1 ELSE 0 END) AS with_none4", **B)[0]
+
+# -- 7.1.0: what each entry's own image shows, and Wikidata's facts -------------
+in_build = {r["id"] for r in cy("MATCH (f:Frame {build_id: $b}) RETURN f.id AS id", **B)}
+fi = {"read": 0, "regions": 0, "named": 0}
+for d in db.frame_image_entities.find({}, {"detection.regions.named": 1}):
+    if d["_id"] in in_build:
+        regions = (d.get("detection") or {}).get("regions") or []
+        fi["read"] += 1
+        fi["regions"] += len(regions)
+        fi["named"] += sum(1 for r in regions if r.get("named"))
+fi["failed"] = sum(1 for d in db.frame_image_entity_failures.find({}, {"_id": 1}) if d["_id"] in in_build)
+fi["graph"] = cy("MATCH (f:Frame {build_id: $b})-[r:fromImage]->(e) "
+                 "RETURN count(DISTINCT f) AS frames, count(r) AS edges, count(DISTINCT e) AS items", **B)[0]
+summary = db.run_summaries.find_one({"stage": "frame_images"}, sort=[("created_at", -1)]) or {}
+fi["blind_audit"] = json.loads(summary.get("summary_json") or "{}").get("corpus", {}).get("blind_audit")
+out["frame_images"] = fi
+out["top_frame_image_items"] = cy(
+    "MATCH (f:Frame {build_id: $b})-[:fromImage]->(e:WikidataEntity) "
+    "RETURN e.label AS label, e.qid AS qid, count(DISTINCT f) AS frames ORDER BY frames DESC LIMIT 15", **B)
+out["wikidata_linked"] = cy(
+    "MATCH (e:WikidataEntity {build_id: $b}) WHERE EXISTS { (:Frame)-->(e) } OR EXISTS { (:Template)-->(e) } "
+    "RETURN count(e) AS n", **B)[0]["n"]
+out["statements"] = cy(
+    "MATCH (s:WikidataEntity {build_id: $b})-[r]->(:WikidataEntity) WHERE type(r) =~ 'P[0-9]+' "
+    "RETURN count(r) AS statements, count(DISTINCT s) AS items, count(DISTINCT type(r)) AS properties", **B)[0]
+
+# IMKG's four questions: its paper's Table 4, the Kypher match clauses word for word
+# (KGTK Use Cases.ipynb gives the aggregates). kym:Meme is category 'meme' here.
+Q5, FILM = "Q5", "Q11424"
+out["paper_queries"] = {
+    "spongebob": cy("MATCH (h:Frame {build_id: $b, category: 'meme'})-[:fromImage]->"
+                    "(:WikidataEntity {build_id: $b, qid: 'Q83279'}) RETURN count(DISTINCT h) AS memes", **B)[0],
+    "spongebob_via_templates": cy(
+        "MATCH (h:Frame {build_id: $b, category: 'meme'})-[:hasTemplate]->(:Template)-[:fromImage]->"
+        "(:WikidataEntity {build_id: $b, qid: 'Q83279'}) RETURN count(DISTINCT h) AS memes", **B)[0],
+    "people": cy("MATCH (h:Frame {build_id: $b, category: 'meme'})-[r]->(p:WikidataEntity)-[:P31]->"
+                 "(:WikidataEntity {build_id: $b, qid: $q}) "
+                 "RETURN p.qid AS qid, p.label AS person, count(r) AS edges, count(DISTINCT h) AS memes "
+                 "ORDER BY edges DESC LIMIT 10", q=Q5, **B),
+    "films": cy("MATCH (h:Frame {build_id: $b})-[:fromAbout]->(t:WikidataEntity)-[:P31]->"
+                "(:WikidataEntity {build_id: $b, qid: $q}) "
+                "RETURN count(DISTINCT h) AS frames, count(DISTINCT t) AS films", q=FILM, **B)[0],
+    "gender": cy("MATCH (p:WikidataEntity {build_id: $b})-[:P21]->(g:WikidataEntity) "
+                 "WHERE EXISTS { ()-->(p) } "
+                 "RETURN g.qid AS qid, g.label AS gender, count(DISTINCT p) AS people "
+                 "ORDER BY people DESC LIMIT 8", **B),
+}
 out["metagraph"] = cy(
     "MATCH (a:KGNode {build_id: $b})-[r]->(c:KGNode) "
     "RETURN a.kind AS src, type(r) AS rel, c.kind AS dst, count(*) AS n", **B)
@@ -199,6 +250,13 @@ for t in ft.get("selected") or []:
     sel.append({**{k: t.get(k) for k in ("template_id", "R", "method", "mmr_rank", "s_text", "s_vis", "s_rank")},
                 "members": [{"id": mid, "name": (names.get(mid) or {}).get("name")} for mid in t.get("members") or []],
                 **(names.get(t["template_id"]) or {}), "regions": regions, "links": links})
+fim = db.frame_image_entities.find_one({"_id": EXAMPLE}) or {}
+ex["frame_image"] = {
+    "image_url": fim.get("image_url"),
+    "regions": [{k: r.get(k) for k in ("kind", "name", "text", "named", "box", "confidence")}
+                for r in (fim.get("detection") or {}).get("regions") or []],
+    "links": [{k: lm.get(k) for k in ("text", "qid", "label", "score", "method", "in_graph")}
+              for lm in (fim.get("links") or {}).get("mentions") or []]}
 ex["templates"] = {"candidates": len(ft.get("candidates") or []), "queries": ft.get("queries"),
                    "pages_fetched": ft.get("pages_fetched"), "accepted_groups": ft.get("accepted_groups"),
                    "gold": ft.get("gold"), "selected": sel, "best_rejected": ft.get("best_rejected")}

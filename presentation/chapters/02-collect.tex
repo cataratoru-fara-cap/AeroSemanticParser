@@ -15,7 +15,7 @@ from the site's index to our disk, the twin we found on the way, and the whole c
       go/.style={-{Stealth[length=2.8mm]}, line width=1.3pt, draw=gmBase, shorten <=1.5mm, shorten >=1.5mm},
       lab/.style={font=\small\bfseries, text=gm@col@collect!85!gmInk, fill=gmSurface, inner sep=1pt}]
     \foreach \i/\ic/\n/\w in {0/\faSitemap/{the index}/{{\ttfamily /\NDogeAddress}\\changed \NDogeLastmod},
-                              1/\faAddressBook/{address book}/{section {\itshape memes},\\confirmed},
+                              1/\faAddressBook/{address book}/{section {\itshape \NDogeSection},\\confirmed},
                               2/\faCloudDownload*/ScrapingAnt/{1 credit,\\no browser},
                               3/\faCode/{the page}/{\textbf{\NDogeRawKB\ KB} of HTML,\\as the server sends it},
                               4/\faArchive/{our copy}/{\textbf{\NDogeStoredKB\ KB}, zipped,\\fingerprinted}} {
@@ -28,7 +28,7 @@ from the site's index to our disk, the twin we found on the way, and the whole c
                         {\includegraphics[height=1.1cm]{figures/img/doge}};}] (doge) at (0,1.55) {};
     \node[lab, above=1mm of s2] {fetched \NDogeFetched};
   \end{tikzpicture}
-  \vskip4mm
+  \vskip0mm
   \begin{tikzpicture}[x=1cm, y=1cm]
     \node[fill=gmTint, rounded corners=2mm, inner sep=2.8mm, text width=13.6cm, align=left] {
       \gmwhy{ScrapingAnt, at its cheapest.}\enspace\normalsize Monthly credits: the page as the server
@@ -39,7 +39,7 @@ from the site's index to our disk, the twin we found on the way, and the whole c
     \item Layman version: we look Doge up in the site's own index, download the page once, and keep
       a copy, the way a library keeps a copy of a book.
     \item The index: Know Your Meme's sitemap lists every page with the date it last changed ---
-      18 June 2026 for Doge. Discovery (kym\_discovery) reads it every month and files each address
+      9 July 2026 for Doge, at the address KYM gives him today (next stop). Discovery (kym\_discovery) reads it every month and files each address
       in our address book (Mongo, collection urls) with its section --- memes, people, events --- and
       whether KYM's editors confirmed it.
     \item The fetch (kym\_scrape) goes through ScrapingAnt, a scraping service that gets past the
@@ -48,8 +48,8 @@ from the site's index to our disk, the twin we found on the way, and the whole c
       already holds every paragraph, link and image address, and what a browser would add is ads
       and analytics. So: 1 credit, about 40k credits for the whole corpus; failed calls are not
       billed.
-    \item We fetched Doge on 10 July: 364 KB of HTML (menus and ad slots included, not run), kept
-      compressed (79 KB) with a SHA-256 fingerprint, so a page that did not change is never re-read.
+    \item We fetched Doge on 9 September: \NDogeRawKB\ KB of HTML (menus and ad slots included, not
+      run), kept compressed (\NDogeStoredKB\ KB) with a SHA-256 fingerprint, so a page that did not change is never re-read.
     \item Why keep the page at all: to re-read it later with a better parser, without asking the
       site --- or paying --- again.
   \end{itemize}}
@@ -91,7 +91,7 @@ from the site's index to our disk, the twin we found on the way, and the whole c
     \item Found while preparing this talk: Doge was in the graph twice. In July KYM moved him into
       its ``sensitive'' section, \texttt{/sensitive/memes/doge} --- and the old address still opens.
       Discovery keeps every address it ever found, so we had both, each parsed, linked and drawn.
-    \item 835 entries like that; 813 were two frames in the published graph. 811 had been moved
+    \item 835 entries like that; 813 were two frames in the graph until 7.1.0. 811 had been moved
       into ``sensitive'', 24 moved back out or renamed.
     \item The rule: no two entries hold the same name; keep the most recently discovered address.
       Discovery never recorded when it found an address, so the date comes from KYM itself: every
@@ -100,8 +100,8 @@ from the site's index to our disk, the twin we found on the way, and the whole c
     \item A step at the end of collection, every month. Parse drops the duplicates (24,291 $\to$
       23,477 entries); the graph sends their links to the kept address --- KYM's pages still link
       the old ones, 16,008 times.
-    \item The numbers in the rest of the talk are the published graph (7.0.0), duplicates
-      included; 7.1.0 is the first graph without them.
+    \item The numbers in the rest of the talk are the published graph, \NVersion: the first that
+      holds each entry once.
   \end{itemize}}
 \end{frame}
 
@@ -128,8 +128,9 @@ from the site's index to our disk, the twin we found on the way, and the whole c
       the others are submissions the editors have not confirmed --- we keep their addresses, we do
       not fetch them.
     \item 25,016 pages stored, 6.86 GB of HTML, 1.41 GB on disk. 42 failures: 34 for good (gone,
-      forbidden), 8 to retry. 24,291 entries parsed: the 709 others are photo galleries, videos and
-      articles living under the same addresses (next chapter).
+      forbidden), 8 to retry. \NEntries\ entries parsed; \NParseFailures\ pages are photo galleries,
+      videos and articles living under the same addresses (next chapter), and \FDupRetired\ were an
+      entry's second address (the previous stop).
     \item Never pay twice: work is split into chunks, and a chunk re-checks Mongo before fetching,
       so if Airflow retries it, pages already bought are skipped.
     \item Never lose a good copy: two kinds of failure, retry (timeouts, overload) or give up (404,

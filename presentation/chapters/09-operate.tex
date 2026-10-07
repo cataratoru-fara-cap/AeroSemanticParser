@@ -103,8 +103,8 @@ monthly chain, the machine it runs on and the rules that made it hold, and how i
     \item Dead letters: parse, event and template failures are stored with their reason, and not
       retried until something relevant changes.
     \item Models on record: every output names the model that produced it, so the graph never
-      mixes readings without saying so. The shared GPUs shaped everything: reading 36,673 stories
-      and 26,868 pictures took days, one call at a time, so every step had to survive
+      mixes readings without saying so. The shared GPUs shaped everything: reading \NSections\ stories,
+      \NTemplates\ templates and \NFrameImages\ entries' own pictures took days each, one call at a time, so every step had to survive
       interruption and resume where it stopped.
   \end{itemize}}
 \end{frame}
@@ -147,8 +147,8 @@ monthly chain, the machine it runs on and the rules that made it hold, and how i
       fix. Several chapters today closed one.
     \item After every publish, kg/metrics.py measures the IMKG-comparable core: no isolated node, no
       duplicate edge, no cycle in any series chain; and the RDF derived independently through the
-      mapping equals the published RDF. Worth knowing: 26\% of series parents are pages not in
-      the corpus (they exist as stubs); 18.8\% of entries have no entry type on KYM.
+      mapping equals the published RDF. Worth knowing: \NUnresolvedPct\% of series parents are pages not
+      in the corpus (they exist as stubs); \NNoTypePct\% of entries have no entry type on KYM.
     \item Versions follow semantic versioning: a renamed term breaks queries, so 7.0.0 is major
       (relatesToMeme became citesMediaFrame); a new layer only adds, so 7.1.0 is minor. The build
       compares every input's stamp with the published build's: nothing changed, nothing rebuilt.

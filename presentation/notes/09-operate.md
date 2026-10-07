@@ -40,7 +40,7 @@ next; a run started by hand never builds the graph unless asked (tested in
 - **Run summaries:** every run writes one; the dashboard reads them (progress,
   coverage, failures, timings).
 - **Shared GPUs:** one call at a time on the lab's servers; backfills took days
-  (36,673 stories, 26,868 template images; 24,291 frame images in progress), so
+  (35,358 stories, 26,868 template images, 23,438 entries' own images), so
   every step had to survive interruption.
 
 ## Quality

@@ -13,8 +13,9 @@ when, where, who — each keeping the sentence it came from.
 2005-06-24 Homestar Runner says "d-o-g-e" · 2010-10-28 a Reddit /r/Ads post ·
 Apr 2012 a Tumblr audio "adventure game" · (no date) the blog Your Daily Doge ·
 2012-05-07 a YouTube fake Pokémon battle · (no date) 4chan /v/ doge threads ·
-May 2012 Tumblr "Polite Doge" · Aug 2012 the blog F--k Yeah Doge · 2012 Shiba
-Confessions, "shibes" · Dec 2012 /r/DogsIWannaHug · Dec 2012 Cheezburger
+May 2012 Tumblr "Polite Doge" · Aug 2012 the blog F--k Yeah Doge · (no date)
+Shiba Confessions, "shibes" — the page at Doge's old address gave it 2012, from
+"the growth in the summer of 2012" · Dec 2012 /r/DogsIWannaHug · Dec 2012 Cheezburger
 "Schnauze" · 2013-01-08 /r/Doge created · May 2013 /r/dailydoge · Jul 2013 the
 blog shibe-doge · 2013-07-29 a 4chan /s4s/ thread with 600 replies · 2013-11-20
 YouTube's Comic Sans easter egg.
@@ -25,10 +26,10 @@ KwandaoRen66 (actor), confirmed. (The 2010 /r/Ads title contains a swear word �
 avoided on the slide.)
 
 ## Numbers
-- 36,673 sections (Origin 18,458, Spread 18,215) → 142,787 events; 18,773
-  entries have events (77.3% of entries; 18,827 have a story at all), 7.6 each.
+- 35,358 sections (Origin 17,798, Spread 17,560) → 137,496 events; 18,096
+  entries have events (77.1% of entries; 18,148 have a story at all), 7.6 each.
 - Dates: 64% to the day, 6% to the month, 5% to the year, 26% undated. Places:
-  71% a platform. Certainty: confirmed 140,998, unconfirmed 1,738, disputed 50,
+  71% a platform. Certainty: confirmed 135,787, unconfirmed 1,659, disputed 49,
   debunked 1.
 - Model: ministral-3:14b on the lab's Ollama (ollama-ccdd); 14 failures.
 

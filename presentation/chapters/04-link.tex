@@ -186,11 +186,11 @@ links are kept, and how the keeping rules were chosen.}
       words like ``popularity'' or ``the term''; platforms and meme formats are kept; a link both a
       tag and the text agree on is kept; About-only body parts, measures and generic words are
       dropped.
-    \item The rest --- 109,569 links on 22,988 pages --- go to an LLM judge: ministral-3:14b,
+    \item The rest --- \NCurJudged\ links on \NCurFramesJudged\ pages --- go to an LLM judge: ministral-3:14b,
       running on the lab's GPU server. It is extractive: it sees each item's label, description and
       the words it was read from, and can only classify. It answers a role, which makes it commit
       to why. A keep based on the About alone must be confirmed by the same model asked in a
-      second wording (6,214 overturned).
+      second wording (\NCurConfirmOverturned\ overturned).
     \item Doge: monologue kept as a format; ``doges'' had been linked to the doge of Venice and
       ``Sato'' to a Puerto Rican slang word --- wrong senses, dropped; Donald Trump appears because
       of the DOGE department --- incidental, dropped.

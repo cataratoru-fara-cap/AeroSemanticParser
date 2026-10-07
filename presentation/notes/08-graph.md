@@ -14,23 +14,29 @@ live.
 ## Doge as a graph (the first KG_QUERIES query, drawn from the live graph)
 Up: its series (Interior Monologue Captioning → Image Macros → Memes). Upper
 left: its children (Doge 2 / Caesar, Ironic Doge Memes, Shiba Inus / Shibes, The
-Death of Kabosu / Doge). Left, dashed: its 8 siblings. (7.0.0 also lists Doge's
-own "sensitive" twin among them — Doge is two frames there, fixed since,
-chapter 2 — so the drawing leaves the twin out: it is the same entry, and in
-7.1.0 it is gone and Doge's frame is the `/sensitive/` address. This is what
-"looked off" in the first draft.) Right: Wikidata items. Lower right: its 8
+Death of Kabosu / Doge). Left, dashed: its 8 siblings. (7.0.0 also listed
+Doge's own "sensitive" twin among them — Doge was two frames there; 7.1.0 holds
+him once, at the `/sensitive/` address, chapter 2. This is what "looked off" in
+the first draft.) Right: Wikidata items. Lower right: its 8
 templates and what their images show — some are the same items the text names
 (Shiba Inu, Doge): text and picture agree. Bottom: 16 events in one chain. Lower
-left: 5 entry types and 21 tags. In total 379 edges touch Doge.
+left: 5 entry types and 21 tags. In total 372 edges touch Doge (2 of them, new
+in 7.1.0, from his own picture: a dog and a flower — not drawn).
 
-## Numbers (KG 7.0.0, build kg_20261002T170459Z_manual, published 2 Oct 2026)
-795,711 nodes · 2,564,089 edges · 26 relation types · 8,790,369 RDF triples.
-Nodes by kind: external pages 257,031 · images 202,390 · events 142,787 · tags
-101,883 · Wikidata items 26,897 · templates 26,868 · frames 24,291 · frame
-stubs 7,631 · origins 5,703 · entry types 119 · regions 110 · badges 1.
-Biggest relations: sharesSameSeries 679,392 (derived) · citesExternal 244,297 ·
-hasTag 225,943 · citesMediaFrame 215,295 · hasImage 192,518 · hasEvent 142,787 ·
-nextInStory 124,014.
+## Numbers (KG 7.1.0, build kg_20261007T101123Z_manual, published 7 Oct 2026)
+1,034,968 nodes · 3,185,248 edges · 26 relation types plus 1,168 Wikidata
+properties · 9,672,008 RDF triples.
+Nodes by kind: Wikidata items 272,304 (28,374 linked from an entry or a template;
+the rest are values of their statements) · external pages 257,032 · images
+202,347 · events 137,496 · tags 101,882 · templates 26,868 · frames 23,477 ·
+frame stubs 7,629 · origins 5,703 · entry types 119 · regions 110 · badges 1.
+Biggest relations: Wikidata statements 696,194 (P31 instance of 40,434, P106
+occupation 30,039, P161 cast member 27,226 …) · sharesSameSeries 631,311
+(derived) · citesExternal 235,803 · hasTag 217,912 · citesMediaFrame 206,628 ·
+hasImage 185,270 · hasEvent 137,496 · nextInStory 119,400 · fromImage 84,121
+(39,544 from entries' own pictures, 44,577 from templates).
+Compared with 7.0.0 (795,711 nodes, 2,564,089 edges, 8,790,369 triples): the
+statements and pictures added, the 813 duplicate entries gone.
 
 ## Design decisions — the why
 - **IMKG's words, kept.** Where IMKG has a term, it is used verbatim: m4s:title,
@@ -59,7 +65,7 @@ nextInStory 124,014.
   a torn publish fails loudly.
 - **An independent second derivation.** `kym_kg_validate` re-derives the RDF
   from the CSVs through the YARRRML mapping (yatter → morph-kgc) and diffs it
-  with graph.nt: 8,790,365 vs 8,790,369 — equal but for the 4 provenance triples.
+  with graph.nt: 9,672,004 vs 9,672,008 — equal but for the 4 provenance triples.
   Two implementations agreeing is the strongest check that the mapping
   documentation is true.
 - **Staleness and versions.** The build stamps every input version; nothing

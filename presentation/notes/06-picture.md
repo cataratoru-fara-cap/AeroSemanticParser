@@ -22,12 +22,12 @@ shows — linked to Wikidata, like the text.
   Musk (Q317521) holding Doge.
 
 ## Numbers
-- 18,823 entries searched; 8,368 got templates (44%); 8,915 got no result
+- 18,144 entries searched; 8,001 got templates (44%); 8,660 got no result
   (most likely entries that are not picture memes — people, events, sites);
-  1,540 only below-threshold candidates.
+  1,483 only below-threshold candidates.
 - 145,498 candidates seen → 10,261 near-copies merged → 26,868 templates kept;
-  29,885 entry–template links (29,106 by search, 779 from KYM's own link).
-  Per entry: 1 to 10 (3,126 entries have exactly one; 982 have ten).
+  28,397 entry–template links (27,654 by search, 743 from KYM's own link).
+  Per entry: 1 to 10 (3,012 entries have exactly one; 935 have ten).
 - 26,818 images read, 50 failures (38 the model repeating itself, 11 cut off,
   1 bad image). 116,549 regions: object 40,164 · person 30,603 · text 27,426 ·
   character 9,657 · animal 5,026 · artwork 2,717 · logo 956. 20,660 named.

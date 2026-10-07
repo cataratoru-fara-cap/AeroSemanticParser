@@ -86,16 +86,16 @@ sees in them, and how the templates are found for every entry.}
   \note{
   \begin{itemize}
     \item IMKG linked templates to 96 entries, by hand and by title similarity. MemeAtlas searches
-      imgflip for every meme's title (18,823 entries) and scores each candidate: name similarity,
+      imgflip for every meme's title (\NFramesSearched\ entries) and scores each candidate: name similarity,
       the picture compared with the entry's own images, the search rank, imgflip's own pick.
     \item KYM's own link is the answer key: with it hidden, the search still finds the linked
       template in the top 10 for 78.7\% of entries (top 1: 51.3\%).
     \item ``The same picture'' is a perceptual fingerprint: resized, re-encoded, mirrored and
-      letterboxed copies merge (10,261 merged); crops and edits stay apart --- a known limit.
+      letterboxed copies merge (\NMerged\ merged); crops and edits stay apart --- a known limit.
     \item Most varied first: ten templates are not ten copies of one picture.
-    \item 8,368 entries got templates (44\%): 8,915 had no imgflip result --- mostly entries that
-      are not picture memes --- and 1,540 only weak candidates. 26,868 templates kept; 26,818 read
-      by the vision model, 50 failures; 116,549 regions, 20,660 named. Precision about 0.95 on
+    \item \NFramesSelected\ entries got templates (\NFramesSelectedPct\%): \NNoResults\ had no imgflip result --- mostly
+      entries that are not picture memes --- and \NBelowThreshold\ only weak candidates. \NTemplates\ templates
+      kept; \NRead\ read by the vision model, \NReadFailed\ failures; \NRegions\ regions, \NNamed\ named. Precision about 0.95 on
       contact sheets (read by Claude, not yet by a person --- say it).
     \item Politeness is a design constraint: imgflip's terms allow only its public pages, so about
       one request a second, never its internal search API, which would be 40 times faster.

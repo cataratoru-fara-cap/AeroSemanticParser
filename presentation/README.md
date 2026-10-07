@@ -48,10 +48,22 @@ next slide. A move is a run of pages that advance on their own (each shows for
 0.045 s), so the viewer has to draw each page within that time --- or have drawn
 it beforehand.
 
-- **pdfpc** (recommended): `pdfpc --notes=right presenter.pdf` --- slides on the
-  projector, notes and the next slide on your screen. It draws every page ahead
-  of time when it starts, so the moves play smoothly. A move and the stop it lands
-  on share one slide number, so any forward key plays the next move.
+- **pdfpc** (recommended, 4.5 or later): `pdfpc --notes=right presenter.pdf` ---
+  slides on the projector, notes and the next page on your screen. Copy `pdfpcrc`
+  to `~/.config/pdfpc/pdfpcrc` first. Out of the box pdfpc draws each moving page
+  live, up to four times (projector, current, next, notes), and adds that time to
+  the page's: a 45 ms frame took 330 ms. With `pdfpcrc` it draws the next move
+  while you talk at a stop (ready about 4 s after you arrive) and plays it from
+  memory at the designed pace: presenter.pdf asks for 34 ms a frame, and pdfpc's
+  own ~11 ms make up the 45 (`scripts/world.py`; measured 40--49 ms). Memory:
+  pdfpc keeps a drawn page for 5 minutes, about 20 MB at 1440p (14 MB at 1080p):
+  2--3 GB at a talk's pace, more when clicking fast through a rehearsal. On a
+  machine short of memory, delete the `cache-max-usize` line: pages are then kept
+  compressed (about 0.5 MB each) and the moves play somewhat slower.
+  **Before the talk**, once both windows are up, press End, Home, then Ctrl+T
+  (resets the clock): pdfpc leaves the notes view undrawn until the first page
+  change, and the first move would draw it live. Any forward key plays the next
+  move.
 - **Okular**: `slides.pdf`, in presentation mode (View → Presentation,
   Ctrl+Shift+P). Outside presentation mode Okular ignores the page durations and
   every page of a move needs its own key press. Okular draws a page only when it
@@ -99,14 +111,11 @@ docker exec -w /app kym_dashboard python /tmp/stages.py > data/stages.json   # t
 python3 scripts/figures.py     # -> figures/generated/*.tex, figures/img/*
 ```
 
-`extract.py` reads the live build unless given a build id. **For 7.1.0**, once it
-is published: run the three commands, rebuild, then fill the MemeAtlas column of
-"IMKG's four questions" (chapter 11) and update `chapters/facts.tex` (7.1.0
-section). Doge's frame moves with 7.1.0 (gap 14, chapter 2): it is
-`/sensitive/memes/doge`, listed by KYM on 9 July and fetched on 9 September.
-`extract.py` finds it by either address, and the step-1 slide prints whichever it
-found. The dates written in that slide's notes and in `notes/02-collect.md`
-(18 June, 10 July, 364 KB, 79 KB) are the old address's, so re-read them. `figures.py` needs the standard library and PyYAML (it counts the curated taxonomy
+`extract.py` reads the live build unless given a build id; the deck shows KG 7.1.0,
+and the answers to "IMKG's four questions" (chapter 11) come from it too. It finds
+Doge by either address: from 7.1.0 his frame is `/sensitive/memes/doge` (gap 14,
+chapter 2). After a new build, the numbers in the speaker notes and in `notes/`
+are typed text: re-read them against `figures/generated/numbers.tex`. `figures.py` needs the standard library and PyYAML (it counts the curated taxonomy
 files); Pillow, if installed, resizes the images. The queries are listed, in Neo4j Browser form, in
 `queries.md`.
 
@@ -125,6 +134,7 @@ figures/generated/      numbers.tex, every chart and graph drawing, world.tex (t
 figures/img/            Doge's image, his eight templates, IMKG's example meme
 scripts/                extract.py, stages.py, figures.py, world.py
 queries.md              the queries behind the figures, for Neo4j Browser
+pdfpcrc                 pdfpc's settings for the moves (see Present)
 ```
 
 The meaning chapter's numbers (taxonomy buckets, origins, tag folding) are counted

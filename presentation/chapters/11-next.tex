@@ -1,44 +1,59 @@
-% Chapter 11 — what comes next: KG 7.1.0 (the entries' own images, Wikidata's facts), open gaps.
+% Chapter 11 — 7.1.0 and what comes next: the entries' own images, Wikidata's facts, IMKG's questions; open gaps.
 % Then the epilogue: the closing slide, to the right of the map, and the map once more.
 
 \gmenter{next}
-\note{Chapter 11: what is built and running now, and what is open.}
+\note{Chapter 11: what the newest version adds, and what is open.}
 
 \gmgo{next-710}{7.1.0 and IMKG's questions}
 \begin{frame}{7.1.0: each meme's image, and Wikidata's facts}
   \begin{columns}[t]
-    \column{.37\textwidth}
+    \column{.31\textwidth}
       \gmpill{the meme's own image}\par\vskip2mm
       {\normalsize The vision model reads every entry's picture, not only its templates.}\par\vskip4mm
       \gmpill{Wikidata's facts}\par\vskip2mm
       {\normalsize Each linked item brings its facts: Kabosu \emph{is a} dog \dots}\par\vskip2mm
-      \gmbig{\FStatements}{facts about \FStatementItems\ items}
-    \column{.6\textwidth}
-      {\normalsize\color{gmInk2}IMKG's four published questions, and its answers}\par\vskip3mm
-      \begin{tikzpicture}[x=1cm, y=-1.05cm,
-          q/.style={anchor=west, font=\normalsize\bfseries, text=gmInk, text width=4.0cm, align=left},
-          a/.style={anchor=west, font=\normalsize, text=gmInk2, text width=4.1cm, align=left}]
-        \node[q] at (0,0) {memes showing SpongeBob};   \node[a] at (4.3,0) {130};
-        \node[q] at (0,1) {the most meme-able people}; \node[a] at (4.3,1) {Trump, Kyle Craven, Kanye West};
-        \node[q] at (0,2) {memes based on films};      \node[a] at (4.3,2) {413};
-        \node[q] at (0,3) {people by sex or gender};   \node[a] at (4.3,3) {male 10,333, female 2,798};
-      \end{tikzpicture}\par\vskip3mm
-      {\normalsize On 7.1.0: \textbf{the same queries, word for word} --- answered when it is published.}
+      \gmbig{\NStatements}{facts about \NStatementItems\ items}
+    \column{.66\textwidth}
+      {\normalsize\color{gmInk2}IMKG's four published questions, asked again}\par\vskip1mm
+      \begin{tikzpicture}[x=1cm, y=-1cm,
+          h/.style={anchor=south west, font=\small, text=gmInk2, inner ysep=1pt},
+          q/.style={anchor=north west, font=\normalsize\bfseries, text=gmInk, text width=2.75cm, align=left},
+          a/.style={anchor=north west, font=\small, text=gmInk2, text width=3.0cm, align=left},
+          m/.style={anchor=north west, font=\small\bfseries, text=gmInk, text width=3.1cm, align=left}]
+        \node[h] at (2.95,0) {IMKG, 2023};
+        \node[h, font=\small\bfseries, text=gmInk] at (6.15,0) {MemeAtlas \NVersion};
+        \draw[gmBase, line width=.4pt] (0,0) -- (9.3,0);
+        \foreach \y/\q/\a/\m in {
+            .2/{SpongeBob memes}/{130}/{\NQSponge\\\mdseries\color{gmInk2}\NQSpongeTemplates\ via templates},
+            1.25/{most memeable people}/{Trump, Kyle Craven, Kanye West}/{\NQPeople},
+            2.3/{memes from films}/{413}/{\NQFilms},
+            3.35/{people's sex or gender}/{male 10,333\\female 2,798}/{male \NQMale\\female \NQFemale}} {
+          \node[q] at (0,\y) {\hyphenpenalty=10000\relax\q}; \node[a] at (2.95,\y) {\a}; \node[m] at (6.15,\y) {\m};}
+      \end{tikzpicture}\par\vskip2mm
+      {\normalsize\textbf{The same queries, word for word.}}
   \end{columns}
   \note{
   \begin{itemize}
-    \item Version 7.1.0 is built and tested; the image reading is running on the lab's GPU now
-      (every entry's picture, about two days), and the graph will be published when it finishes.
-    \item The meme's own image: IMKG used Google Vision on the meme's main picture; MemeAtlas reads
-      it with the same vision model as the templates, and links what it sees from the meme itself.
-    \item Wikidata facts: 753,854 statements of 32,494 linked items (1,183 properties), read from the
-      same Wikidata dump as the lexicon. Now ``which memes show a human?'' is a question the graph
-      can answer.
-    \item The four use cases of IMKG's paper (Table 4), with IMKG's answers from its own notebook.
-      They did not run on 7.0.0: three need Wikidata facts (is a human, is a film, sex or gender),
-      one needs what the meme's image shows. 7.1.0 adds exactly that --- and because the vocabulary
-      was kept, the queries run unchanged. [Update this slide when 7.1.0 is published:
-      scripts/extract.py on the 7.1.0 build.]
+    \item Version 7.1.0 is live, published \NPublished. Two layers, both so that IMKG's own
+      questions can be asked.
+    \item The meme's own image: IMKG used Google Vision on it; MemeAtlas reads it with the same vision
+      model as the templates (two days of the lab's GPU for \NFrameImages\ pictures) and links what it
+      names. \NWithImagePct\% of entries now have a Wikidata item from their own picture. Doge's: a
+      dog, and flowers.
+    \item Wikidata's facts: \NStatements\ statements of \NStatementItems\ linked items, \NStatementProps\
+      properties, from the same Wikidata dump as the lexicon. ``Which memes show a human?'' is now a
+      query.
+    \item The four use cases of IMKG's paper (Table 4); IMKG's answers from its own notebook, ours
+      from the same queries on 7.1.0. They did not run on 7.0.0.
+    \item SpongeBob: \NQSponge\ memes show him in their own picture, \NQSpongeTemplates\ through their
+      templates. Where Google Vision said ``SpongeBob'', the model names who is actually there:
+      Mr.\ Krabs, Squidward.
+    \item People: Trump first in both. IMKG's second, Kyle Craven, is Bad Luck Brian --- Google
+      Vision matched his photo to the pages naming him; our model reads it as ``man''.
+    \item Films: \NQFilms\ entries about \NQFilmItems\ films (Avengers: Endgame first) against 413 ---
+      twice the entries.
+    \item Gender: fewer people, the same shape (about three men to one woman). We import facts one
+      step out from what memes link to; IMKG also imported around each meme's own Wikidata item.
   \end{itemize}}
 \end{frame}
 

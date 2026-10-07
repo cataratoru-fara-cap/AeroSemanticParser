@@ -9,19 +9,23 @@ address; scraping downloads it once and keeps a compressed copy forever, so the
 parser can re-read it later without asking the site again.
 
 ## Doge at this step
-- Found in KYM's sitemap, `lastmod` 18 June 2026; namespace `memes`; confirmed.
-- Fetched 10 July 2026 through ScrapingAnt's plain-HTML call (1 credit, no
-  browser): 364 KB of HTML as KYM's server sends it — the About text is 0.8 KB,
+- Found in KYM's sitemap at the address KYM gives him today,
+  `/sensitive/memes/doge` (next stop), `lastmod` 9 July 2026; namespace
+  `sensitive/memes`; confirmed.
+- Fetched 9 September 2026 through ScrapingAnt's plain-HTML call (1 credit, no
+  browser): 349 KB of HTML as KYM's server sends it — the About text is 0.8 KB,
   the rest is the site's menus, ad slots and script tags, none of them run.
-  Stored zlib-compressed: 79 KB, with a SHA-256 fingerprint.
+  Stored zlib-compressed: 76 KB, with a SHA-256 fingerprint. (Until 7.1.0 the
+  graph showed the old address: `lastmod` 18 June, fetched 10 July, 364 KB.)
 
 ## Numbers (live, `data/stages.json`)
 - 39,972 URLs discovered; 25,058 confirmed entries (the others are unconfirmed
   submissions, plus photo/video/editorial pages).
 - 25,016 pages stored, 42 failures: 34 permanent (gone, forbidden), 8 retryable.
 - 6.86 GB of HTML, 1.41 GB stored: 4.9× smaller.
-- 24,291 entries parsed (chapter 3); the 709 others are photos, videos and
-  editorials living under entry-like addresses.
+- 23,477 entries parsed (chapter 3); 708 pages are photos, videos and
+  editorials living under entry-like addresses, and 815 were an entry's second
+  address (gap 14).
 
 ## Design decisions — the why
 - **Sitemaps first, listing pages as a fallback.** Sitemaps are cheap and say
@@ -96,8 +100,8 @@ parser can re-read it later without asking the site again.
   RDF says nothing of it (owl:sameAs would be the way — a model decision, open).
 - *Why not just keep the public address?* Because it is not KYM's address for
   the entry any more — and the rule must also handle entries moved back out.
-- *Numbers on other slides?* They are KG 7.0.0, duplicates included; 7.1.0 is
-  the first graph without them.
+- *Numbers on other slides?* They are KG 7.1.0, the first graph that holds each
+  entry once (7.0.0 still had the 813 duplicates).
 
 ## Sources
 `airflow/README.md` (The stages: kym_discovery, kym_scrape), `dashboard` pages

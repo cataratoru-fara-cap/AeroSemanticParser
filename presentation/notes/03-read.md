@@ -25,12 +25,13 @@ Origin, Spread, Identity, Dogecoin, …) with 77 links and 36 images · 49
 external references.
 
 ## Numbers
-- 24,291 entries, all parsed by parser 1.7.0.
-- Categories: memes 18,738 · events 2,149 · subcultures 1,493 · people 1,279 ·
-  sites 455 · cultures 177. These become IMKG's classes (`kym:Meme`, …).
-- 4,515 have every field (18.6%). Missing: region 18,604 (77%), Spread 5,751,
-  Origin 5,609, entry type 4,563, About 2,205, year 770, tags 66.
-- 709 dead letters: photos 553, videos 116, editorials 40 — not entries.
+- 23,477 entries (each once: 815 second addresses retired, chapter 2), all
+  parsed by parser 1.7.0.
+- Categories: memes 18,062 · events 2,112 · subcultures 1,472 · people 1,236 ·
+  sites 432 · cultures 163. These become IMKG's classes (`kym:Meme`, …).
+- 4,402 have every field (18.8%). Missing: region 17,920 (76%), Spread 5,606,
+  Origin 5,469, entry type 4,401, About 2,165, year 732, tags 65.
+- 708 dead letters: photos 553, videos 116, editorials 39 — not entries.
 
 ## Design decisions — the why
 - **A pure parser.** HTML in, typed record out; no Mongo, no Airflow. That is

@@ -131,6 +131,8 @@
 \def\gm@se{6.9}\def\gm@R{0.62}\def\gm@avr{0.15}\def\gmframedur{0.045}
 \newcount\gm@nsats
 \newcommand{\gmWorldScale}[4]{\def\gm@se{#1}\def\gm@R{#2}\def\gm@avr{#3}\def\gmframedur{#4}}
+\def\gm@pdfpcdur{0.034}
+\newcommand{\gmPdfpcFrameDur}[1]{\def\gm@pdfpcdur{#1}}   % presenter.pdf's, see world.py
 % \gmWorldSat{index}{id}{chapter}{x0}{y0}{width}{lx/ly/lw}{caption}
 \newcommand{\gmWorldSat}[8]{%
   \global\gm@nsats=#1\relax
@@ -345,6 +347,8 @@
 % notes, the move's last frame waiting for a click. And hyperref gives the notes pages
 % labels of their own, so the labels (pdfpc groups a move with its stop by them) drift.
 % So: ship the held page before the next slide's turn, and label the slides only.
+% Only pdfpc plays this file, and it adds its drawing time to every page's duration:
+% the motion pages take pdfpc's shorter one (\gmPdfpcFrameDur).
 \newcommand{\gmnotesonsecondscreen}{%
   \setbeameroption{show notes on second screen=right}%
   \let\gm@pgfshipout\shipout
@@ -357,7 +361,8 @@
     \fi
     \gm@pgfshipout}%
   \AtBeginDocument{\@ifundefined{HyPL@EveryPage}{\let\gm@HyPLEveryPage\relax}
-    {\let\gm@HyPLEveryPage\HyPL@EveryPage}}}
+    {\let\gm@HyPLEveryPage\HyPL@EveryPage}%
+    \let\gmframedur\gm@pdfpcdur}}
 
 % -- the tour ---------------------------------------------------------------------
 \newcount\gm@overviews

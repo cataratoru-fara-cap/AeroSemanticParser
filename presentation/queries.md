@@ -11,11 +11,13 @@ They refine the queries of `airflow/KG_QUERIES.md`: the frame is a parameter, th
 series is followed to any depth, and the story, templates and siblings are drawn
 together.
 
+The deck shows KG 7.1.0. IMKG's own four questions (chapter 11), with their
+Kypher, SPARQL and Cypher, are in `airflow/KG_QUERIES.md`.
+
 **Doge's address.** IMKG and KG 7.0.0 have Doge at `/memes/doge`. From 7.1.0 a
 frame is the address KYM gives the entry today, `/sensitive/memes/doge`, and
 lists the old address as `also_at` (gap 14). So every query below finds Doge by
-either address: `WHERE f.id = url OR url IN f.also_at`. (On 7.0.0 Neo4j warns
-that `also_at` does not exist yet; the query still answers.)
+either address: `WHERE f.id = url OR url IN f.also_at`.
 
 ## Doge as a graph (chapter 7, "everything we learned")
 
@@ -33,7 +35,7 @@ RETURN f,
   COLLECT { MATCH p = (f)-[:hasEntryType]->() RETURN p } AS types
 ```
 
-The whole neighbourhood, by kind (the "379 edges" figure):
+The whole neighbourhood, by kind (the "372 edges" figure):
 
 ```cypher
 WITH 'https://knowyourmeme.com/memes/doge' AS url
@@ -64,7 +66,7 @@ RETURN count(*) AS pairs,
        sum(CASE WHEN EXISTS { (a)-[:citesMediaFrame]->(c) } OR EXISTS { (c)-[:citesMediaFrame]->(a) }
                 THEN 1 ELSE 0 END) AS linked_by_page
 ```
-679,392 pairs, 3,602 linked (KG 7.0.0).
+631,311 pairs, 3,448 linked (KG 7.1.0; 7.0.0: 679,392 and 3,602).
 
 ## What each entry carries
 
@@ -113,7 +115,7 @@ About a minute on the whole graph.
 
 ## One entry, one address (chapter 2, gap 14)
 
-Two frames with one title — the duplicates, on KG 7.0.0:
+Two frames with one title — the duplicates (813 on KG 7.0.0, none from 7.1.0):
 
 ```cypher
 MATCH (cur:KGPointer {name: 'current'})
@@ -121,8 +123,8 @@ MATCH (f:Frame {build_id: cur.build_id}) WHERE f.id CONTAINS '/memes/'
 WITH f.label AS title, collect(f.id) AS addresses WHERE size(addresses) > 1
 RETURN count(*) AS entries_twice, collect(addresses)[..5] AS examples
 ```
-813 on KG 7.0.0; 0 from 7.1.0. From 7.1.0, the frames that absorbed an old
-address, and where their links now arrive:
+From 7.1.0, the frames that absorbed an old address (834 frames, 835 old
+addresses, 811 of the frames now under `/sensitive/`):
 
 ```cypher
 MATCH (cur:KGPointer {name: 'current'})
@@ -139,8 +141,8 @@ Where memes are born, by kind of platform. The ontology gives the words: IMKG's
 class `kym:Meme` and our `mk:hasOrigin`, declared in `memeatlas.ttl`. The origin
 taxonomy (`origin_taxonomy.yaml`) does the grouping: Twitter, Tumblr and
 Instagram are each a `social-network`, through `rdfs:subClassOf`; without it the
-question needs a hand-written list of sites. Run on 7.0.0: social networks 5,567
-memes, video platforms 3,699, imageboards 818, meme sites 282 (12 kinds). About
+question needs a hand-written list of sites. On 7.1.0: social networks 5,368
+memes, video platforms 3,608, imageboards 738, meme sites 272 (12 kinds). About
 14 s in Fuseki.
 
 ```sparql
@@ -175,14 +177,16 @@ ORDER BY memes DESC
 ## SPARQL, as IMKG would ask (chapter 9, "Try it")
 
 At `http://<host>:8080/sparql/` (the default graph is the live build). RDF has
-no `also_at`: from 7.1.0 use Doge's new IRI,
-`<https://knowyourmeme.com/sensitive/memes/doge>`.
+no `also_at`, so the query finds Doge by his title: his IRI is
+`<https://knowyourmeme.com/sensitive/memes/doge>` from 7.1.0 (IMKG's was
+`kym:doge`, `<https://knowyourmeme.com/memes/doge>`).
 
 ```sparql
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX m4s:  <https://meme4.science/>
 SELECT ?sibling ?title WHERE {
-  <https://knowyourmeme.com/memes/doge> rdfs:seeAlso ?sibling .
+  ?doge m4s:title "Doge" ;
+        rdfs:seeAlso ?sibling .
   ?sibling m4s:title ?title .
 }
 ```

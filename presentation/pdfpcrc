@@ -1,0 +1,22 @@
+# pdfpc settings for this talk (pdfpc 4.5 or later): copy this file to
+# ~/.config/pdfpc/pdfpcrc. With pdfpc 4.7 you can instead pass each option line
+# with -c, e.g. -c "option prerender-slides 30".
+#
+# pdfpc draws a moving page up to four times (projector, current, next, notes) and
+# starts the page's time only once it is on screen. Drawn live, a 45 ms frame took
+# 330 ms. With these settings it draws the next move while you talk at a stop and
+# plays it from memory: presenter.pdf's 34 ms frames take 40-49 ms, the moves' design
+# (measured 2026-10-07, pdfpc 4.7, a 3440x1440 projector). Before the talk press
+# End, Home, Ctrl+T: pdfpc leaves the notes view undrawn until a page changes.
+#
+# the next move (at most 25 pages) and the stop it lands on, drawn ahead
+option prerender-slides 30
+# starting 1 s after you arrive at a stop (ready about 4 s later)
+option prerender-delay 1
+# and kept as drawn: unpacking a compressed page costs 20-30 ms at projector size.
+# Short of memory? Delete this line: pages are then kept PNG-packed (about 0.5 MB
+# each instead of 14-20 MB) and the moves play smoothly but somewhat slower.
+option cache-max-usize 100000
+# for 5 minutes: about 20 MB a page at 1440p (14 MB at 1080p), 2-3 GB at a talk's pace;
+# clicking fast through a rehearsal holds more (3.8 GB after 8 moves in 2.5 minutes)
+option cache-expiration 300

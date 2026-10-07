@@ -29,16 +29,16 @@ measuring that changed the design.
 35 mentions found for Doge, 23 kept, each with its reason.
 
 ## Numbers
-- 305,359 mentions in 24,242 entries → 31,085 distinct Wikidata items. By field:
-  About 191,060 · tags 95,822 · title 18,477. By method: noun chunk 124,166 ·
-  tag 95,822 · NER 60,457 · proper-noun run 19,952 · KYM ID 2,940 · title 2,022.
-- Curation keeps 209,827 (68.7%), drops 95,532.
-  - Kept by: a tag and the text agree 54,052 · LLM judge 42,114 · platform 26,623 ·
-    the title agrees 26,478 · a whole tag names it 23,207 · named by the title
-    18,477 · a meme format 14,178 · the meme's own item 4,698.
-  - Dropped by: LLM judge 67,455 · too generic 21,375 · deny list (item) 3,454 ·
-    deny list (class) 3,248. Judge roles: incidental 48,930 · subject 24,214 ·
-    source 13,701 · wrong sense 7,959 · format 4,330 · platform 781.
+- 294,947 mentions in 23,427 entries → 31,084 distinct Wikidata items. By field:
+  About 184,638 · tags 92,427 · title 17,882. By method: noun chunk 119,887 ·
+  tag 92,427 · NER 58,528 · proper-noun run 19,334 · KYM ID 2,808 · title 1,963.
+- Curation keeps 202,683 (68.7%), drops 92,264.
+  - Kept by: a tag and the text agree 52,194 · LLM judge 40,783 · the title
+    agrees 25,685 · platform 25,622 · a whole tag names it 22,428 · named by the
+    title 17,882 · a meme format 13,614 · the meme's own item 4,475.
+  - Dropped by: LLM judge 65,131 · too generic 20,692 · deny list (item) 3,294 ·
+    deny list (class) 3,147. Judge roles: incidental 47,188 · subject 23,391 ·
+    source 13,307 · wrong sense 7,690 · format 4,186 · platform 753.
 - The lexicon: 17.3M Wikidata items, 22.6M names, built from the dated dump
   wikidata-20260914 (156 GB, 121.7M lines) into a 3.3 GB SQLite file in about an
   hour. Filters: at least one sitelink, English and multilingual labels, ten

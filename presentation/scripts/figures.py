@@ -128,8 +128,13 @@ N.update(
     TemplatesShort=f"{short(tpl['kept'])} templates",
     # the graph
     Nodes=fmt(counts["nodes"]), Edges=fmt(counts["edges"]), Triples=fmt(counts["triples"]),
-    NodesShort=short(counts["nodes"]), EdgesShort=f"{counts['edges'] / 1e6:.2f}M",
-    TriplesShort=short(counts["triples"]), RelTypes=fmt(len(counts["edges_by_type"])),
+    NodesShort=f"{counts['nodes'] / 1e6:.2f}M" if counts["nodes"] >= 1e6 else short(counts["nodes"]),
+    EdgesShort=f"{counts['edges'] / 1e6:.2f}M",
+    TriplesShort=short(counts["triples"]),
+    # Wikidata's statements (7.1.0) are one edge type per property: counted as one kind, as the
+    # dashboard folds them (their properties: StatementProps)
+    RelTypes=fmt(sum(1 for t in counts["edges_by_type"] if not (t[0] == "P" and t[1:].isdigit()))
+                 + any(t[0] == "P" and t[1:].isdigit() for t in counts["edges_by_type"])),
     Frames=fmt(counts["nodes_by_kind"]["frame"]),
     RmlTriples=fmt(live["build"]["validation"].get("rml_triples", 0)),
     TriplesDiff=fmt(counts["triples"] - live["build"]["validation"].get("rml_triples", 0)),
@@ -139,8 +144,9 @@ N.update(
     FramesRatio=f"{counts['nodes_by_kind']['frame'] / 12585:.2f}",
     # numbers
     WithWikidataPct=pct(lay["with_wikidata"], lay["frames"]), WithEventsPct=pct(lay["with_events"], lay["frames"]),
-    WithTemplatePct=pct(lay["with_template"], lay["frames"]), WithAllPct=pct(lay["with_all"], lay["frames"]),
-    WithNonePct=pct(lay["with_none"], lay["frames"]), WithNone=fmt(lay["with_none"]),
+    WithTemplatePct=pct(lay["with_template"], lay["frames"]), WithAllPct=pct(lay["with_all4"], lay["frames"]),
+    WithImagePct=pct(lay["with_image_items"], lay["frames"]),
+    WithNonePct=pct(lay["with_none4"], lay["frames"]), WithNone=fmt(lay["with_none4"]),
     SiblingPairs=fmt(live["sibling_pairs"]["pairs"]), SiblingLinked=fmt(live["sibling_pairs"]["linked_by_page"]),
     SiblingLinkedPct=pct(live["sibling_pairs"]["linked_by_page"], live["sibling_pairs"]["pairs"], 2),
     Sensitive=fmt(live["sensitive"]["sensitive_frames"]), SensitiveTwins=fmt(live["sensitive"]["with_public_twin"]),
@@ -161,7 +167,9 @@ e = ex["entry"]
 N.update(
     DogeRawKB=fmt(ex["dom"]["raw_bytes"] / 1000), DogeStoredKB=fmt(ex["dom"]["stored_bytes"] / 1000),
     DogeLastmod=str(ex["discovery"]["lastmod"])[:10], DogeFetched=str(ex["dom"]["fetched_at"])[:10],
-    DogeAddress=ex["url"].removeprefix("https://knowyourmeme.com/"),
+    # from 7.1.0 /sensitive/memes/doge (gap 14): may break after a slash
+    DogeAddress=ex["url"].removeprefix("https://knowyourmeme.com/").replace("/", "/\\allowbreak "),
+    DogeSection=esc((ex["discovery"].get("namespace") or "memes").split("/")[0]),   # KYM's section
     DogeSections=fmt(len(e["sections"])), DogeRefs=fmt(e["external_references"]), DogeTags=fmt(len(e["tags"])),
     DogeTypes=fmt(len(e["entry_type"])), DogeAboutKB=f"{len(e['about']) / 1000:.1f}",
     DogeLinks=fmt(sum(s["links"] for s in e["sections"])), DogeImages=fmt(sum(s["images"] for s in e["sections"])),
@@ -184,6 +192,22 @@ N.update(CurTitle=fmt(ck.get("title", 0) + ck.get("own_item", 0)), CurDenyItem=f
          CurFramesJudged=fmt(cur.get("frames_judged", 0)))
 roles = cur.get("judge_roles", {})
 N.update({f"Role{k.title().replace('_', '')}": fmt(v) for k, v in roles.items()})
+# 7.1.0: each entry's own image, Wikidata's facts, and IMKG's four questions asked of them
+fimg, stm, pq = live["frame_images"], live["statements"], live["paper_queries"]
+gender = {g["qid"]: g["people"] for g in pq["gender"]}
+N.update(
+    FrameImages=fmt(fimg["read"]), FrameImageFailed=fmt(fimg["failed"]),
+    FrameImageRegions=fmt(fimg["regions"]), FrameImageNamed=fmt(fimg["named"]),
+    FrameImageFrames=fmt(fimg["graph"]["frames"]), FrameImageEdges=fmt(fimg["graph"]["edges"]),
+    FrameImageItems=fmt(fimg["graph"]["items"]),
+    Statements=fmt(stm["statements"]), StatementItems=fmt(stm["items"]), StatementProps=fmt(stm["properties"]),
+    NodesWikidata=fmt(counts["nodes_by_kind"].get("wikidata_entity", 0)),
+    WikidataLinked=fmt(live.get("wikidata_linked", 0)),
+    QSponge=fmt(pq["spongebob"]["memes"]), QSpongeTemplates=fmt(pq["spongebob_via_templates"]["memes"]),
+    QPeople=", ".join(esc(p["person"]) for p in pq["people"][:3]),
+    QFilms=fmt(pq["films"]["frames"]), QFilmItems=fmt(pq["films"]["films"]),
+    QMale=fmt(gender.get("Q6581097", 0)), QFemale=fmt(gender.get("Q6581072", 0)),
+)
 lines = [f"\\newcommand{{\\N{k}}}{{{v}}}" for k, v in N.items()]
 write("numbers.tex", "\n".join(lines) + "\n")
 
@@ -309,10 +333,10 @@ write("fig-picture-regions.tex", hbars([(k, v, fmt(v)) for k, v in sorted(region
                                        "gm@col@picture", height="2.2cm"))
 
 layer_rows = [("a Wikidata link", lay["with_wikidata"]), ("events", lay["with_events"]),
-              ("an imgflip template", lay["with_template"]), ("all three", lay["with_all"]),
-              ("none of them", lay["with_none"])]
+              ("an imgflip template", lay["with_template"]), ("an item in its picture", lay["with_image_items"]),
+              ("all four", lay["with_all4"]), ("none of them", lay["with_none4"])]
 write("fig-numbers-layers.tex", hbars([(lab, v, f"{pct(v, lay['frames'])}\\%") for lab, v in layer_rows],
-                                      "gm@col@numbers", height="3.0cm", xmax_pad=1.45, width=".6\\linewidth"))
+                                      "gm@col@numbers", height="3.6cm", xmax_pad=1.45, width=".6\\linewidth"))
 
 write("fig-numbers-items.tex", hbars([(esc(r["label"]), r["frames"], fmt(r["frames"]))
                                       for r in live["top_items_by_frames"][:10]], "kWikidata", height="5.0cm"))
@@ -497,9 +521,7 @@ for t in ex["templates"]["selected"]:
             tpl_items.setdefault(lm["qid"], lm["label"])
 children = sorted({c["chain"][-2] for c in kg["descendants"] if len(c["chain"]) >= 2})
 ancestors = (kg["ancestors"][0]["chain"] if kg["ancestors"] else ["Doge"])[1:]
-# 7.0.0 still holds Doge twice (/memes/doge and /sensitive/memes/doge, gap 14): the twin is the
-# same entry, not a sibling, and 7.1.0 holds it once — so it is not drawn as one.
-siblings = [s["label"] for s in kg["siblings"] if s["label"] != "Doge"]
+siblings = [s["label"] for s in kg["siblings"]]
 tags, types = kg["tags"], kg["entry_types"]
 
 g = ["\\begin{tikzpicture}[x=1cm, y=1cm,",
@@ -693,7 +715,8 @@ NAME_AT = {"frame": "below left", "event": "right", "tag_concept": "above", "ext
 WORDS = {("frame", "frame"): "siblings, links", ("event", "event"): "nextInStory",
          ("tag_concept", "tag_concept"): "coOccursWith", ("origin_concept", "origin_concept"): "subTypeOf",
          ("entry_type_concept", "entry_type_concept"): "subTypeOf",
-         ("frame", "wikidata_entity"): "about, tags, title", ("event", "external_ref"): "citations, embeds",
+         ("frame", "wikidata_entity"): "text, image", ("event", "external_ref"): "citations, embeds",
+         ("wikidata_entity", "wikidata_entity"): "Wikidata's statements",
          ("frame", "frame_stub"): "citesMediaFrame", ("event", "frame"): "eventLink",
          ("event", "frame_stub"): "eventLink"}
 # each arrow's label: how far along it, on which side, and whether it follows the arrow's slope
@@ -711,7 +734,8 @@ BEND = {("frame", "external_ref"): "out=18, in=192"}
 # the two arrows between frame and event run side by side, one lane each way
 LANE = {("frame", "event"): .065, ("event", "frame"): -.065}
 nk = counts["nodes_by_kind"]
-nmax = max(nk.values())
+# the scale: every kind by its count, the Wikidata items by those linked (see below)
+nmax = max(dict(nk, **({"wikidata_entity": live["wikidata_linked"]} if live.get("wikidata_linked") else {})).values())
 pairs = defaultdict(lambda: [0, []])
 for r in live["metagraph"]:
     if r["src"] in POS and r["dst"] in POS:
@@ -727,10 +751,19 @@ def radius(kind: str) -> float:
 mg = ["\\begin{tikzpicture}[x=1cm, y=1cm, see through/.style={fill=gmSurface, fill opacity=.78, text opacity=1},"
       " lab/.style={font=\\fontsize{8}{9}\\selectfont, text=gmInk2, see through, inner sep=.8pt}]"]
 loops = {s_: (n, WORDS.get((s_, t_), rels[0])) for (s_, t_), (n, rels) in pairs.items() if s_ == t_ and n >= 1000}
+# 7.1.0: most Wikidata items are only values of the linked items' statements; the disk is the
+# items an entry or a template links to (as before 7.1.0), its label says how many there are in all.
+linked = live.get("wikidata_linked")
 for kind, (x, y) in POS.items():
-    mg.append(f"\\node[circle, fill={KCOL[kind]}, minimum size={2 * radius(kind):.2f}cm, inner sep=0pt] (k-{kind}) at ({x},{y}) {{}};")
-    loop = (f"\\\\{{\\color{{gmInk2}}$\\circlearrowleft$ {loops[kind][1]} {short(loops[kind][0])}}}"
-            if kind in loops else "")
+    size = radius(kind)
+    extra = ""
+    if kind == "wikidata_entity" and linked:
+        size = 0.2 + 0.92 * math.sqrt(linked / nmax)
+        extra = f"\\\\{{\\color{{gmInk2}}{fmt(linked)} linked"
+        extra += (f" $\\circlearrowleft$ statements {short(loops.pop(kind)[0])}}}" if kind in loops else "}")
+    mg.append(f"\\node[circle, fill={KCOL[kind]}, minimum size={2 * size:.2f}cm, inner sep=0pt] (k-{kind}) at ({x},{y}) {{}};")
+    loop = extra or (f"\\\\{{\\color{{gmInk2}}$\\circlearrowleft$ {loops[kind][1]} {short(loops[kind][0])}}}"
+                     if kind in loops else "")
     mg.append(f"\\node[font=\\fontsize{{8.5}}{{9.5}}\\selectfont, text=gmInk, align=center, see through, inner sep=.6pt,"
               f" {NAME_AT.get(kind, 'below')}=.5mm of k-{kind}] {{\\textbf{{{NAME[kind]}}} {fmt(nk.get(kind, 0))}{loop}}};")
 mg.append("\\begin{pgfonlayer}{background}")

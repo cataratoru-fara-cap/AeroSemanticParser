@@ -83,11 +83,11 @@ memes, and noisy. What MemeAtlas does:
   grows);
 - measures what goes together: a tag census counts pairs on the same entry, and
   frequent pairs become `coOccursWith` edges (gaming–video games 396,
-  twitter–x 201, anime–manga 189, donald trump–politics 161) — 4,984 of them,
+  twitter–x 201, anime–manga 189, donald trump–politics 161) — 4,741 of them,
   in the property graph only. A threshold on a count, deliberately a different
   relation from the taxonomy's is-a. (The same co-occurrence was tried for
   entry types and removed in 5.0.1: next to a curated taxonomy it was noise.)
-- 104,251 distinct tags as written → 101,883 tag concepts in the graph.
+- 104,251 distinct tags as written → 101,882 tag concepts in the graph.
 
 ## If someone asks
 - *Why not learn the taxonomy automatically?* The statistics alone proposed
